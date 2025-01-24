@@ -1,0 +1,18 @@
+[package]
+name = "nbn"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ash = { version = "0.38.0", features = ["linked"] }
+ash-window = "0.13.0"
+gpu-allocator = { version = "0.27.0", default-features = false, features = [
+    "vulkan",
+] }
+log = "0.4.25"
+parking_lot = "0.12.3"
+winit = "0.30.8"
+
+[dev-dependencies]
+presser = "0.3.1"
+env_logger = "0.11.6"
