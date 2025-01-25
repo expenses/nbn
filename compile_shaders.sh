@@ -1,1 +1,1 @@
-slangc -profile spirv_1_6 shader.slang -O3 -target spirv -o shader.spv
+slangc shader.slang -g -O3 -warnings-as-errors all -o shader.spv
