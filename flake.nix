@@ -25,7 +25,7 @@
                 };
                 cmakeFlags = attrs.cmakeFlags ++ ["-DSLANG_RHI_ENABLE_CUDA=0"];
               }))
-              spirv-tools
+              spirv-tools cargo-expand
             ];
             buildInputs = [vulkan-loader];
           };

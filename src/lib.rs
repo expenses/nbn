@@ -281,7 +281,7 @@ impl Instance {
 
         Device {
             descriptors: std::mem::ManuallyDrop::new(Descriptors {
-                pool: descriptor_pool,
+                _pool: descriptor_pool,
                 set: descriptor_set,
                 layout: descriptor_set_layout,
                 index: AtomicU32::new(0),
@@ -314,7 +314,7 @@ impl Drop for Instance {
 type Allocator = Arc<Mutex<gpu_allocator::vulkan::Allocator>>;
 
 pub struct Descriptors {
-    pool: DescriptorPool,
+    _pool: DescriptorPool,
     layout: DescriptorSetLayout,
     pub set: vk::DescriptorSet,
     index: AtomicU32,
@@ -439,6 +439,7 @@ impl Device {
             index,
             allocator,
             allocation,
+            queue_family_index: self.queue_family_index,
         }
     }
 
@@ -453,17 +454,19 @@ impl Device {
         });
         let image = self.create_image(desc);
         let command_buffer = self.create_command_buffer();
+        let semaphore = self.create_semaphore();
+        let fence = self.create_fence();
 
         unsafe {
             self.begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
                 .unwrap();
 
-            self.insert_image_barrier(
-                &command_buffer,
-                &image,
+            vk_sync::cmd::pipeline_barrier(
+                &*self,
+                *command_buffer,
+                None,
                 &[],
-                &[vk_sync::AccessType::TransferWrite],
-                true,
+                &[image.as_transition_barrier(&[], &[vk_sync::AccessType::TransferWrite], true)],
             );
 
             self.cmd_copy_buffer_to_image(
@@ -480,21 +483,37 @@ impl Device {
                     )],
             );
 
-            self.insert_image_barrier(
-                &command_buffer,
-                &image,
-                &[vk_sync::AccessType::TransferWrite],
-                &[vk_sync::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer],
-                false,
+            vk_sync::cmd::pipeline_barrier(
+                &*self,
+                *command_buffer,
+                None,
+                &[],
+                &[image.as_transition_barrier(
+                    &[vk_sync::AccessType::TransferWrite],
+                    &[vk_sync::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer],
+                    false,
+                )],
             );
 
             self.end_command_buffer(*command_buffer).unwrap();
+
+            self.device
+                .queue_submit(
+                    self.queue,
+                    &[vk::SubmitInfo::default()
+                        .command_buffers(&[*command_buffer])
+                        .signal_semaphores(&[*semaphore])],
+                    *fence,
+                )
+                .unwrap();
         }
 
         PendingImageUpload {
             image,
             _upload_buffer: buffer,
-            command_buffer,
+            _command_buffer: command_buffer,
+            semaphore,
+            fence,
         }
     }
 
@@ -504,7 +523,8 @@ impl Device {
                 &vk::BufferCreateInfo::default().size(desc.size).usage(
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER
-                        | vk::BufferUsageFlags::TRANSFER_SRC,
+                        | vk::BufferUsageFlags::TRANSFER_SRC
+                        | vk::BufferUsageFlags::TRANSFER_DST,
                 ),
                 None,
             )
@@ -637,41 +657,25 @@ impl Device {
     }
 
     pub fn create_fence(&self) -> Fence {
-        Fence {
-            device: self.device.clone(),
-            inner: unsafe {
+        Fence::from_raw(
+            unsafe {
                 self.device
                     .create_fence(&vk::FenceCreateInfo::default(), None)
                     .unwrap()
             },
-        }
+            &self.device,
+        )
     }
 
-    pub fn insert_image_barrier(
-        &self,
-        command_buffer: &CommandBuffer,
-        image: &Image,
-        previous_accesses: &[vk_sync::AccessType],
-        next_accesses: &[vk_sync::AccessType],
-        discard_contents: bool,
-    ) {
-        vk_sync::cmd::pipeline_barrier(
-            &*self,
-            **command_buffer,
-            None,
-            &[],
-            &[vk_sync::ImageBarrier {
-                previous_accesses,
-                next_accesses,
-                previous_layout: vk_sync::ImageLayout::Optimal,
-                next_layout: vk_sync::ImageLayout::Optimal,
-                range: image.subresource_range,
-                discard_contents,
-                image: *image.image,
-                src_queue_family_index: self.queue_family_index,
-                dst_queue_family_index: self.queue_family_index,
-            }],
-        );
+    pub fn create_semaphore(&self) -> Semaphore {
+        Semaphore::from_raw(
+            unsafe {
+                self.device
+                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                    .unwrap()
+            },
+            &self.device,
+        )
     }
 }
 
@@ -748,6 +752,7 @@ wrap_raii_struct!(
     ash::Device::destroy_descriptor_set_layout
 );
 wrap_raii_struct!(Sampler, vk::Sampler, ash::Device::destroy_sampler);
+wrap_raii_struct!(Semaphore, vk::Semaphore, ash::Device::destroy_semaphore);
 
 pub struct CommandBuffer {
     pub command_buffer: vk::CommandBuffer,
@@ -814,6 +819,12 @@ pub struct Buffer {
     alignment: u64,
 }
 
+impl Buffer {
+    pub fn try_as_slice<T: Copy>(&self) -> Option<&[T]> {
+        self.allocation.mapped_slice().map(cast_slice)
+    }
+}
+
 impl std::ops::Deref for Buffer {
     type Target = u64;
 
@@ -836,6 +847,28 @@ pub struct Image {
     index: u32,
     pub extent: vk::Extent3D,
     pub subresource_range: vk::ImageSubresourceRange,
+    pub queue_family_index: u32,
+}
+
+impl Image {
+    fn as_transition_barrier<'a>(
+        &self,
+        previous: &'a [vk_sync::AccessType],
+        next: &'a [vk_sync::AccessType],
+        discard_contents: bool,
+    ) -> vk_sync::ImageBarrier<'a> {
+        vk_sync::ImageBarrier {
+            previous_accesses: previous,
+            next_accesses: next,
+            previous_layout: vk_sync::ImageLayout::Optimal,
+            next_layout: vk_sync::ImageLayout::Optimal,
+            range: self.subresource_range,
+            discard_contents,
+            image: *self.image,
+            src_queue_family_index: self.queue_family_index,
+            dst_queue_family_index: self.queue_family_index,
+        }
+    }
 }
 
 impl std::ops::Deref for Image {
@@ -855,12 +888,23 @@ impl Drop for Image {
 
 pub struct PendingImageUpload {
     _upload_buffer: Buffer,
+    _command_buffer: CommandBuffer,
     pub image: Image,
-    pub command_buffer: CommandBuffer,
+    pub semaphore: Semaphore,
+    pub fence: Fence,
 }
 
 impl PendingImageUpload {
     pub fn into_inner(self) -> Image {
         self.image
+    }
+}
+
+pub fn cast_slice<'a, I: Copy, O: Copy>(slice: &'a [I]) -> &'a [O] {
+    unsafe {
+        std::slice::from_raw_parts(
+            slice.as_ptr() as *const O,
+            (slice.len() * std::mem::size_of::<I>()) / std::mem::size_of::<O>(),
+        )
     }
 }

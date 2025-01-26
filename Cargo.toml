@@ -6,9 +6,6 @@ edition = "2021"
 [dependencies]
 ash = { version = "0.38.0", features = ["linked"] }
 ash-window = "0.13.0"
-goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
-    "primitive_reader",
-] }
 gpu-allocator = { version = "0.27.0", default-features = false, features = [
     "vulkan",
 ] }
@@ -19,7 +16,13 @@ presser = "0.3.1"
 vk-sync = { package = "vk-sync-fork", version = "0.5.0" }
 
 [dev-dependencies]
+goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
+    "primitive_reader",
+] }
+
 env_logger = "0.11.6"
 tree64 = { path = "../tree64" }
 glam = "0.29.2"
 image = "0.25.5"
+slang_struct = { path = "slang-struct-rs" }
+bytemuck = { version = "1.21.0", features = ["derive"] }

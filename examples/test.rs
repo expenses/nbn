@@ -1,48 +1,48 @@
 use ash::vk;
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct BufferView {
-    byte_offset: u32,
+slang_struct::slang_include!("gltf.slang");
+
+#[derive(Clone, Copy, Default, PartialEq, Debug, Hash, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C, packed)]
+struct PackedMaterial {
+    base_colour: [u8; 3],
+    ty_and_aux_value: u8,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Accessor {
-    buffer_view: u32,
-    count: u32,
+impl PackedMaterial {
+    const INVALID: Self = Self {
+        base_colour: [0; 3],
+        ty_and_aux_value: 1,
+    };
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Primitive {
-    indices: u32,
-    positions: u32,
-    uvs: u32,
-}
+fn create_image(
+    device: &nbn::Device,
+    filename: &str,
+    format: vk::Format,
+) -> nbn::PendingImageUpload {
+    let image_data = image::open(filename).unwrap().to_rgba8();
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Gltf {
-    buffer_views: u64,
-    accessors: u64,
-    primitives: u64,
-    buffer: u64,
-}
-
-fn to_bytes<T: Copy>(slice: &[T]) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(
-            slice.as_ptr() as *const u8,
-            slice.len() * std::mem::size_of::<T>(),
-        )
-    }
+    device.create_image_with_data(
+        nbn::ImageDescriptor {
+            name: filename,
+            extent: vk::Extent3D {
+                width: image_data.width(),
+                height: image_data.height(),
+                depth: 1,
+            },
+            format,
+        },
+        &image_data,
+    )
 }
 
 fn main() {
     env_logger::init();
 
-    let bytes = std::fs::read("Models/DamagedHelmet/glTF/DamagedHelmet.gltf").unwrap();
+    let base = "Models/Corset/glTF/";
+
+    let bytes = std::fs::read(&format!("{}/Corset.gltf", base)).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         _,
@@ -55,11 +55,37 @@ fn main() {
     let primitive = &mesh.primitives[0];
     //dbg!(primitive);
     //dbg!(&gltf.accessors);
-    let buffer = std::fs::read("Models/DamagedHelmet/glTF/DamagedHelmet.bin").unwrap();
 
-    let image_data = image::open("Models/DamagedHelmet/glTF/Default_AO.jpg")
-        .unwrap()
-        .to_rgba8();
+    let mut image_formats = vec![vk::Format::R8G8B8A8_UNORM; gltf.images.len()];
+
+    for material in &gltf.materials {
+        if let Some(tex) = &material.emissive_texture {
+            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
+        }
+        if let Some(tex) = &material.pbr_metallic_roughness.base_color_texture {
+            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
+        }
+    }
+
+    let instance = nbn::Instance::new(None);
+    let device = instance.create_device();
+
+    let images = gltf
+        .images
+        .iter()
+        .zip(&image_formats)
+        .map(|(image, format)| {
+            let path = format!("{}/{}", base, image.uri.as_ref().unwrap());
+            create_image(&device, &path, *format)
+        })
+        .collect::<Vec<_>>();
+
+    let buffer = std::fs::read(&format!(
+        "{}/{}",
+        base,
+        gltf.buffers[0].uri.as_ref().unwrap()
+    ))
+    .unwrap();
 
     let primitives: Vec<Primitive> = mesh
         .primitives
@@ -68,6 +94,37 @@ fn main() {
             indices: primitive.indices.unwrap() as u32,
             positions: primitive.attributes.position.unwrap() as u32,
             uvs: primitive.attributes.texcoord_0.unwrap() as u32,
+            material: primitive.material.unwrap() as u32,
+        })
+        .collect();
+
+    let materials: Vec<Material> = gltf
+        .materials
+        .iter()
+        .map(|material| Material {
+            base_colour_image: *images[gltf.textures[material
+                .pbr_metallic_roughness
+                .base_color_texture
+                .as_ref()
+                .unwrap()
+                .index]
+                .source
+                .unwrap()]
+            .image,
+            metallic_roughness_image: *images[gltf.textures[material
+                .pbr_metallic_roughness
+                .metallic_roughness_texture
+                .as_ref()
+                .unwrap()
+                .index]
+                .source
+                .unwrap()]
+            .image,
+            emissive_image: material
+                .emissive_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .unwrap_or(u32::MAX),
         })
         .collect();
 
@@ -88,21 +145,12 @@ fn main() {
         })
         .collect();
 
-    let instance = nbn::Instance::new(None);
-    let device = instance.create_device();
+    let num_indices = accessors[primitive.indices.unwrap()].count;
 
-    let image = device.create_image_with_data(
-        nbn::ImageDescriptor {
-            name: "wow",
-            extent: vk::Extent3D {
-                width: image_data.width(),
-                height: image_data.height(),
-                depth: 1,
-            },
-            format: vk::Format::R8G8B8A8_UNORM,
-        },
-        &image_data,
-    );
+    let materials = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+        name: "materials",
+        data: &materials,
+    });
 
     let buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
         name: "buffer",
@@ -127,6 +175,7 @@ fn main() {
             accessors: *accessors,
             buffer: *buffer,
             primitives: *primitives,
+            materials: *materials,
         }],
     });
 
@@ -139,7 +188,7 @@ fn main() {
 
     let output = device.create_buffer(nbn::BufferDescriptor {
         name: "output_buffer",
-        size: scene_size * scene_size * scene_size,
+        size: scene_size * scene_size * scene_size * std::mem::size_of::<PackedMaterial>() as u64,
         ty: nbn::BufferType::Download,
     });
 
@@ -151,6 +200,14 @@ fn main() {
         device
             .begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
             .unwrap();
+
+        device.cmd_fill_buffer(
+            *command_buffer,
+            *output.buffer,
+            0,
+            vk::WHOLE_SIZE,
+            std::mem::transmute(PackedMaterial::INVALID),
+        );
 
         device.cmd_bind_pipeline(
             *command_buffer,
@@ -172,9 +229,6 @@ fn main() {
             output: u64,
             gltf: u64,
             scene_size: u32,
-            image: u32,
-            //image: glam::UVec2,
-            
         }
 
         device.cmd_push_constants(
@@ -182,25 +236,34 @@ fn main() {
             *compute_pipeline.layout,
             vk::ShaderStageFlags::COMPUTE,
             0,
-            to_bytes(&[Input {
+            nbn::cast_slice(&[Input {
                 output: *output,
                 gltf: *gltf,
                 scene_size: scene_size as u32,
-                image: *image.image
-                //image: glam::UVec2::new(*image.image, 0),
             }]),
         );
 
-        device.cmd_dispatch(*command_buffer, 14556_u32.div_ceil(64), 1, 1);
+        device.cmd_dispatch(*command_buffer, (num_indices / 3).div_ceil(64), 1, 1);
 
         device.end_command_buffer(*command_buffer).unwrap();
+
+        let semaphores: Vec<vk::Semaphore> = images.iter().map(|image| *image.semaphore).collect();
 
         device
             .device
             .queue_submit(
                 device.queue,
                 &[vk::SubmitInfo::default()
-                    .command_buffers(&[*image.command_buffer, *command_buffer])],
+                    .wait_semaphores(&semaphores)
+                    .wait_dst_stage_mask(&[
+                        vk::PipelineStageFlags::TRANSFER,
+                        vk::PipelineStageFlags::TRANSFER,
+                    ])
+                    .command_buffers(&[
+                        //*emissive_image.command_buffer,
+                        //*image.command_buffer,
+                        *command_buffer,
+                    ])],
                 *fence,
             )
             .unwrap();
@@ -208,10 +271,22 @@ fn main() {
         device.device.wait_for_fences(&[*fence], true, !0).unwrap();
     }
 
-    let slice = output.allocation.mapped_slice().unwrap();
-
-    let tree = tree64::Tree64::new((slice, [scene_size as u32; 3]));
-    dbg!(slice.iter().filter(|&&x| x != 0).count());
+    let tree = tree64::Tree64::new(tree64::FlatArray {
+        values: output.try_as_slice::<PackedMaterial>().unwrap(),
+        dimensions: [scene_size as u32; 3],
+        empty_value: PackedMaterial::INVALID,
+    }); //  (output, [scene_size as u32; 3]));
+    dbg!(
+        &tree.stats,
+        tree.nodes.len() * std::mem::size_of::<tree64::Node>(),
+        tree.data.len() * std::mem::size_of::<PackedMaterial>()
+    );
+    for d in &*tree.data {
+        if d.ty_and_aux_value != 0 {
+            //println!("{:08b}", d.ty_and_aux_value);
+        }
+    }
+    //dbg!(slice.iter().filter(|&&x| x != 0).count());
     tree.serialize(std::fs::File::create("out.tree64").unwrap())
         .unwrap();
 }

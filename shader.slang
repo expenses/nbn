@@ -1,45 +1,4 @@
-struct BufferView {
-    uint byte_offset;
-}
-
-struct Accessor {
-    uint buffer_view;
-    uint count;
-
-    uint8_t* ptr(Gltf* gltf) {
-        BufferView buffer_view = gltf.buffer_views[buffer_view];
-        return gltf.buffer + buffer_view.byte_offset;
-    }
-};
-
-struct Primitive {
-    uint indices;
-    uint positions;
-    uint uvs;
-
-    uint num_indices(Gltf* gltf) {
-        return gltf.accessors[indices].count;
-    }
-
-    uint16_t* indices_ptr(Gltf* gltf) {
-        return (uint16_t*)gltf.accessors[indices].ptr(gltf);
-    }
-
-    float3* positions_ptr(Gltf* gltf) {
-        return (float3*)gltf.accessors[positions].ptr(gltf);
-    }
-
-    float2* uvs_ptr(Gltf* gltf) {
-        return (float2*)gltf.accessors[uvs].ptr(gltf);
-    }
-}
-
-struct Gltf {
-    BufferView* buffer_views;
-    Accessor* accessors;
-    Primitive* primitives;
-    uint8_t* buffer;
-};
+#include "gltf.slang"
 
 interface IVisitor {
     void visit(int3 pos);
@@ -115,20 +74,6 @@ func interpolate<T: IFloat>(T[3] values, float3 barycentrics) -> T {
     return values[0] * T(barycentrics.x) + values[1] * T(barycentrics.y) + values[2] * T(barycentrics.z);
 }
 
-struct Writer: IVisitor {
-    uint8_t* output;
-    uint scene_size;
-    float3[3] positions;
-    float2[3] uvs;
-    DescriptorHandle<Sampler2D> image;
-
-    void visit(int3 pos) {
-        let barycentrics = ProjectPointOnTriangle(pos, positions);
-        let uv = interpolate(uvs, barycentrics);
-        let value = image.SampleLevel(uv, 0).x;
-        output[pos.x + pos.y * scene_size + pos.z * scene_size * scene_size] = uint8_t(value * 128.0);
-    }
-}
 
 func fetch_3<T, I: IInteger>(T* values, I* indices) -> T[3] {
     return {
@@ -138,19 +83,72 @@ func fetch_3<T, I: IInteger>(T* values, I* indices) -> T[3] {
     };
 }
 
+uint8_t posterize(float value, uint bits) {
+    return uint8_t(round(value * (pow(2, bits) - 1)));
+}
+
+func linear_to_srgb<int N>(value: vector<float, N>) -> vector<uint8_t, N> {
+    let srgb = select(value <= 0.0031308, value * 12.92, 1.055 * pow(value, 1.0 / 2.4) - 0.055);
+    // Convert to u8 (0-255 range)
+    return vector<uint8_t, N>(round(srgb * 255.0));
+}
+
+struct Writer: IVisitor {
+    uint8_t4* output;
+    uint scene_size;
+    float3[3] positions;
+    float2[3] uvs;
+    Optional<DescriptorHandle<Sampler2D>> base_colour_image;
+    Optional<DescriptorHandle<Sampler2D>> emissive_image;
+    Optional<DescriptorHandle<Sampler2D>> metal_roughness_image;
+
+    void visit(int3 pos) {
+        let barycentrics = ProjectPointOnTriangle(pos, positions);
+        let uv = interpolate(uvs, barycentrics);
+
+        var emissive_sample = float3(0);
+        if (let emissive_image = emissive_image) {
+            emissive_sample = emissive_image.SampleLevel(uv, 0).rgb;
+        }
+
+        var base_colour = float3(1);
+        bool is_emissive = any(emissive_sample > 0.1);
+
+        if (is_emissive) {
+            base_colour = emissive_sample;
+        } else if (let base_colour_image = base_colour_image) {
+            base_colour = base_colour_image.SampleLevel(uv, 0).rgb;
+        }
+
+        var roughness = 1.0;
+        var is_metallic = false;
+
+        if (let metal_roughness_image = metal_roughness_image) {
+             let metal_roughness = metal_roughness_image.SampleLevel(uv, 0);
+            roughness = metal_roughness.g;
+            is_metallic = metal_roughness.b > 0.5;
+        }
+
+        output[pos.x + pos.y * scene_size + pos.z * scene_size * scene_size] = uint8_t4(
+            linear_to_srgb(base_colour),
+            uint8_t(is_emissive) | (uint8_t(is_metallic) << 1) | (posterize(roughness, 6) << 2)
+        );
+    }
+}
+
 [numthreads(64,1,1)]
 void main(
-    // really a uint8_t* but I get a validation warning if `storagePushConstant8` is not enabled
     uint32_t* output,
     Gltf* gltf,
     uniform uint scene_size,
-    uniform uint image,
     uint3 dispatch_thread_id : SV_DispatchThreadID,
 ) {
-    let primitive = (*gltf).primitives[0];
+    let primitive = gltf.primitives[0];
     let num_triangles = primitive.num_indices(gltf) / 3;
     let indices = primitive.indices_ptr(gltf);
     let positions = primitive.positions_ptr(gltf);
+
+    let material = gltf.materials[primitive.material];
 
     let thread = dispatch_thread_id.x;
 
@@ -158,8 +156,8 @@ void main(
         return;
     }
 
-    let size = 200;//float(scene_size) / 4;
-    let offset = float(scene_size) / 2;
+    let size = 4096 * 4;//float(scene_size) / 4;
+    let offset = float3(float(scene_size) / 2,0,float(scene_size) / 2);//float(scene_size) / 2;
 
     var triangle = fetch_3(positions, indices + thread * 3);
     triangle[0] = triangle[0] * size + offset;
@@ -168,7 +166,22 @@ void main(
 
     let uvs = fetch_3(primitive.uvs_ptr(gltf), indices + thread * 3);
 
-    let writer = Writer((uint8_t*)output, scene_size, triangle, uvs, DescriptorHandle<Sampler2D>(image));
+    Writer writer;
+    writer.output = (uint8_t4*)output;
+    writer.scene_size = scene_size;
+    writer.positions = triangle;
+    writer.uvs = uvs;
 
+    uint max_value = 4294967295;
+
+    if (material.base_colour_image != max_value) {
+        writer.base_colour_image = DescriptorHandle<Sampler2D>(material.base_colour_image);
+    }
+    if (material.emissive_image != max_value) {
+        writer.emissive_image = DescriptorHandle<Sampler2D>(material.emissive_image);
+    }
+    if (material.metallic_roughness_image != max_value) {
+        writer.metal_roughness_image = DescriptorHandle<Sampler2D>(material.metallic_roughness_image);
+    }
     VoxelizeTriangleSurface(triangle, writer);
 }
