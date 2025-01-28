@@ -101,6 +101,7 @@ struct Writer: IVisitor {
     Optional<DescriptorHandle<Sampler2D>> base_colour_image;
     Optional<DescriptorHandle<Sampler2D>> emissive_image;
     Optional<DescriptorHandle<Sampler2D>> metal_roughness_image;
+    bool is_alpha_clipped;
 
     void visit(int3 pos) {
         if (any(pos >= scene_size) || any(pos < 0)) {
@@ -110,18 +111,27 @@ struct Writer: IVisitor {
         let barycentrics = ProjectPointOnTriangle(pos, positions);
         let uv = interpolate(uvs, barycentrics);
 
+        var base_colour = float3(1);
+
+        if (let base_colour_image = base_colour_image) {
+            float4 sample = base_colour_image.SampleLevel(uv, 0);
+
+            if (is_alpha_clipped && sample.a < 0.5) {
+                return;
+            }
+
+            base_colour = sample.rgb;
+        }
+
         var emissive_sample = float3(0);
         if (let emissive_image = emissive_image) {
             emissive_sample = emissive_image.SampleLevel(uv, 0).rgb;
         }
 
-        var base_colour = float3(1);
         bool is_emissive = any(emissive_sample > 0.1);
 
         if (is_emissive) {
             base_colour = emissive_sample;
-        } else if (let base_colour_image = base_colour_image) {
-            base_colour = base_colour_image.SampleLevel(uv, 0).rgb;
         }
 
         var roughness = 1.0;
@@ -140,41 +150,73 @@ struct Writer: IVisitor {
     }
 }
 
+bool outside(float3 vertex, uint scene_size) {
+    return any(vertex < 0) || any(vertex >= scene_size);
+}
+
 [numthreads(64,1,1)]
 void main(
+    // this is sadly not allowed to be a uint8 type as that causes a validation
+    // error without `storagePushConstant8` enabled even though it shouldn't require it.
     uint32_t* output,
     Gltf* gltf,
     uniform uint scene_size,
     uint3 dispatch_thread_id : SV_DispatchThreadID,
 ) {
-    let primitive = gltf.primitives[0];
-    let num_triangles = primitive.num_indices(gltf) / 3;
-    let indices = primitive.indices_ptr(gltf);
+    uint primitive_index;
+    uint triangle_offset = 0;
+    uint num_triangles;
+    Primitive primitive;
+    bool broke_out = false;
+
+    let thread = dispatch_thread_id.x;
+
+    for (primitive_index = 0; primitive_index < gltf.num_primitives; primitive_index++) {
+        primitive = gltf.primitives[primitive_index];
+        num_triangles = primitive.num_indices(gltf) / 3;
+        let total_triangle_count = triangle_offset + num_triangles;
+        if (thread < total_triangle_count) {
+            broke_out = true;
+            break;
+        }
+        triangle_offset = total_triangle_count;
+    }
+
+    if (!broke_out) {
+        return;
+    }
+
+    let triangle_index = thread - triangle_offset;
+
+    let indices = primitive.indices_ptr(gltf) + triangle_index * 3;
     let positions = primitive.positions_ptr(gltf);
 
     let material = gltf.materials[primitive.material];
 
-    let thread = dispatch_thread_id.x;
+    let size = 1.0/3.0;//float(scene_size) / 4;
+    let offset = float(scene_size) / 2;
 
-    if (thread >= num_triangles) {
-        return;
-    }
+    var triangle = fetch_3(positions, indices);
+    triangle[0] = triangle[0].xzy;
+    triangle[1] = triangle[1].xzy;
+    triangle[2] = triangle[2].xzy;
 
-    let size = 4096 * 4;//float(scene_size) / 4;
-    let offset = float3(float(scene_size) / 2,0,float(scene_size) / 2);//float(scene_size) / 2;
-
-    var triangle = fetch_3(positions, indices + thread * 3);
     triangle[0] = triangle[0] * size + offset;
     triangle[1] = triangle[1] * size + offset;
     triangle[2] = triangle[2] * size + offset;
 
-    let uvs = fetch_3(primitive.uvs_ptr(gltf), indices + thread * 3);
+    if (outside(triangle[0], scene_size) && outside(triangle[1], scene_size) && outside(triangle[2], scene_size)) {
+        return;
+    }
+
+    let uvs = fetch_3(primitive.uvs_ptr(gltf), indices);
 
     Writer writer;
     writer.output = (uint8_t4*)output;
     writer.scene_size = scene_size;
     writer.positions = triangle;
     writer.uvs = uvs;
+    writer.is_alpha_clipped = (material.flags & 1) == 1;
 
     uint max_value = 4294967295;
 

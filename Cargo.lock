@@ -1944,6 +1944,7 @@ dependencies = [
 [[package]]
 name = "slang_struct"
 version = "0.0.2"
+source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#38bd95a3aa0608b47b562f2d6c3a0c090d420d81"
 dependencies = [
  "logos",
  "proc-macro2",
@@ -2137,6 +2138,7 @@ checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 [[package]]
 name = "tree64"
 version = "0.1.0"
+source = "git+https://github.com/expenses/tree64#920cf1b4118bfb8ba4aea4a5b9a5466ac81bcbf8"
 dependencies = [
  "arrayvec",
  "bytemuck",

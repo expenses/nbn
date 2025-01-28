@@ -2,6 +2,7 @@ struct Material {
     uint emissive_image;
     uint base_colour_image;
     uint metallic_roughness_image;
+    uint flags;
 }
 
 struct BufferView {
@@ -11,10 +12,11 @@ struct BufferView {
 struct Accessor {
     uint buffer_view;
     uint count;
+    uint byte_offset;
 
     uint8_t* ptr(Gltf* gltf) {
         BufferView buffer_view = gltf.buffer_views[buffer_view];
-        return gltf.buffer + buffer_view.byte_offset;
+        return gltf.buffer + buffer_view.byte_offset + byte_offset;
     };
 }
 
@@ -47,4 +49,5 @@ struct Gltf {
     Primitive* primitives;
     uint8_t* buffer;
     Material* materials;
+    uint num_primitives;
 }

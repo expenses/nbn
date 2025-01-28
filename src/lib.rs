@@ -314,8 +314,19 @@ impl Instance {
                 layout: descriptor_set_layout,
                 index: AtomicU32::new(0),
                 linear_sampler: Sampler::from_raw(
-                    unsafe { device.create_sampler(&vk::SamplerCreateInfo::default(), None) }
-                        .unwrap(),
+                    unsafe {
+                        device.create_sampler(
+                            &vk::SamplerCreateInfo::default()
+                                .mag_filter(vk::Filter::LINEAR)
+                                .min_filter(vk::Filter::LINEAR)
+                                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                                .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                                .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                                .address_mode_w(vk::SamplerAddressMode::REPEAT),
+                            None,
+                        )
+                    }
+                    .unwrap(),
                     &device,
                 ),
             }),

@@ -43,9 +43,9 @@ fn create_image(
 fn main() {
     env_logger::init();
 
-    let base = "Models/Corset/glTF/";
+    let base = "Models/Sponza/glTF/";
 
-    let bytes = std::fs::read(&format!("{}/Corset.gltf", base)).unwrap();
+    let bytes = std::fs::read(&format!("{}/Sponza.gltf", base)).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         _,
@@ -54,10 +54,7 @@ fn main() {
     assert_eq!(gltf.nodes.len(), 1);
     let node = &gltf.nodes[0];
     let mesh = &gltf.meshes[node.mesh.unwrap()];
-    assert_eq!(mesh.primitives.len(), 1);
-    let primitive = &mesh.primitives[0];
-    //dbg!(primitive);
-    //dbg!(&gltf.accessors);
+    dbg!(gltf.meshes.len(), gltf.meshes[0].primitives.len());
 
     let mut image_formats = vec![vk::Format::R8G8B8A8_UNORM; gltf.images.len()];
 
@@ -114,20 +111,18 @@ fn main() {
                 .source
                 .unwrap()]
             .image,
-            metallic_roughness_image: *images[gltf.textures[material
+            metallic_roughness_image: material
                 .pbr_metallic_roughness
                 .metallic_roughness_texture
                 .as_ref()
-                .unwrap()
-                .index]
-                .source
-                .unwrap()]
-            .image,
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .unwrap_or(u32::MAX),
             emissive_image: material
                 .emissive_texture
                 .as_ref()
                 .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
                 .unwrap_or(u32::MAX),
+            flags: matches!(material.alpha_mode, goth_gltf::AlphaMode::Mask) as u32,
         })
         .collect();
 
@@ -145,10 +140,17 @@ fn main() {
         .map(|accessor| Accessor {
             buffer_view: accessor.buffer_view.unwrap() as u32,
             count: accessor.count as _,
+            byte_offset: accessor.byte_offset as u32,
         })
         .collect();
 
-    let num_indices = accessors[primitive.indices.unwrap()].count;
+    let num_indices: u32 = gltf.meshes[0]
+        .primitives
+        .iter()
+        .map(|primitive| accessors[primitive.indices.unwrap()].count)
+        .sum();
+
+    dbg!(num_indices);
 
     let materials = device.create_buffer_with_data(nbn::BufferInitDescriptor {
         name: "materials",
@@ -179,6 +181,7 @@ fn main() {
             buffer: *buffer,
             primitives: *primitives,
             materials: *materials,
+            num_primitives: gltf.meshes[0].primitives.len() as u32,
         }],
     });
 

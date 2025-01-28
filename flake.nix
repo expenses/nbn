@@ -25,7 +25,11 @@
                 };
                 cmakeFlags = attrs.cmakeFlags ++ ["-DSLANG_RHI_ENABLE_CUDA=0"];
               }))
-              spirv-tools cargo-expand linuxPackages_latest.perf hotspot renderdoc
+              spirv-tools
+              cargo-expand
+              linuxPackages_latest.perf
+              hotspot
+              renderdoc
             ];
             buildInputs = [vulkan-loader];
           };
