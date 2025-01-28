@@ -1,1 +1,1 @@
-slangc shader.slang -g -O3 -warnings-as-errors all -o shader.spv
+slangc shader.slang -O3 -warnings-as-errors all -o shader.spv

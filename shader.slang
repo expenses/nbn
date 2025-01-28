@@ -103,6 +103,10 @@ struct Writer: IVisitor {
     Optional<DescriptorHandle<Sampler2D>> metal_roughness_image;
 
     void visit(int3 pos) {
+        if (any(pos >= scene_size) || any(pos < 0)) {
+            return;
+        }
+
         let barycentrics = ProjectPointOnTriangle(pos, positions);
         let uv = interpolate(uvs, barycentrics);
 

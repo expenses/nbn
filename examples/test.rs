@@ -1,4 +1,5 @@
 use ash::vk;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 slang_struct::slang_include!("gltf.slang");
 
@@ -20,6 +21,7 @@ fn create_image(
     device: &nbn::Device,
     filename: &str,
     format: vk::Format,
+    transition_to: nbn::QueueType,
 ) -> nbn::PendingImageUpload {
     let image_data = image::open(filename).unwrap().to_rgba8();
 
@@ -34,6 +36,7 @@ fn create_image(
             format,
         },
         &image_data,
+        transition_to,
     )
 }
 
@@ -72,11 +75,11 @@ fn main() {
 
     let images = gltf
         .images
-        .iter()
+        .par_iter()
         .zip(&image_formats)
         .map(|(image, format)| {
             let path = format!("{}/{}", base, image.uri.as_ref().unwrap());
-            create_image(&device, &path, *format)
+            create_image(&device, &path, *format, nbn::QueueType::Compute)
         })
         .collect::<Vec<_>>();
 
@@ -184,7 +187,7 @@ fn main() {
         path: "shader.spv",
     });
 
-    let scene_size = 512;
+    let scene_size = 1024;
 
     let output = device.create_buffer(nbn::BufferDescriptor {
         name: "output_buffer",
@@ -192,7 +195,7 @@ fn main() {
         ty: nbn::BufferType::Download,
     });
 
-    let command_buffer = device.create_command_buffer();
+    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
     unsafe {
         let fence = device.create_fence();
@@ -247,23 +250,30 @@ fn main() {
 
         device.end_command_buffer(*command_buffer).unwrap();
 
-        let semaphores: Vec<vk::Semaphore> = images.iter().map(|image| *image.semaphore).collect();
+        let transfer_command_buffers: Vec<vk::CommandBuffer> =
+            images.iter().map(|image| *image.command_buffer).collect();
+
+        let semaphore = device.create_semaphore();
 
         device
             .device
             .queue_submit(
-                device.queue,
+                *device.transfer_queue,
                 &[vk::SubmitInfo::default()
-                    .wait_semaphores(&semaphores)
-                    .wait_dst_stage_mask(&[
-                        vk::PipelineStageFlags::TRANSFER,
-                        vk::PipelineStageFlags::TRANSFER,
-                    ])
-                    .command_buffers(&[
-                        //*emissive_image.command_buffer,
-                        //*image.command_buffer,
-                        *command_buffer,
-                    ])],
+                    .signal_semaphores(&[*semaphore])
+                    .command_buffers(&transfer_command_buffers)],
+                vk::Fence::null(),
+            )
+            .unwrap();
+
+        device
+            .device
+            .queue_submit(
+                *device.compute_queue,
+                &[vk::SubmitInfo::default()
+                    .wait_semaphores(&[*semaphore])
+                    .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
+                    .command_buffers(&[*command_buffer])],
                 *fence,
             )
             .unwrap();
@@ -275,18 +285,12 @@ fn main() {
         values: output.try_as_slice::<PackedMaterial>().unwrap(),
         dimensions: [scene_size as u32; 3],
         empty_value: PackedMaterial::INVALID,
-    }); //  (output, [scene_size as u32; 3]));
+    });
     dbg!(
         &tree.stats,
         tree.nodes.len() * std::mem::size_of::<tree64::Node>(),
         tree.data.len() * std::mem::size_of::<PackedMaterial>()
     );
-    for d in &*tree.data {
-        if d.ty_and_aux_value != 0 {
-            //println!("{:08b}", d.ty_and_aux_value);
-        }
-    }
-    //dbg!(slice.iter().filter(|&&x| x != 0).count());
     tree.serialize(std::fs::File::create("out.tree64").unwrap())
         .unwrap();
 }

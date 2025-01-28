@@ -1097,6 +1097,7 @@ dependencies = [
  "log",
  "parking_lot",
  "presser",
+ "rayon",
  "slang_struct",
  "tree64",
  "vk-sync-fork",
