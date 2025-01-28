@@ -52,6 +52,12 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
+pub enum QueueType {
+    Graphics,
+    Compute,
+    Transfer,
+}
+
 pub struct Instance {
     instance: ash::Instance,
     debug_callback: DebugUtilsMessengerEXT,
@@ -132,42 +138,61 @@ impl Instance {
     }
 
     pub fn create_device(&self) -> Device {
-        let pdevices = unsafe {
+        let physical_devices = unsafe {
             self.instance
                 .enumerate_physical_devices()
                 .expect("Physical device error")
         };
 
-        let (pdevice, queue_family_index) = pdevices
-            .iter()
-            .find_map(|pdevice| {
-                unsafe {
-                    self.instance
-                        .get_physical_device_queue_family_properties(*pdevice)
-                }
-                .iter()
-                .enumerate()
-                .find_map(|(index, info)| {
-                    log::info!("{:?}", info);
-                    let supports_graphic_and_surface =
-                        info.queue_flags.contains(vk::QueueFlags::GRAPHICS);
-                    if supports_graphic_and_surface {
-                        Some((*pdevice, index))
-                    } else {
-                        None
-                    }
-                })
+        let (pdevice, _) = physical_devices
+            .into_iter()
+            .map(|pdevice| {
+                let properties = unsafe { self.instance.get_physical_device_properties(pdevice) };
+
+                (pdevice, properties)
             })
-            .expect("Couldn't find suitable device.");
+            .min_by_key(|(_, properties)| match properties.device_type {
+                vk::PhysicalDeviceType::DISCRETE_GPU => 0,
+                vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
+                vk::PhysicalDeviceType::VIRTUAL_GPU => 2,
+                vk::PhysicalDeviceType::OTHER => 3,
+                vk::PhysicalDeviceType::CPU => 4,
+                _ => 5,
+            })
+            .unwrap();
 
-        let queue_family_index = queue_family_index as u32;
-        let device_extension_names_raw = [swapchain::NAME.as_ptr()];
+        let queues = unsafe {
+            self.instance
+                .get_physical_device_queue_family_properties(pdevice)
+        };
 
-        let priorities = [1.0];
+        let graphics_queue_family_index = queues
+            .iter()
+            .position(|info| info.queue_flags.contains(vk::QueueFlags::GRAPHICS))
+            .unwrap();
 
-        let queue_info = vk::DeviceQueueCreateInfo::default()
-            .queue_family_index(queue_family_index)
-            .queue_priorities(&priorities);
+        let compute_queue_family_index = queues
+            .iter()
+            .enumerate()
+            .position(|(i, info)| {
+                info.queue_flags.contains(vk::QueueFlags::COMPUTE)
+                    && i != graphics_queue_family_index
+            })
+            .unwrap_or(graphics_queue_family_index);
+
+        let transfer_queue_family_index = queues
+            .iter()
+            .enumerate()
+            .position(|(i, info)| {
+                info.queue_flags.contains(vk::QueueFlags::TRANSFER)
+                    && i != graphics_queue_family_index
+                    && i != compute_queue_family_index
+            })
+            .unwrap_or(compute_queue_family_index);
+
+        let graphics_queue_family_index = graphics_queue_family_index as u32;
+        let compute_queue_family_index = compute_queue_family_index as u32;
+        let transfer_queue_family_index = transfer_queue_family_index as u32;
 
         let mut enabled_vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default();
 
@@ -182,7 +207,7 @@ impl Instance {
         assert!(enabled_features.features.shader_int64 > 0);
         assert!(enabled_vulkan_1_2_features.buffer_device_address > 0);
         assert!(enabled_vulkan_1_2_features.shader_int8 > 0);
-        //assert!(enabled_vulkan_1_2_features.storage_push_constant8 > 0);
+        assert!(enabled_vulkan_1_2_features.descriptor_binding_sampled_image_update_after_bind > 0);
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
@@ -192,41 +217,44 @@ impl Instance {
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .shader_int8(true)
-            //.storage_push_constant8(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
             .runtime_descriptor_array(true);
-        //.descriptor_binding_partially_bound(true);
 
         let mut vulkan_1_3_features =
             vk::PhysicalDeviceVulkan13Features::default().dynamic_rendering(true);
 
-        let device_create_info = vk::DeviceCreateInfo::default()
-            .queue_create_infos(std::slice::from_ref(&queue_info))
-            .enabled_extension_names(&device_extension_names_raw)
-            .enabled_features(&vulkan_1_0_features)
-            .push_next(&mut vulkan_1_2_features)
-            .push_next(&mut vulkan_1_3_features);
+        let queue_infos = &[
+            vk::DeviceQueueCreateInfo::default()
+                .queue_family_index(graphics_queue_family_index)
+                .queue_priorities(&[1.0]),
+            vk::DeviceQueueCreateInfo::default()
+                .queue_family_index(compute_queue_family_index)
+                .queue_priorities(&[1.0]),
+            vk::DeviceQueueCreateInfo::default()
+                .queue_family_index(transfer_queue_family_index)
+                .queue_priorities(&[1.0]),
+        ];
 
         let device: ash::Device = unsafe {
             self.instance
-                .create_device(pdevice, &device_create_info, None)
+                .create_device(
+                    pdevice,
+                    &vk::DeviceCreateInfo::default()
+                        .queue_create_infos(queue_infos)
+                        .enabled_extension_names(&[swapchain::NAME.as_ptr()])
+                        .enabled_features(&vulkan_1_0_features)
+                        .push_next(&mut vulkan_1_2_features)
+                        .push_next(&mut vulkan_1_3_features),
+                    None,
+                )
                 .unwrap()
         };
-
-        let present_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-
-        let pool_create_info = vk::CommandPoolCreateInfo::default()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family_index);
-
-        let pool = CommandPool::from_raw(
-            unsafe { device.create_command_pool(&pool_create_info, None).unwrap() },
-            &device,
-        );
 
         let descriptor_pool = DescriptorPool::from_raw(
             unsafe {
                 device.create_descriptor_pool(
                     &vk::DescriptorPoolCreateInfo::default()
+                        .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
                         .max_sets(1)
                         .pool_sizes(&[vk::DescriptorPoolSize::default()
                             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
@@ -240,18 +268,18 @@ impl Instance {
 
         let descriptor_set_layout = DescriptorSetLayout::from_raw(
             unsafe {
-                //let mut flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
-                //    .binding_flags(&[vk::DescriptorBindingFlags::PARTIALLY_BOUND]);
+                let mut flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
+                    .binding_flags(&[vk::DescriptorBindingFlags::UPDATE_AFTER_BIND]);
 
                 device.create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[
-                        vk::DescriptorSetLayoutBinding::default()
+                    &vk::DescriptorSetLayoutCreateInfo::default()
+                        .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+                        .bindings(&[vk::DescriptorSetLayoutBinding::default()
                             .binding(0)
                             .stage_flags(vk::ShaderStageFlags::COMPUTE)
                             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1024),
-                    ]),
-                    // .push_next(&mut flags),
+                            .descriptor_count(1024)])
+                        .push_next(&mut flags),
                     None,
                 )
             }
@@ -291,12 +319,11 @@ impl Instance {
                     &device,
                 ),
             }),
+            graphics_queue: Queue::new(&device, graphics_queue_family_index),
+            compute_queue: Queue::new(&device, compute_queue_family_index),
+            transfer_queue: Queue::new(&device, transfer_queue_family_index),
             device,
-
             allocator: Some(Arc::new(Mutex::new(allocator))),
-            queue: present_queue,
-            command_pool: std::mem::ManuallyDrop::new(pool),
-            queue_family_index,
         }
     }
 }
@@ -308,6 +335,28 @@ impl Drop for Instance {
                 .destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
         }
+    }
+}
+
+pub struct Queue {
+    inner: vk::Queue,
+    index: u32,
+}
+
+impl Queue {
+    fn new(device: &ash::Device, index: u32) -> Self {
+        Self {
+            inner: unsafe { device.get_device_queue(index, 0) },
+            index,
+        }
+    }
+}
+
+impl std::ops::Deref for Queue {
+    type Target = vk::Queue;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 
@@ -323,11 +372,11 @@ pub struct Descriptors {
 
 pub struct Device {
     pub device: ash::Device,
-    pub queue: vk::Queue,
     pub descriptors: std::mem::ManuallyDrop<Descriptors>,
-    command_pool: std::mem::ManuallyDrop<CommandPool>,
     allocator: Option<Allocator>,
-    pub queue_family_index: u32,
+    pub graphics_queue: Queue,
+    pub compute_queue: Queue,
+    pub transfer_queue: Queue,
 }
 
 pub enum BufferType {
@@ -433,13 +482,12 @@ impl Device {
         }
 
         Image {
-            image: image,
+            image,
             extent: desc.extent,
             subresource_range,
             index,
             allocator,
             allocation,
-            queue_family_index: self.queue_family_index,
         }
     }
 
@@ -447,26 +495,35 @@ impl Device {
         &self,
         desc: ImageDescriptor,
         bytes: &[u8],
+        transition_to: QueueType,
     ) -> PendingImageUpload {
         let buffer = self.create_buffer_with_data(BufferInitDescriptor {
             name: desc.name,
             data: bytes,
         });
         let image = self.create_image(desc);
-        let command_buffer = self.create_command_buffer();
-        let semaphore = self.create_semaphore();
-        let fence = self.create_fence();
+        let command_buffer = self.create_command_buffer(QueueType::Transfer);
 
         unsafe {
             self.begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
                 .unwrap();
 
             vk_sync::cmd::pipeline_barrier(
-                &*self,
+                self,
                 *command_buffer,
                 None,
                 &[],
-                &[image.as_transition_barrier(&[], &[vk_sync::AccessType::TransferWrite], true)],
+                &[vk_sync::ImageBarrier {
+                    previous_accesses: &[],
+                    next_accesses: &[vk_sync::AccessType::TransferWrite],
+                    previous_layout: vk_sync::ImageLayout::Optimal,
+                    next_layout: vk_sync::ImageLayout::Optimal,
+                    range: image.subresource_range,
+                    discard_contents: true,
+                    image: *image.image,
+                    src_queue_family_index: self.transfer_queue.index,
+                    dst_queue_family_index: self.transfer_queue.index,
+                }],
             );
 
             self.cmd_copy_buffer_to_image(
@@ -484,36 +541,32 @@ impl Device {
             );
 
             vk_sync::cmd::pipeline_barrier(
-                &*self,
+                self,
                 *command_buffer,
                 None,
                 &[],
-                &[image.as_transition_barrier(
-                    &[vk_sync::AccessType::TransferWrite],
-                    &[vk_sync::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer],
-                    false,
-                )],
+                &[vk_sync::ImageBarrier {
+                    previous_accesses: &[vk_sync::AccessType::TransferWrite],
+                    next_accesses: &[
+                        vk_sync::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer,
+                    ],
+                    previous_layout: vk_sync::ImageLayout::Optimal,
+                    next_layout: vk_sync::ImageLayout::Optimal,
+                    range: image.subresource_range,
+                    discard_contents: false,
+                    image: *image.image,
+                    src_queue_family_index: self.transfer_queue.index,
+                    dst_queue_family_index: self.get_queue(transition_to).index,
+                }],
             );
 
             self.end_command_buffer(*command_buffer).unwrap();
-
-            self.device
-                .queue_submit(
-                    self.queue,
-                    &[vk::SubmitInfo::default()
-                        .command_buffers(&[*command_buffer])
-                        .signal_semaphores(&[*semaphore])],
-                    *fence,
-                )
-                .unwrap();
         }
 
         PendingImageUpload {
             image,
             _upload_buffer: buffer,
-            _command_buffer: command_buffer,
-            semaphore,
-            fence,
+            command_buffer,
         }
     }
 
@@ -566,21 +619,20 @@ impl Device {
             allocation,
             allocator,
             address,
-            alignment: memory_requirements.alignment,
         }
     }
 
     pub fn create_buffer_with_data<T: Copy>(&self, desc: BufferInitDescriptor<T>) -> Buffer {
         let mut buffer = self.create_buffer(BufferDescriptor {
             name: desc.name,
-            size: ((desc.data.len() * std::mem::size_of::<T>()) as u64)
+            size: std::mem::size_of_val(desc.data)
                 // Required min size for AMDVLK
-                .next_multiple_of(16),
+                .next_multiple_of(16) as u64,
             ty: BufferType::Upload,
         });
 
         presser::copy_from_slice_to_offset_with_align(
-            &desc.data,
+            desc.data,
             &mut buffer.allocation,
             0,
             0, //buffer.alignment as usize,
@@ -639,11 +691,33 @@ impl Device {
         }
     }
 
-    pub fn create_command_buffer(&self) -> CommandBuffer {
+    fn get_queue(&self, ty: QueueType) -> &Queue {
+        match ty {
+            QueueType::Graphics => &self.graphics_queue,
+            QueueType::Compute => &self.compute_queue,
+            QueueType::Transfer => &self.transfer_queue,
+        }
+    }
+
+    pub fn create_command_buffer(&self, ty: QueueType) -> CommandBuffer {
+        let queue_family_index = self.get_queue(ty).index;
+
+        let pool_create_info =
+            vk::CommandPoolCreateInfo::default().queue_family_index(queue_family_index);
+
+        let pool = CommandPool::from_raw(
+            unsafe {
+                self.device
+                    .create_command_pool(&pool_create_info, None)
+                    .unwrap()
+            },
+            &self.device,
+        );
+
         let command_buffers = unsafe {
             self.device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
-                    .command_pool(**self.command_pool)
+                    .command_pool(*pool)
                     .command_buffer_count(1),
             )
         }
@@ -652,7 +726,7 @@ impl Device {
         CommandBuffer {
             command_buffer: command_buffers[0],
             device: self.device.clone(),
-            pool: **self.command_pool,
+            pool,
         }
     }
 
@@ -756,7 +830,7 @@ wrap_raii_struct!(Semaphore, vk::Semaphore, ash::Device::destroy_semaphore);
 
 pub struct CommandBuffer {
     pub command_buffer: vk::CommandBuffer,
-    pool: vk::CommandPool,
+    pool: CommandPool,
     device: ash::Device,
 }
 
@@ -764,7 +838,7 @@ impl Drop for CommandBuffer {
     fn drop(&mut self) {
         unsafe {
             self.device
-                .free_command_buffers(self.pool, &[self.command_buffer]);
+                .free_command_buffers(*self.pool, &[self.command_buffer]);
         }
     }
 }
@@ -803,7 +877,6 @@ impl Drop for Device {
         drop(allocator);
 
         unsafe {
-            std::mem::ManuallyDrop::drop(&mut self.command_pool);
             std::mem::ManuallyDrop::drop(&mut self.descriptors);
 
             self.device.destroy_device(None);
@@ -816,7 +889,6 @@ pub struct Buffer {
     pub allocation: gpu_allocator::vulkan::Allocation,
     allocator: Allocator,
     address: u64,
-    alignment: u64,
 }
 
 impl Buffer {
@@ -847,28 +919,6 @@ pub struct Image {
     index: u32,
     pub extent: vk::Extent3D,
     pub subresource_range: vk::ImageSubresourceRange,
-    pub queue_family_index: u32,
-}
-
-impl Image {
-    fn as_transition_barrier<'a>(
-        &self,
-        previous: &'a [vk_sync::AccessType],
-        next: &'a [vk_sync::AccessType],
-        discard_contents: bool,
-    ) -> vk_sync::ImageBarrier<'a> {
-        vk_sync::ImageBarrier {
-            previous_accesses: previous,
-            next_accesses: next,
-            previous_layout: vk_sync::ImageLayout::Optimal,
-            next_layout: vk_sync::ImageLayout::Optimal,
-            range: self.subresource_range,
-            discard_contents,
-            image: *self.image,
-            src_queue_family_index: self.queue_family_index,
-            dst_queue_family_index: self.queue_family_index,
-        }
-    }
 }
 
 impl std::ops::Deref for Image {
@@ -888,10 +938,8 @@ impl Drop for Image {
 
 pub struct PendingImageUpload {
     _upload_buffer: Buffer,
-    _command_buffer: CommandBuffer,
+    pub command_buffer: CommandBuffer,
     pub image: Image,
-    pub semaphore: Semaphore,
-    pub fence: Fence,
 }
 
 impl PendingImageUpload {
@@ -900,11 +948,11 @@ impl PendingImageUpload {
     }
 }
 
-pub fn cast_slice<'a, I: Copy, O: Copy>(slice: &'a [I]) -> &'a [O] {
+pub fn cast_slice<I: Copy, O: Copy>(slice: &[I]) -> &[O] {
     unsafe {
         std::slice::from_raw_parts(
             slice.as_ptr() as *const O,
-            (slice.len() * std::mem::size_of::<I>()) / std::mem::size_of::<O>(),
+            std::mem::size_of_val(slice) / std::mem::size_of::<O>(),
         )
     }
 }
