@@ -1944,7 +1944,6 @@ dependencies = [
 [[package]]
 name = "slang_struct"
 version = "0.0.2"
-source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#38bd95a3aa0608b47b562f2d6c3a0c090d420d81"
 dependencies = [
  "logos",
  "proc-macro2",

@@ -43,17 +43,14 @@ fn create_image(
 fn main() {
     env_logger::init();
 
-    let base = "Models/Sponza/glTF/";
+    let base = "San_Miguel/";
 
-    let bytes = std::fs::read(&format!("{}/Sponza.gltf", base)).unwrap();
+    let bytes = std::fs::read(&format!("{}/San_Miguel.gltf", base)).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         _,
     ) = goth_gltf::Gltf::from_bytes(&bytes).unwrap();
     assert!(buffer.is_none());
-    assert_eq!(gltf.nodes.len(), 1);
-    let node = &gltf.nodes[0];
-    let mesh = &gltf.meshes[node.mesh.unwrap()];
     dbg!(gltf.meshes.len(), gltf.meshes[0].primitives.len());
 
     let mut image_formats = vec![vk::Format::R8G8B8A8_UNORM; gltf.images.len()];
@@ -67,8 +64,7 @@ fn main() {
         }
     }
 
-    let instance = nbn::Instance::new(None);
-    let device = instance.create_device();
+    let device = nbn::Device::new(None);
 
     let images = gltf
         .images
@@ -87,9 +83,9 @@ fn main() {
     ))
     .unwrap();
 
-    let primitives: Vec<Primitive> = mesh
-        .primitives
-        .iter()
+    let primitives_iter = || gltf.meshes.iter().flat_map(|mesh| &mesh.primitives);
+
+    let primitives: Vec<Primitive> = primitives_iter()
         .map(|primitive| Primitive {
             indices: primitive.indices.unwrap() as u32,
             positions: primitive.attributes.position.unwrap() as u32,
@@ -102,20 +98,17 @@ fn main() {
         .materials
         .iter()
         .map(|material| Material {
-            base_colour_image: *images[gltf.textures[material
+            base_colour_image: material
                 .pbr_metallic_roughness
                 .base_color_texture
                 .as_ref()
-                .unwrap()
-                .index]
-                .source
-                .unwrap()]
-            .image,
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .unwrap_or(u32::MAX),
             metallic_roughness_image: material
                 .pbr_metallic_roughness
                 .metallic_roughness_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| dbg!(*images[gltf.textures[tex.index].source.unwrap()].image))
                 .unwrap_or(u32::MAX),
             emissive_image: material
                 .emissive_texture
@@ -141,12 +134,13 @@ fn main() {
             buffer_view: accessor.buffer_view.unwrap() as u32,
             count: accessor.count as _,
             byte_offset: accessor.byte_offset as u32,
+            flags: (accessor.component_type == goth_gltf::ComponentType::UnsignedInt) as u32,
         })
         .collect();
 
-    let num_indices: u32 = gltf.meshes[0]
-        .primitives
-        .iter()
+    //panic!();
+
+    let num_indices: u32 = primitives_iter()
         .map(|primitive| accessors[primitive.indices.unwrap()].count)
         .sum();
 
@@ -181,7 +175,7 @@ fn main() {
             buffer: *buffer,
             primitives: *primitives,
             materials: *materials,
-            num_primitives: gltf.meshes[0].primitives.len() as u32,
+            num_primitives: primitives_iter().count() as u32,
         }],
     });
 

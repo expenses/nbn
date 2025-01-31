@@ -30,8 +30,10 @@
               linuxPackages_latest.perf
               hotspot
               renderdoc
+              gdb
             ];
             buildInputs = [vulkan-loader];
+            LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon];
           };
       }
     );

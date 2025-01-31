@@ -13,6 +13,7 @@ struct Accessor {
     uint buffer_view;
     uint count;
     uint byte_offset;
+    uint flags;
 
     uint8_t* ptr(Gltf* gltf) {
         BufferView buffer_view = gltf.buffer_views[buffer_view];
@@ -30,8 +31,16 @@ struct Primitive {
         return gltf.accessors[indices].count;
     }
 
-    uint16_t* indices_ptr(Gltf* gltf) {
-        return (uint16_t*)gltf.accessors[indices].ptr(gltf);
+    uint read_index(Gltf* gltf, uint id) {
+        let accessor = gltf.accessors[indices];
+
+        let ptr = gltf.accessors[indices].ptr(gltf);
+
+        if (accessor.flags == 1) {
+            return uint(((uint32_t*)ptr)[id]);
+        } else {
+            return uint(((uint16_t*)ptr)[id]);
+        }
     }
 
     float3* positions_ptr(Gltf* gltf) {

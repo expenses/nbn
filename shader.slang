@@ -75,11 +75,11 @@ func interpolate<T: IFloat>(T[3] values, float3 barycentrics) -> T {
 }
 
 
-func fetch_3<T, I: IInteger>(T* values, I* indices) -> T[3] {
+func fetch_3<T>(T* values, uint[3] indices) -> T[3] {
     return {
-        values[indices[0].toUInt()],
-        values[indices[1].toUInt()],
-        values[indices[2].toUInt()]
+        values[indices[0]],
+        values[indices[1]],
+        values[indices[2]]
     };
 }
 
@@ -98,25 +98,24 @@ struct Writer: IVisitor {
     uint scene_size;
     float3[3] positions;
     float2[3] uvs;
-    Optional<DescriptorHandle<Sampler2D>> base_colour_image;
-    Optional<DescriptorHandle<Sampler2D>> emissive_image;
-    Optional<DescriptorHandle<Sampler2D>> metal_roughness_image;
-    bool is_alpha_clipped;
+    Material material;
 
     void visit(int3 pos) {
         if (any(pos >= scene_size) || any(pos < 0)) {
             return;
         }
 
+        uint max_value = 4294967295;
+
         let barycentrics = ProjectPointOnTriangle(pos, positions);
         let uv = interpolate(uvs, barycentrics);
 
         var base_colour = float3(1);
 
-        if (let base_colour_image = base_colour_image) {
-            float4 sample = base_colour_image.SampleLevel(uv, 0);
+        if (material.base_colour_image != max_value) {
+            float4 sample = DescriptorHandle<Sampler2D>(material.base_colour_image).SampleLevel(uv, 0);
 
-            if (is_alpha_clipped && sample.a < 0.5) {
+            if ((material.flags & 1) == 1 && sample.a < 0.5) {
                 return;
             }
 
@@ -124,8 +123,8 @@ struct Writer: IVisitor {
         }
 
         var emissive_sample = float3(0);
-        if (let emissive_image = emissive_image) {
-            emissive_sample = emissive_image.SampleLevel(uv, 0).rgb;
+        if (material.emissive_image != max_value) {
+            emissive_sample = DescriptorHandle<Sampler2D>(material.emissive_image).SampleLevel(uv, 0).rgb;
         }
 
         bool is_emissive = any(emissive_sample > 0.1);
@@ -137,8 +136,8 @@ struct Writer: IVisitor {
         var roughness = 1.0;
         var is_metallic = false;
 
-        if (let metal_roughness_image = metal_roughness_image) {
-             let metal_roughness = metal_roughness_image.SampleLevel(uv, 0);
+        if (material.metallic_roughness_image != max_value) {
+            let metal_roughness = DescriptorHandle<Sampler2D>(material.metallic_roughness_image).SampleLevel(uv, 0);
             roughness = metal_roughness.g;
             is_metallic = metal_roughness.b > 0.5;
         }
@@ -188,13 +187,18 @@ void main(
 
     let triangle_index = thread - triangle_offset;
 
-    let indices = primitive.indices_ptr(gltf) + triangle_index * 3;
+    uint[3] indices = {
+        primitive.read_index(gltf, triangle_index * 3),
+        primitive.read_index(gltf, triangle_index * 3 + 1),
+        primitive.read_index(gltf, triangle_index * 3 + 2)
+    };
+
     let positions = primitive.positions_ptr(gltf);
 
     let material = gltf.materials[primitive.material];
 
-    let size = 1.0/3.0;//float(scene_size) / 4;
-    let offset = float(scene_size) / 2;
+    let size = 75;//float(scene_size) / 4;
+    let offset = 100;
 
     var triangle = fetch_3(positions, indices);
     triangle[0] = triangle[0].xzy;
@@ -216,18 +220,7 @@ void main(
     writer.scene_size = scene_size;
     writer.positions = triangle;
     writer.uvs = uvs;
-    writer.is_alpha_clipped = (material.flags & 1) == 1;
+    writer.material = material;
 
-    uint max_value = 4294967295;
-
-    if (material.base_colour_image != max_value) {
-        writer.base_colour_image = DescriptorHandle<Sampler2D>(material.base_colour_image);
-    }
-    if (material.emissive_image != max_value) {
-        writer.emissive_image = DescriptorHandle<Sampler2D>(material.emissive_image);
-    }
-    if (material.metallic_roughness_image != max_value) {
-        writer.metal_roughness_image = DescriptorHandle<Sampler2D>(material.metallic_roughness_image);
-    }
     VoxelizeTriangleSurface(triangle, writer);
 }
