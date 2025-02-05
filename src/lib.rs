@@ -1,3 +1,4 @@
+use ash::prelude::VkResult;
 use ash::vk::DebugUtilsMessengerEXT;
 use ash::{
     ext::debug_utils,
@@ -80,7 +81,18 @@ impl std::ops::Deref for Queue {
     }
 }
 
-type Allocator = Arc<Mutex<gpu_allocator::vulkan::Allocator>>;
+pub struct Allocator {
+    inner: Mutex<gpu_allocator::vulkan::Allocator>,
+    deallocation_mutex: parking_lot::Mutex<()>,
+    deallocation_notifier: parking_lot::Condvar,
+}
+
+impl Allocator {
+    pub fn wait_for_next_deallocation(&self) {
+        self.deallocation_notifier
+            .wait(&mut self.deallocation_mutex.lock());
+    }
+}
 
 pub struct Descriptors {
     _pool: DescriptorPool,
@@ -99,11 +111,12 @@ pub struct Device {
     pub device: ash::Device,
     pub physical_device: vk::PhysicalDevice,
     pub descriptors: std::mem::ManuallyDrop<Descriptors>,
-    allocator: std::mem::ManuallyDrop<Allocator>,
+    pub allocator: std::mem::ManuallyDrop<Arc<Allocator>>,
     pub graphics_queue: Queue,
     pub compute_queue: Queue,
     pub transfer_queue: Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
+    pub pipeline_layout: std::mem::ManuallyDrop<PipelineLayout>,
 }
 
 pub enum BufferType {
@@ -366,6 +379,43 @@ impl Device {
             })
             .unwrap();
 
+        let descriptors = std::mem::ManuallyDrop::new(Descriptors {
+            _pool: descriptor_pool,
+            set: descriptor_set,
+            layout: descriptor_set_layout,
+            index: AtomicU32::new(0),
+            linear_sampler: Sampler::from_raw(
+                unsafe {
+                    device.create_sampler(
+                        &vk::SamplerCreateInfo::default()
+                            .mag_filter(vk::Filter::LINEAR)
+                            .min_filter(vk::Filter::LINEAR)
+                            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                            .address_mode_w(vk::SamplerAddressMode::REPEAT),
+                        None,
+                    )
+                }
+                .unwrap(),
+                &device,
+            ),
+        });
+
+        let pipeline_layout = unsafe {
+            device.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&[*descriptors.layout])
+                    .push_constant_ranges(&[vk::PushConstantRange::default()
+                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                        .offset(0)
+                        // todo: use device max.
+                        .size(256)]),
+                None,
+            )
+        }
+        .unwrap();
+
         Self {
             physical_device: pdevice,
             swapchain_loader: ash::khr::swapchain::Device::new(&instance, &device),
@@ -374,34 +424,31 @@ impl Device {
             debug_callback,
             debug_utils_loader,
             surface_loader,
-            descriptors: std::mem::ManuallyDrop::new(Descriptors {
-                _pool: descriptor_pool,
-                set: descriptor_set,
-                layout: descriptor_set_layout,
-                index: AtomicU32::new(0),
-                linear_sampler: Sampler::from_raw(
-                    unsafe {
-                        device.create_sampler(
-                            &vk::SamplerCreateInfo::default()
-                                .mag_filter(vk::Filter::LINEAR)
-                                .min_filter(vk::Filter::LINEAR)
-                                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-                                .address_mode_u(vk::SamplerAddressMode::REPEAT)
-                                .address_mode_v(vk::SamplerAddressMode::REPEAT)
-                                .address_mode_w(vk::SamplerAddressMode::REPEAT),
-                            None,
-                        )
-                    }
-                    .unwrap(),
-                    &device,
-                ),
-            }),
+            pipeline_layout: std::mem::ManuallyDrop::new(PipelineLayout::from_raw(
+                pipeline_layout,
+                &device,
+            )),
+            descriptors,
             graphics_queue: Queue::new(&device, graphics_queue_family_index),
             compute_queue: Queue::new(&device, compute_queue_family_index),
             transfer_queue: Queue::new(&device, transfer_queue_family_index),
             device,
-            allocator: std::mem::ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
+            allocator: std::mem::ManuallyDrop::new(Arc::new(Allocator {
+                inner: Mutex::new(allocator),
+                deallocation_notifier: Default::default(),
+                deallocation_mutex: Default::default(),
+            })),
         }
+    }
+
+    pub fn get_memory_budget(&self) -> vk::PhysicalDeviceMemoryBudgetPropertiesEXT {
+        let mut budget = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+        let mut props = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut budget);
+        unsafe {
+            self.instance
+                .get_physical_device_memory_properties2(self.physical_device, &mut props)
+        };
+        budget
     }
 
     pub fn create_swapchain(&self, window: &Window) -> Swapchain {
@@ -472,6 +519,7 @@ impl Device {
             images: swapchain_images,
             surface: std::mem::ManuallyDrop::new(surface),
             swapchain: std::mem::ManuallyDrop::new(swapchain),
+            surface_format: surface_format.format,
         }
     }
 
@@ -532,6 +580,7 @@ impl Device {
         let allocator = (*self.allocator).clone();
 
         let allocation = allocator
+            .inner
             .lock()
             .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
                 name: desc.name,
@@ -675,7 +724,7 @@ impl Device {
         }
     }
 
-    pub fn create_buffer(&self, desc: BufferDescriptor) -> Buffer {
+    pub fn create_buffer(&self, desc: BufferDescriptor) -> VkResult<Buffer> {
         let buffer = unsafe {
             self.device.create_buffer(
                 &vk::BufferCreateInfo::default().size(desc.size).usage(
@@ -686,14 +735,14 @@ impl Device {
                 ),
                 None,
             )
-        }
-        .unwrap();
+        }?;
 
         let memory_requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
 
         let allocator = (*self.allocator).clone();
 
         let allocation = allocator
+            .inner
             .lock()
             .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
                 name: desc.name,
@@ -719,22 +768,24 @@ impl Device {
                 .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
         };
 
-        Buffer {
+        Ok(Buffer {
             buffer: WrappedBuffer::from_raw(buffer, &self.device),
             allocation,
             allocator,
             address,
-        }
+        })
     }
 
     pub fn create_buffer_with_data<T: Copy>(&self, desc: BufferInitDescriptor<T>) -> Buffer {
-        let mut buffer = self.create_buffer(BufferDescriptor {
-            name: desc.name,
-            size: std::mem::size_of_val(desc.data)
-                // Required min size for AMDVLK
-                .next_multiple_of(16) as u64,
-            ty: BufferType::Upload,
-        });
+        let mut buffer = self
+            .create_buffer(BufferDescriptor {
+                name: desc.name,
+                size: std::mem::size_of_val(desc.data)
+                    // Required min size for AMDVLK
+                    .next_multiple_of(16) as u64,
+                ty: BufferType::Upload,
+            })
+            .unwrap();
 
         presser::copy_from_slice_to_offset_with_align(
             desc.data,
@@ -747,8 +798,8 @@ impl Device {
         buffer
     }
 
-    pub fn create_compute_pipeline(&self, desc: ComputePipelineDesc) -> Pipeline {
-        let bytes = std::fs::read(desc.path).unwrap();
+    pub fn create_shader_module(&self, path: &str) -> ShaderModule {
+        let bytes = std::fs::read(path).unwrap();
         let spirv_slice =
             unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u32, bytes.len() / 4) };
 
@@ -760,28 +811,106 @@ impl Device {
         }
         .unwrap();
 
-        let pipeline_layout = unsafe {
-            self.device.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&[*self.descriptors.layout])
-                    .push_constant_ranges(&[vk::PushConstantRange::default()
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                        .offset(0)
-                        // todo: use device max.
-                        .size(256)]),
+        ShaderModule::from_raw(shader_module, &self.device)
+    }
+
+    pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Pipeline {
+        let vertex_module;
+        let fragment_module;
+
+        let mut modules = arrayvec::ArrayVec::new();
+
+        if desc.vertex.path == desc.fragment.path {
+            let module = self.create_shader_module(desc.vertex.path);
+            vertex_module = *module;
+            fragment_module = *module;
+            modules.push(module);
+        } else {
+            let vertex_shader = self.create_shader_module(desc.vertex.path);
+            let fragment_shader = self.create_shader_module(desc.fragment.path);
+            vertex_module = *vertex_shader;
+            fragment_module = *fragment_shader;
+            modules.push(vertex_shader);
+            modules.push(fragment_shader);
+        }
+
+        let mut dynamic_rendering = vk::PipelineRenderingCreateInfo::default()
+            .color_attachment_formats(desc.color_attachment_formats);
+
+        let blend_attachments = if desc.color_attachment_formats.len() > 0 {
+            &[vk::PipelineColorBlendAttachmentState::default()
+                .color_write_mask(vk::ColorComponentFlags::RGBA)][..]
+        } else {
+            &[]
+        };
+
+        let pipelines = unsafe {
+            self.device.create_graphics_pipelines(
+                vk::PipelineCache::null(),
+                &[vk::GraphicsPipelineCreateInfo::default()
+                    .stages(&[
+                        vk::PipelineShaderStageCreateInfo::default()
+                            .stage(vk::ShaderStageFlags::VERTEX)
+                            .name(desc.vertex.entry_point)
+                            .module(vertex_module),
+                        vk::PipelineShaderStageCreateInfo::default()
+                            .stage(vk::ShaderStageFlags::FRAGMENT)
+                            .name(desc.fragment.entry_point)
+                            .module(fragment_module),
+                    ])
+                    .vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
+                    .input_assembly_state(
+                        &vk::PipelineInputAssemblyStateCreateInfo::default()
+                            .topology(vk::PrimitiveTopology::TRIANGLE_LIST),
+                    )
+                    .multisample_state(
+                        &vk::PipelineMultisampleStateCreateInfo::default()
+                            .rasterization_samples(vk::SampleCountFlags::TYPE_1),
+                    )
+                    .rasterization_state(
+                        &vk::PipelineRasterizationStateCreateInfo::default()
+                            .line_width(1.0)
+                            .polygon_mode(vk::PolygonMode::FILL),
+                    )
+                    .viewport_state(
+                        &vk::PipelineViewportStateCreateInfo::default()
+                            .scissor_count(1)
+                            .viewport_count(1),
+                    )
+                    .dynamic_state(
+                        &vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&[
+                            vk::DynamicState::VIEWPORT,
+                            vk::DynamicState::SCISSOR,
+                        ]),
+                    )
+                    .color_blend_state(
+                        &vk::PipelineColorBlendStateCreateInfo::default()
+                            .attachments(blend_attachments),
+                    )
+                    .layout(**self.pipeline_layout)
+                    .push_next(&mut dynamic_rendering)],
                 None,
             )
         }
         .unwrap();
 
+        Pipeline {
+            pipeline: WrappedPipeline::from_raw(pipelines[0], &self.device),
+            _modules: modules,
+        }
+    }
+
+    pub fn create_compute_pipeline(&self, desc: ShaderDesc) -> Pipeline {
+        let shader_module = self.create_shader_module(desc.path);
+
         let create_info = vk::ComputePipelineCreateInfo::default()
             .stage(
                 vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::COMPUTE)
-                    .name(desc.name)
-                    .module(shader_module),
+                    .name(desc.entry_point)
+                    .module(*shader_module),
             )
-            .layout(pipeline_layout);
+            .layout(**self.pipeline_layout);
 
         let pipelines = unsafe {
             self.device
@@ -790,9 +919,8 @@ impl Device {
         .unwrap();
 
         Pipeline {
-            layout: PipelineLayout::from_raw(pipeline_layout, &self.device),
             pipeline: WrappedPipeline::from_raw(pipelines[0], &self.device),
-            _modules: vec![ShaderModule::from_raw(shader_module, &self.device)],
+            _modules: arrayvec::ArrayVec::from_iter([shader_module]),
         }
     }
 
@@ -904,6 +1032,27 @@ impl std::ops::Deref for Device {
     }
 }
 
+impl Drop for Device {
+    fn drop(&mut self) {
+        self.allocator
+            .inner
+            .lock()
+            .report_memory_leaks(log::Level::Error);
+
+        unsafe {
+            std::mem::ManuallyDrop::drop(&mut self.allocator);
+            std::mem::ManuallyDrop::drop(&mut self.descriptors);
+            std::mem::ManuallyDrop::drop(&mut self.pipeline_layout);
+
+            self.device.destroy_device(None);
+
+            self.debug_utils_loader
+                .destroy_debug_utils_messenger(self.debug_callback, None);
+            self.instance.destroy_instance(None);
+        }
+    }
+}
+
 macro_rules! wrap_raii_struct {
     ($name:ident, $ty:ty, $func:expr) => {
         pub struct $name {
@@ -976,14 +1125,6 @@ pub struct CommandBuffer {
     pub pool: CommandPool,
     device: ash::Device,
 }
-impl Drop for CommandBuffer {
-    fn drop(&mut self) {
-        unsafe {
-            self.device
-                .free_command_buffers(*self.pool, &[self.command_buffer]);
-        }
-    }
-}
 
 impl std::ops::Deref for CommandBuffer {
     type Target = vk::CommandBuffer;
@@ -993,15 +1134,29 @@ impl std::ops::Deref for CommandBuffer {
     }
 }
 
-pub struct ComputePipelineDesc<'a> {
-    pub name: &'a ffi::CStr,
+impl Drop for CommandBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .free_command_buffers(*self.pool, &[self.command_buffer]);
+        }
+    }
+}
+
+pub struct ShaderDesc<'a> {
+    pub entry_point: &'a ffi::CStr,
     pub path: &'a str,
 }
 
+pub struct GraphicsPipelineDesc<'a> {
+    pub vertex: ShaderDesc<'a>,
+    pub fragment: ShaderDesc<'a>,
+    pub color_attachment_formats: &'a [vk::Format],
+}
+
 pub struct Pipeline {
-    pub layout: PipelineLayout,
     pub pipeline: WrappedPipeline,
-    _modules: Vec<ShaderModule>,
+    _modules: arrayvec::ArrayVec<ShaderModule, 2>,
 }
 
 impl std::ops::Deref for Pipeline {
@@ -1012,27 +1167,10 @@ impl std::ops::Deref for Pipeline {
     }
 }
 
-impl Drop for Device {
-    fn drop(&mut self) {
-        self.allocator.lock().report_memory_leaks(log::Level::Error);
-
-        unsafe {
-            std::mem::ManuallyDrop::drop(&mut self.allocator);
-            std::mem::ManuallyDrop::drop(&mut self.descriptors);
-
-            self.device.destroy_device(None);
-
-            self.debug_utils_loader
-                .destroy_debug_utils_messenger(self.debug_callback, None);
-            self.instance.destroy_instance(None);
-        }
-    }
-}
-
 pub struct Buffer {
     pub buffer: WrappedBuffer,
     pub allocation: gpu_allocator::vulkan::Allocation,
-    allocator: Allocator,
+    allocator: Arc<Allocator>,
     address: u64,
 }
 
@@ -1053,14 +1191,15 @@ impl std::ops::Deref for Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         let allocation = std::mem::take(&mut self.allocation);
-        self.allocator.lock().free(allocation).unwrap();
+        self.allocator.inner.lock().free(allocation).unwrap();
+        self.allocator.deallocation_notifier.notify_all();
     }
 }
 
 pub struct Image {
     pub image: WrappedImage,
     pub allocation: gpu_allocator::vulkan::Allocation,
-    allocator: Allocator,
+    allocator: Arc<Allocator>,
     index: u32,
     pub extent: vk::Extent3D,
     pub subresource_range: vk::ImageSubresourceRange,
@@ -1077,7 +1216,8 @@ impl std::ops::Deref for Image {
 impl Drop for Image {
     fn drop(&mut self) {
         let allocation = std::mem::take(&mut self.allocation);
-        self.allocator.lock().free(allocation).unwrap();
+        self.allocator.inner.lock().free(allocation).unwrap();
+        self.allocator.deallocation_notifier.notify_all();
     }
 }
 
@@ -1234,6 +1374,7 @@ pub struct Swapchain {
     surface: std::mem::ManuallyDrop<Surface>,
     swapchain: std::mem::ManuallyDrop<WrappedSwapchain>,
     pub images: Vec<SwapchainImage>,
+    pub surface_format: vk::Format,
 }
 
 impl std::ops::Deref for Swapchain {

@@ -23,29 +23,53 @@ fn create_image(
     format: vk::Format,
     transition_to: nbn::QueueType,
 ) -> nbn::PendingImageUpload {
-    let image_data = image::open(filename).unwrap().to_rgba8();
+    if filename.ends_with(".dds") {
+        let dds = ddsfile::Dds::read(std::fs::File::open(filename).unwrap()).unwrap();
 
-    device.create_image_with_data(
-        nbn::ImageDescriptor {
-            name: filename,
-            extent: vk::Extent3D {
-                width: image_data.width(),
-                height: image_data.height(),
-                depth: 1,
+        let format = match dds.get_dxgi_format().unwrap() {
+            ddsfile::DxgiFormat::BC1_UNorm_sRGB => vk::Format::BC1_RGB_SRGB_BLOCK,
+            ddsfile::DxgiFormat::BC3_UNorm_sRGB => vk::Format::BC3_SRGB_BLOCK,
+            ddsfile::DxgiFormat::BC5_UNorm => vk::Format::BC5_UNORM_BLOCK,
+            other => panic!("{:?}", other),
+        };
+        device.create_image_with_data(
+            nbn::ImageDescriptor {
+                name: filename,
+                extent: vk::Extent3D {
+                    width: dds.get_width(),
+                    height: dds.get_height(),
+                    depth: 1,
+                },
+                format,
             },
-            format,
-        },
-        &image_data,
-        transition_to,
-    )
+            &dds.get_data(0).unwrap(),
+            transition_to,
+        )
+    } else {
+        let image_data = image::open(filename).unwrap().to_rgba8();
+
+        device.create_image_with_data(
+            nbn::ImageDescriptor {
+                name: filename,
+                extent: vk::Extent3D {
+                    width: image_data.width(),
+                    height: image_data.height(),
+                    depth: 1,
+                },
+                format,
+            },
+            &image_data,
+            transition_to,
+        )
+    }
 }
 
 fn main() {
     env_logger::init();
 
-    let base = "San_Miguel/";
+    let base = "bi/Bistro_v5_2";
 
-    let bytes = std::fs::read(&format!("{}/San_Miguel.gltf", base)).unwrap();
+    let bytes = std::fs::read(&format!("{}/bistro_combined.gltf", base)).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         _,
@@ -108,7 +132,7 @@ fn main() {
                 .pbr_metallic_roughness
                 .metallic_roughness_texture
                 .as_ref()
-                .map(|tex| dbg!(*images[gltf.textures[tex.index].source.unwrap()].image))
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
                 .unwrap_or(u32::MAX),
             emissive_image: material
                 .emissive_texture
@@ -179,19 +203,26 @@ fn main() {
         }],
     });
 
-    let compute_pipeline = device.create_compute_pipeline(nbn::ComputePipelineDesc {
-        name: c"main",
+    let compute_pipeline = device.create_compute_pipeline(nbn::ShaderDesc {
+        entry_point: c"main",
         path: "shader.spv",
     });
 
-    let scene_size = 1024;
+    let output = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "output_buffer",
+            size: 3_000_000_000,
+            ty: nbn::BufferType::Download,
+        })
+        .unwrap();
 
-    let output = device.create_buffer(nbn::BufferDescriptor {
-        name: "output_buffer",
-        size: scene_size * scene_size * scene_size * std::mem::size_of::<PackedMaterial>() as u64,
-        ty: nbn::BufferType::Download,
-    });
-
+    let num_outputs = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "num_outputs",
+            size: 4,
+            ty: nbn::BufferType::Download,
+        })
+        .unwrap();
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
     unsafe {
@@ -201,13 +232,7 @@ fn main() {
             .begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
             .unwrap();
 
-        device.cmd_fill_buffer(
-            *command_buffer,
-            *output.buffer,
-            0,
-            vk::WHOLE_SIZE,
-            std::mem::transmute(PackedMaterial::INVALID),
-        );
+        device.cmd_fill_buffer(*command_buffer, *num_outputs.buffer, 0, vk::WHOLE_SIZE, 0);
 
         device.cmd_bind_pipeline(
             *command_buffer,
@@ -217,7 +242,7 @@ fn main() {
         device.cmd_bind_descriptor_sets(
             *command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            *compute_pipeline.layout,
+            **device.pipeline_layout,
             0,
             &[device.descriptors.set],
             &[],
@@ -228,18 +253,18 @@ fn main() {
         struct Input {
             output: u64,
             gltf: u64,
-            scene_size: u32,
+            num_outputs: u64,
         }
 
         device.cmd_push_constants(
             *command_buffer,
-            *compute_pipeline.layout,
+            **device.pipeline_layout,
             vk::ShaderStageFlags::COMPUTE,
             0,
             nbn::cast_slice(&[Input {
                 output: *output,
                 gltf: *gltf,
-                scene_size: scene_size as u32,
+                num_outputs: *num_outputs,
             }]),
         );
 
@@ -275,19 +300,128 @@ fn main() {
             )
             .unwrap();
 
+        dbg!("Started waiting for fence");
         device.device.wait_for_fences(&[*fence], true, !0).unwrap();
     }
+    dbg!("Finished waiting for fence");
+    let size = num_outputs.try_as_slice::<u32>().unwrap()[0] as usize;
+    let output = &output
+        .try_as_slice::<(glam::U16Vec3, PackedMaterial)>()
+        .unwrap()[..size];
 
-    let tree = tree64::Tree64::new(tree64::FlatArray {
-        values: output.try_as_slice::<PackedMaterial>().unwrap(),
-        dimensions: [scene_size as u32; 3],
-        empty_value: PackedMaterial::INVALID,
+    let mut output = output.to_vec();
+
+    fn interleave_u16_3d(pos: glam::U16Vec3) -> (u16, u16, u16) {
+        let value = separate_bits_64(pos.x)
+            | (separate_bits_64(pos.y) << 1)
+            | (separate_bits_64(pos.z) << 2);
+        ((value >> 32) as u16, (value >> 16) as u16, value as u16)
+    }
+
+    dbg!("Starting sort");
+    radsort::sort_by_cached_key(&mut output, |&(pos, _)| interleave_u16_3d(pos));
+    dbg!(output.len());
+    output.dedup_by_key(|(pos, _)| *pos);
+    dbg!(output.len());
+
+    //let pos: Vec<glam::U16Vec3> = output.iter().map(|item| item.0).collect();
+    //std::fs::write("out.dat", nbn::cast_slice(&pos)).unwrap();
+
+    let mut tree = tree64::Tree64 {
+        nodes: Default::default(),
+        data: Default::default(),
+        stats: Default::default(),
+        edits: Default::default(),
+    };
+
+    let mut nodes_a = Vec::new();
+    let mut nodes_b = Vec::new();
+
+    dbg!("Starting first");
+    collect(&output, &mut nodes_a, |arr, pop_mask| {
+        tree64::Node::new(true, tree.insert_values(arr), pop_mask)
     });
+    dbg!("Done first");
+
+    collect(&nodes_a, &mut nodes_b, |arr, pop_mask| {
+        tree64::Node::new(false, tree.insert_nodes(arr), pop_mask)
+    });
+
+    dbg!(nodes_a.len(), nodes_b.len());
+
+    collect(&nodes_b, &mut nodes_a, |arr, pop_mask| {
+        tree64::Node::new(false, tree.insert_nodes(arr), pop_mask)
+    });
+
+    dbg!(nodes_a.len());
+
+    collect(&nodes_a, &mut nodes_b, |arr, pop_mask| {
+        tree64::Node::new(false, tree.insert_nodes(arr), pop_mask)
+    });
+    dbg!(nodes_b.len());
+
+    collect(&nodes_b, &mut nodes_a, |arr, pop_mask| {
+        tree64::Node::new(false, tree.insert_nodes(arr), pop_mask)
+    });
+
+    dbg!(nodes_a.len());
+
+    collect(&nodes_a, &mut nodes_b, |arr, pop_mask| {
+        tree64::Node::new(false, tree.insert_nodes(arr), pop_mask)
+    });
+    dbg!(nodes_b.len());
+
+    collect(&nodes_b, &mut nodes_a, |arr, pop_mask| {
+        tree64::Node::new(false, tree.insert_nodes(arr), pop_mask)
+    });
+    dbg!(nodes_a.len());
+    dbg!(&tree.stats);
+    tree.push_new_root_node(nodes_a[0].1, 10, Default::default());
+
     dbg!(
-        &tree.stats,
-        tree.nodes.len() * std::mem::size_of::<tree64::Node>(),
-        tree.data.len() * std::mem::size_of::<PackedMaterial>()
+        std::mem::size_of_val(&tree.nodes[..]),
+        std::mem::size_of_val(&tree.data[..])
     );
     tree.serialize(std::fs::File::create("out.tree64").unwrap())
         .unwrap();
+}
+
+fn collect<
+    T: std::hash::Hash + Clone + Copy + PartialEq + std::fmt::Debug + Default,
+    O,
+    F: FnMut(&[T], u64) -> O,
+>(
+    sorted_values: &[(glam::U16Vec3, T)],
+    output: &mut Vec<(glam::U16Vec3, O)>,
+    mut transform: F,
+) {
+    output.clear();
+    let mut values = tree64::PopMaskedData::default();
+
+    let mut prev_pos = glam::U16Vec3::splat(u16::MAX);
+
+    for (i, &(pos, val)) in sorted_values.iter().enumerate() {
+        let key_pos = pos / 4;
+        if !(i == 0 || key_pos == prev_pos) {
+            output.push((prev_pos, transform(&values.as_compact(), values.pop_mask)));
+            values.pop_mask = 0;
+        }
+
+        prev_pos = key_pos;
+
+        let index = (pos % 4).dot(glam::U16Vec3::new(1, 4, 16));
+        values.set(index as u32, Some(val));
+    }
+
+    output.push((prev_pos, transform(&values.as_compact(), values.pop_mask)));
+}
+
+fn separate_bits_64(n: u16) -> u64 {
+    let mut n = n as u64;
+    n = (n ^ (n << 32)) & 0b1111111111111111000000000000000000000000000000001111111111111111u64;
+    n = (n ^ (n << 16)) & 0b0000000011111111000000000000000011111111000000000000000011111111u64;
+    n = (n ^ (n << 8)) & 0b1111000000001111000000001111000000001111000000001111000000001111u64;
+    n = (n ^ (n << 4)) & 0b0011000011000011000011000011000011000011000011000011000011000011u64;
+    n = (n ^ (n << 2)) & 0b1001001001001001001001001001001001001001001001001001001001001001u64;
+    n
 }

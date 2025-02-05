@@ -5,6 +5,7 @@ struct WindowState {
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
+    pipeline: nbn::Pipeline,
 }
 
 impl WindowState {
@@ -84,6 +85,33 @@ impl WindowState {
                         height: 600,
                     })),
             );
+            device.cmd_bind_pipeline(
+                **command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                *self.pipeline,
+            );
+            device.cmd_set_scissor(
+                **command_buffer,
+                0,
+                &[vk::Rect2D::default().extent(vk::Extent2D {
+                    width: 800,
+                    height: 600,
+                })],
+            );
+            device.cmd_set_viewport(
+                **command_buffer,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 800.0,
+                    height: 800.0,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            device.cmd_draw(**command_buffer, 3, 1, 0, 0);
+
             device.cmd_end_rendering(**command_buffer);
             vk_sync::cmd::pipeline_barrier(
                 &device,
@@ -142,6 +170,17 @@ impl winit::application::ApplicationHandler for App {
         let device = nbn::Device::new(Some(&window));
 
         let swapchain = device.create_swapchain(&window);
+        let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+            vertex: nbn::ShaderDesc {
+                path: "triangle.spv",
+                entry_point: c"main",
+            },
+            fragment: nbn::ShaderDesc {
+                path: "triangle.spv",
+                entry_point: c"main",
+            },
+            color_attachment_formats: &[swapchain.surface_format],
+        });
 
         self.window_state = Some(WindowState {
             per_frame_command_buffers: [
@@ -152,6 +191,7 @@ impl winit::application::ApplicationHandler for App {
             sync_resources: device.create_sync_resources(),
             swapchain,
             window,
+            pipeline,
         });
         self.state = Some(State { device });
     }

@@ -93,15 +93,20 @@ func linear_to_srgb<int N>(value: vector<float, N>) -> vector<uint8_t, N> {
     return vector<uint8_t, N>(round(srgb * 255.0));
 }
 
+struct Output {
+    uint16_t3 pos;
+    uint8_t4 value;
+};
+
 struct Writer: IVisitor {
-    uint8_t4* output;
-    uint scene_size;
+    Output* output;
+    Atomic<uint>* num_outputs;
     float3[3] positions;
     float2[3] uvs;
     Material material;
 
     void visit(int3 pos) {
-        if (any(pos >= scene_size) || any(pos < 0)) {
+        if (any(pos < 0)) {
             return;
         }
 
@@ -115,7 +120,7 @@ struct Writer: IVisitor {
         if (material.base_colour_image != max_value) {
             float4 sample = DescriptorHandle<Sampler2D>(material.base_colour_image).SampleLevel(uv, 0);
 
-            if ((material.flags & 1) == 1 && sample.a < 0.5) {
+            if (sample.a < 0.5) {
                 return;
             }
 
@@ -142,15 +147,18 @@ struct Writer: IVisitor {
             is_metallic = metal_roughness.b > 0.5;
         }
 
-        output[pos.x + pos.y * scene_size + pos.z * scene_size * scene_size] = uint8_t4(
+        let output_index = num_outputs.add(1);
+
+        output[output_index].pos = uint16_t3(pos);
+        output[output_index].value = uint8_t4(
             linear_to_srgb(base_colour),
             uint8_t(is_emissive) | (uint8_t(is_metallic) << 1) | (posterize(roughness, 6) << 2)
         );
     }
 }
 
-bool outside(float3 vertex, uint scene_size) {
-    return any(vertex < 0) || any(vertex >= scene_size);
+bool outside(float3 vertex) {
+    return any(vertex < 0);
 }
 
 [numthreads(64,1,1)]
@@ -159,7 +167,7 @@ void main(
     // error without `storagePushConstant8` enabled even though it shouldn't require it.
     uint32_t* output,
     Gltf* gltf,
-    uniform uint scene_size,
+    Atomic<uint>* num_outputs,
     uint3 dispatch_thread_id : SV_DispatchThreadID,
 ) {
     uint primitive_index;
@@ -197,8 +205,8 @@ void main(
 
     let material = gltf.materials[primitive.material];
 
-    let size = 75;//float(scene_size) / 4;
-    let offset = 100;
+    let size = 1.0/2;
+    let offset = 2048;
 
     var triangle = fetch_3(positions, indices);
     triangle[0] = triangle[0].xzy;
@@ -209,18 +217,18 @@ void main(
     triangle[1] = triangle[1] * size + offset;
     triangle[2] = triangle[2] * size + offset;
 
-    if (outside(triangle[0], scene_size) && outside(triangle[1], scene_size) && outside(triangle[2], scene_size)) {
+    if (outside(triangle[0]) && outside(triangle[1]) && outside(triangle[2])) {
         return;
     }
 
     let uvs = fetch_3(primitive.uvs_ptr(gltf), indices);
 
     Writer writer;
-    writer.output = (uint8_t4*)output;
-    writer.scene_size = scene_size;
+    writer.output = (Output*)output;
     writer.positions = triangle;
     writer.uvs = uvs;
     writer.material = material;
+    writer.num_outputs = num_outputs;
 
     VoxelizeTriangleSurface(triangle, writer);
 }

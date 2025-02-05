@@ -14,15 +14,19 @@ parking_lot = "0.12.3"
 winit = "0.30.8"
 presser = "0.3.1"
 vk-sync = { package = "vk-sync-fork", version = "0.5.0" }
+arrayvec = "0.7.6"
 
 [dev-dependencies]
 goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
     "primitive_reader",
 ] }
 env_logger = "0.11.6"
-tree64 = { git = "https://github.com/expenses/tree64" }
+tree64 = { path = "../tree64" }
 glam = "0.29.2"
 image = "0.25.5"
 slang_struct = { path = "slang-struct-rs" }
 bytemuck = { version = "1.21.0", features = ["derive"] }
 rayon = "1.10.0"
+fnv = "1.0.7"
+radsort = "0.1.1"
+ddsfile = "0.5.2"
