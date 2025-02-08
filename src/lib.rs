@@ -313,7 +313,10 @@ impl Device {
                     pdevice,
                     &vk::DeviceCreateInfo::default()
                         .queue_create_infos(queue_infos)
-                        .enabled_extension_names(&[swapchain::NAME.as_ptr()])
+                        .enabled_extension_names(&[
+                            swapchain::NAME.as_ptr(),
+                            ash::ext::conservative_rasterization::NAME.as_ptr(),
+                        ])
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_2_features)
                         .push_next(&mut vulkan_1_3_features),
@@ -348,7 +351,9 @@ impl Device {
                         .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
                         .bindings(&[vk::DescriptorSetLayoutBinding::default()
                             .binding(0)
-                            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                            .stage_flags(
+                                vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT,
+                            )
                             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                             .descriptor_count(1024)])
                         .push_next(&mut flags),
@@ -407,7 +412,11 @@ impl Device {
                 &vk::PipelineLayoutCreateInfo::default()
                     .set_layouts(&[*descriptors.layout])
                     .push_constant_ranges(&[vk::PushConstantRange::default()
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                        .stage_flags(
+                            vk::ShaderStageFlags::COMPUTE
+                                | vk::ShaderStageFlags::VERTEX
+                                | vk::ShaderStageFlags::FRAGMENT,
+                        )
                         .offset(0)
                         // todo: use device max.
                         .size(256)]),
@@ -837,6 +846,14 @@ impl Device {
         let mut dynamic_rendering = vk::PipelineRenderingCreateInfo::default()
             .color_attachment_formats(desc.color_attachment_formats);
 
+        let mut conservative_rasterization =
+            vk::PipelineRasterizationConservativeStateCreateInfoEXT::default()
+                .conservative_rasterization_mode(if desc.conservative_rasterization {
+                    vk::ConservativeRasterizationModeEXT::OVERESTIMATE
+                } else {
+                    vk::ConservativeRasterizationModeEXT::DISABLED
+                });
+
         let blend_attachments = if desc.color_attachment_formats.len() > 0 {
             &[vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)][..]
@@ -870,7 +887,8 @@ impl Device {
                     .rasterization_state(
                         &vk::PipelineRasterizationStateCreateInfo::default()
                             .line_width(1.0)
-                            .polygon_mode(vk::PolygonMode::FILL),
+                            .polygon_mode(vk::PolygonMode::FILL)
+                            .push_next(&mut conservative_rasterization),
                     )
                     .viewport_state(
                         &vk::PipelineViewportStateCreateInfo::default()
@@ -1152,6 +1170,7 @@ pub struct GraphicsPipelineDesc<'a> {
     pub vertex: ShaderDesc<'a>,
     pub fragment: ShaderDesc<'a>,
     pub color_attachment_formats: &'a [vk::Format],
+    pub conservative_rasterization: bool,
 }
 
 pub struct Pipeline {

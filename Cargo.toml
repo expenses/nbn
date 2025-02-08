@@ -21,7 +21,7 @@ goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", 
     "primitive_reader",
 ] }
 env_logger = "0.11.6"
-tree64 = { path = "../tree64" }
+tree64 = { git = "https://github.com/expenses/tree64" }
 glam = "0.29.2"
 image = "0.25.5"
 slang_struct = { path = "slang-struct-rs" }

@@ -3,18 +3,23 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIter
 
 slang_struct::slang_include!("gltf.slang");
 
-#[derive(Clone, Copy, Default, PartialEq, Debug, Hash, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Debug,
+    Hash,
+    PartialOrd,
+    Ord,
+    Eq,
+    bytemuck::Pod,
+    bytemuck::Zeroable,
+)]
 #[repr(C, packed)]
 struct PackedMaterial {
     base_colour: [u8; 3],
     ty_and_aux_value: u8,
-}
-
-impl PackedMaterial {
-    const INVALID: Self = Self {
-        base_colour: [0; 3],
-        ty_and_aux_value: 1,
-    };
 }
 
 fn create_image(
@@ -203,9 +208,19 @@ fn main() {
         }],
     });
 
-    let compute_pipeline = device.create_compute_pipeline(nbn::ShaderDesc {
-        entry_point: c"main",
-        path: "shader.spv",
+    let dim_size = 10000;
+
+    let voxelization_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+        vertex: nbn::ShaderDesc {
+            path: "voxelize.spv",
+            entry_point: c"main",
+        },
+        fragment: nbn::ShaderDesc {
+            path: "voxelize.spv",
+            entry_point: c"main",
+        },
+        color_attachment_formats: &[],
+        conservative_rasterization: true,
     });
 
     let output = device
@@ -223,7 +238,7 @@ fn main() {
             ty: nbn::BufferType::Download,
         })
         .unwrap();
-    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+    let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
     unsafe {
         let fence = device.create_fence();
@@ -236,12 +251,12 @@ fn main() {
 
         device.cmd_bind_pipeline(
             *command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            *compute_pipeline,
+            vk::PipelineBindPoint::GRAPHICS,
+            *voxelization_pipeline,
         );
         device.cmd_bind_descriptor_sets(
             *command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
+            vk::PipelineBindPoint::GRAPHICS,
             **device.pipeline_layout,
             0,
             &[device.descriptors.set],
@@ -251,24 +266,49 @@ fn main() {
         #[repr(C)]
         #[derive(Clone, Copy)]
         struct Input {
-            output: u64,
             gltf: u64,
+            output: u64,
             num_outputs: u64,
+            dim_size: u32,
         }
 
         device.cmd_push_constants(
             *command_buffer,
             **device.pipeline_layout,
-            vk::ShaderStageFlags::COMPUTE,
+            vk::ShaderStageFlags::COMPUTE
+                | vk::ShaderStageFlags::VERTEX
+                | vk::ShaderStageFlags::FRAGMENT,
             0,
             nbn::cast_slice(&[Input {
                 output: *output,
                 gltf: *gltf,
                 num_outputs: *num_outputs,
+                dim_size,
             }]),
         );
 
-        device.cmd_dispatch(*command_buffer, (num_indices / 3).div_ceil(64), 1, 1);
+        let render_area =
+            vk::Rect2D::default().extent(vk::Extent2D::default().height(dim_size).width(dim_size));
+
+        device.cmd_begin_rendering(
+            *command_buffer,
+            &vk::RenderingInfo::default()
+                .layer_count(1)
+                .render_area(render_area),
+        );
+
+        device.cmd_set_viewport(
+            *command_buffer,
+            0,
+            &[vk::Viewport::default()
+                .height(dim_size as f32)
+                .width(dim_size as f32)
+                .max_depth(1.0)],
+        );
+        device.cmd_set_scissor(*command_buffer, 0, &[render_area]);
+        device.cmd_draw(*command_buffer, num_indices, 1, 0, 0);
+
+        device.cmd_end_rendering(*command_buffer);
 
         device.end_command_buffer(*command_buffer).unwrap();
 
@@ -291,7 +331,7 @@ fn main() {
         device
             .device
             .queue_submit(
-                *device.compute_queue,
+                *device.graphics_queue,
                 &[vk::SubmitInfo::default()
                     .wait_semaphores(&[*semaphore])
                     .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
@@ -319,7 +359,7 @@ fn main() {
     }
 
     dbg!("Starting sort");
-    radsort::sort_by_cached_key(&mut output, |&(pos, _)| interleave_u16_3d(pos));
+    radsort::sort_by_key(&mut output, |&(pos, _)| interleave_u16_3d(pos));
     dbg!(output.len());
     output.dedup_by_key(|(pos, _)| *pos);
     dbg!(output.len());
@@ -376,7 +416,7 @@ fn main() {
     });
     dbg!(nodes_a.len());
     dbg!(&tree.stats);
-    tree.push_new_root_node(nodes_a[0].1, 10, Default::default());
+    tree.push_new_root_node(nodes_a[0].1, 10, -glam::IVec3::splat(dim_size as i32));
 
     dbg!(
         std::mem::size_of_val(&tree.nodes[..]),
