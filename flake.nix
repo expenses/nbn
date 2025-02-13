@@ -52,6 +52,9 @@
               renderdoc
               gdb
               clang-tools
+              (writeShellScriptBin "format-shaders" ''
+                ${clang-tools}/bin/clang-format -i shaders/*.slang --style '{IndentWidth: 4}'
+              '')
             ];
             buildInputs = [vulkan-loader];
             LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon];

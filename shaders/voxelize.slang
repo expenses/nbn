@@ -12,6 +12,7 @@ struct PushConstants {
     uint32_t *output;
     Atomic<uint> *num_outputs;
     uint dim_size;
+    uint output_size;
 };
 
 float3 normal_for_triangle(float3[3] positions) {
@@ -101,7 +102,8 @@ uint64_t separate_bits_64(uint32_t n) {
 
 // works for integers up to 2^21
 uint64_t morton_encode(uint3 xyz) {
-    return separate_bits_64(xyz.x) | (separate_bits_64(xyz.y) << 1) | (separate_bits_64(xyz.z) << 2);
+    return separate_bits_64(xyz.x) | (separate_bits_64(xyz.y) << 1) |
+           (separate_bits_64(xyz.z) << 2);
 }
 
 uint8_t posterize(float value, uint bits) {
@@ -115,8 +117,8 @@ func linear_to_srgb<int N>(value : vector<float, N>) -> vector<uint8_t, N> {
     return vector<uint8_t, N>(round(srgb * 255.0));
 }
 
-void fragment_inner(Interp values, uniform PushConstants push_constants,
-                    bool write_values) {
+[shader("pixel")] void fragment(Interp values,
+                                uniform PushConstants push_constants, ) {
     values.pos.z *= push_constants.dim_size;
 
     if (values.swizzle == 1) {
@@ -168,22 +170,14 @@ void fragment_inner(Interp values, uniform PushConstants push_constants,
     }
 
     let output_index = push_constants.num_outputs.add(1);
-    if (write_values) {
+    if (output_index < push_constants.output_size) {
         let encoded = morton_encode(uint3(values.pos.xyz));
         push_constants.output[output_index * 3] = uint(encoded >> 32);
         push_constants.output[output_index * 3 + 1] = uint(encoded);
-        push_constants.output[output_index * 3 + 2] = reinterpret<uint, uint8_t4>(uint8_t4(linear_to_srgb(base_colour),
-                     uint8_t(is_emissive) | (uint8_t(is_metallic) << 1) |
-                         (posterize(roughness, 6) << 2)));
+        push_constants.output[output_index * 3 + 2] =
+            reinterpret<uint, uint8_t4>(
+                uint8_t4(linear_to_srgb(base_colour),
+                         uint8_t(is_emissive) | (uint8_t(is_metallic) << 1) |
+                             (posterize(roughness, 6) << 2)));
     }
-}
-
-[shader("pixel")] void fragment(Interp values,
-                                uniform PushConstants push_constants, ) {
-    fragment_inner(values, push_constants, true);
-}
-
-[shader("pixel")] void prepass(Interp values,
-                                   uniform PushConstants push_constants, ) {
-    fragment_inner(values, push_constants, false);
 }

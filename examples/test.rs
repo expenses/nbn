@@ -208,22 +208,9 @@ fn main() {
         }],
     });
 
-    let dim_size = 16384;
+    let dim_size = 10384;
 
     let voxelization_shader = device.load_shader("shaders/compiled/voxelize.spv");
-
-    let prepass_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        vertex: nbn::ShaderDesc {
-            module: &voxelization_shader,
-            entry_point: c"vertex",
-        },
-        fragment: nbn::ShaderDesc {
-            module: &voxelization_shader,
-            entry_point: c"prepass",
-        },
-        color_attachment_formats: &[],
-        conservative_rasterization: true,
-    });
 
     let voxelization_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
         vertex: nbn::ShaderDesc {
@@ -238,7 +225,19 @@ fn main() {
         conservative_rasterization: true,
     });
 
-    let mut num_outputs_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+    let output_buffer_size = 4_000_000_000;
+
+    let output_buffer = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "outputs",
+            size: output_buffer_size,
+            ty: nbn::BufferType::Download,
+        })
+        .unwrap();
+
+    let max_outputs = output_buffer_size / std::mem::size_of::<(u32, u32, u32)>() as u64;
+
+    let num_outputs_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
         name: "num_outputs",
         data: &[0_u32],
     });
@@ -255,94 +254,8 @@ fn main() {
         output: u64,
         num_outputs: u64,
         dim_size: u32,
+        output_size: u32,
     }
-
-    unsafe {
-        device
-            .begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
-            .unwrap();
-
-        device.begin_rendering(&command_buffer, dim_size, dim_size, &[]);
-
-        device.cmd_bind_pipeline(
-            *command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            *prepass_pipeline,
-        );
-        device.bind_internal_descriptor_sets(&command_buffer);
-
-        device.push_constants(
-            &command_buffer,
-            Voxelization {
-                output: 0,
-                gltf: *gltf,
-                num_outputs: *num_outputs_buffer,
-                dim_size,
-            },
-        );
-
-        device.cmd_draw(*command_buffer, num_indices, 1, 0, 0);
-
-        device.cmd_end_rendering(*command_buffer);
-
-        device.end_command_buffer(*command_buffer).unwrap();
-
-        let transfer_command_buffers: Vec<vk::CommandBuffer> =
-            images.iter().map(|image| *image.command_buffer).collect();
-
-        device
-            .queue_submit(
-                *device.transfer_queue,
-                &[vk::SubmitInfo::default()
-                    .signal_semaphores(&[*transfer_semaphore])
-                    .command_buffers(&transfer_command_buffers)],
-                vk::Fence::null(),
-            )
-            .unwrap();
-
-        device
-            .queue_submit(
-                *device.graphics_queue,
-                &[vk::SubmitInfo::default()
-                    .wait_semaphores(&[*transfer_semaphore])
-                    .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
-                    .command_buffers(&[*command_buffer])],
-                *fence,
-            )
-            .unwrap();
-
-        println!("Waiting for prepass");
-        device.wait_for_fences(&[*fence], true, !0).unwrap();
-    }
-
-    println!("{:#.10?}", device.allocator.generate_report());
-
-    // Drop staging buffers
-    let images: Vec<_> = images
-        .into_iter()
-        .map(|pending_image| pending_image.into_inner())
-        .collect();
-
-    let num_outputs_slice = num_outputs_buffer.try_as_slice_mut::<u32>().unwrap();
-
-    let num_outputs = num_outputs_slice[0];
-
-    dbg!(num_outputs);
-
-    let output_buffer = device
-        .create_buffer(nbn::BufferDescriptor {
-            name: "output",
-            size: std::mem::size_of::<(u64, PackedMaterial)>() as u64 * num_outputs as u64,
-            ty: nbn::BufferType::Download,
-        })
-        .unwrap();
-
-    println!("{:#.10?}", device.allocator.generate_report());
-
-    num_outputs_slice[0] = 0;
-
-    let fence = device.create_fence();
-    let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
     unsafe {
         device
@@ -365,6 +278,7 @@ fn main() {
                 gltf: *gltf,
                 num_outputs: *num_outputs_buffer,
                 dim_size,
+                output_size: max_outputs as u32,
             },
         );
 
@@ -373,11 +287,29 @@ fn main() {
         device.cmd_end_rendering(*command_buffer);
 
         device.end_command_buffer(*command_buffer).unwrap();
+    }
+
+    let transfer_command_buffers: Vec<vk::CommandBuffer> =
+        images.iter().map(|image| *image.command_buffer).collect();
+
+    unsafe {
+        device
+            .queue_submit(
+                *device.transfer_queue,
+                &[vk::SubmitInfo::default()
+                    .signal_semaphores(&[*transfer_semaphore])
+                    .command_buffers(&transfer_command_buffers)],
+                vk::Fence::null(),
+            )
+            .unwrap();
 
         device
             .queue_submit(
                 *device.graphics_queue,
-                &[vk::SubmitInfo::default().command_buffers(&[*command_buffer])],
+                &[vk::SubmitInfo::default()
+                    .wait_semaphores(&[*transfer_semaphore])
+                    .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
+                    .command_buffers(&[*command_buffer])],
                 *fence,
             )
             .unwrap();
@@ -386,8 +318,18 @@ fn main() {
         device.wait_for_fences(&[*fence], true, !0).unwrap();
     }
 
+    println!("{:#.10?}", device.allocator.generate_report());
+
     drop(images);
     drop(buffer);
+
+    let num_outputs = num_outputs_buffer.try_as_slice::<u32>().unwrap()[0];
+
+    dbg!(num_outputs, max_outputs);
+
+    if num_outputs as u64 > max_outputs {
+        panic!("Overflowed. {}/{}", num_outputs, max_outputs);
+    }
 
     let mut output = output_buffer
         .try_as_slice::<(u32, u32, PackedMaterial)>()

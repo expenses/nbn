@@ -772,7 +772,7 @@ impl Device {
         image_barriers: &[ImageBarrier],
     ) {
         vk_sync::cmd::pipeline_barrier(
-            &self,
+            self,
             **command_buffer,
             global_barrier,
             buffer_barriers,
@@ -941,7 +941,7 @@ impl Device {
                     vk::ConservativeRasterizationModeEXT::DISABLED
                 });
 
-        let blend_attachments = if desc.color_attachment_formats.len() > 0 {
+        let blend_attachments = if !desc.color_attachment_formats.is_empty() {
             &[vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)][..]
         } else {
