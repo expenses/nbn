@@ -14,7 +14,7 @@ impl WindowState {
             let command_buffer = &self.per_frame_command_buffers[self.sync_resources.current_frame];
             let mut frame = self.sync_resources.wait_for_frame(device);
 
-            let (next_image, suboptimal) = device
+            let (next_image, _suboptimal) = device
                 .swapchain_loader
                 .acquire_next_image(
                     *self.swapchain,
@@ -170,16 +170,18 @@ impl winit::application::ApplicationHandler for App {
         let device = nbn::Device::new(Some(&window));
 
         let swapchain = device.create_swapchain(&window);
+        let shader = device.load_shader("shaders/compiled/triangle.spv");
         let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
             vertex: nbn::ShaderDesc {
-                path: "triangle.spv",
-                entry_point: c"main",
+                module: &shader,
+                entry_point: c"vertex",
             },
             fragment: nbn::ShaderDesc {
-                path: "triangle.spv",
-                entry_point: c"main",
+                module: &shader,
+                entry_point: c"fragment",
             },
             color_attachment_formats: &[swapchain.surface_format],
+            conservative_rasterization: false,
         });
 
         self.window_state = Some(WindowState {

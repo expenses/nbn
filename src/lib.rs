@@ -7,11 +7,12 @@ use ash::{
 };
 use parking_lot::Mutex;
 use std::borrow::Cow;
-use std::ffi;
 use std::ffi::c_char;
+use std::ffi::{self, CStr};
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+pub use vk_sync::{AccessType, BufferBarrier, GlobalBarrier, ImageBarrier, ImageLayout};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
@@ -44,11 +45,16 @@ unsafe extern "system" fn vulkan_debug_callback(
         _ => panic!(),
     };
 
-    log::log!(
-        target: "vulkan",
-        level,
-        "{message_type:?} [{message_id_name} ({message_id_number})] : {message}"
-    );
+    if message_id_name == "VVL-DEBUG-PRINTF" {
+        let (_, message) = message.rsplit_once('|').unwrap();
+        log::log!(target: "shader", log::Level::Warn, "{message}");
+    } else {
+        log::log!(
+            target: "vulkan",
+            level,
+            "{message_type:?} [{message_id_name} ({message_id_number})] : {message}"
+        );
+    }
 
     vk::FALSE
 }
@@ -91,6 +97,10 @@ impl Allocator {
     pub fn wait_for_next_deallocation(&self) {
         self.deallocation_notifier
             .wait(&mut self.deallocation_mutex.lock());
+    }
+
+    pub fn generate_report(&self) -> gpu_allocator::AllocatorReport {
+        self.inner.lock().generate_report()
     }
 }
 
@@ -172,14 +182,22 @@ impl Device {
         }
         extension_names.push(debug_utils::NAME.as_ptr());
         extension_names.push(surface::NAME.as_ptr());
+        // Needed in order to direct debug printf statements to `vulkan_debug_callback`.
+        // Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
+        extension_names.push(ash::ext::layer_settings::NAME.as_ptr());
 
         let create_flags = vk::InstanceCreateFlags::default();
+
+        // Needed for debug printf.
+        let mut validation_features = vk::ValidationFeaturesEXT::default()
+            .enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF]);
 
         let create_info = vk::InstanceCreateInfo::default()
             .application_info(&appinfo)
             .enabled_layer_names(&layers_names_raw)
             .enabled_extension_names(&extension_names)
-            .flags(create_flags);
+            .flags(create_flags)
+            .push_next(&mut validation_features);
 
         let instance: ash::Instance = unsafe {
             entry
@@ -282,7 +300,10 @@ impl Device {
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
             .shader_int16(true)
-            .shader_int64(true);
+            .shader_int64(true)
+            // needed for debug printf
+            .fragment_stores_and_atomics(true)
+            .vertex_pipeline_stores_and_atomics(true);
 
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
@@ -316,6 +337,8 @@ impl Device {
                         .enabled_extension_names(&[
                             swapchain::NAME.as_ptr(),
                             ash::ext::conservative_rasterization::NAME.as_ptr(),
+                            // Needed for debug printf.
+                            ash::khr::shader_non_semantic_info::NAME.as_ptr(),
                         ])
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_2_features)
@@ -458,6 +481,18 @@ impl Device {
                 .get_physical_device_memory_properties2(self.physical_device, &mut props)
         };
         budget
+    }
+
+    pub fn get_remaining_memory(&self) -> arrayvec::ArrayVec<i64, { vk::MAX_MEMORY_HEAPS }> {
+        let budget = self.get_memory_budget();
+        let mut vec = arrayvec::ArrayVec::new();
+        for i in 0..vk::MAX_MEMORY_HEAPS {
+            if budget.heap_budget[i] != 0 {
+                vec.push(budget.heap_budget[i] as i64 - budget.heap_usage[i] as i64);
+            }
+        }
+
+        vec
     }
 
     pub fn create_swapchain(&self, window: &Window) -> Swapchain {
@@ -671,16 +706,15 @@ impl Device {
             self.begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
                 .unwrap();
 
-            vk_sync::cmd::pipeline_barrier(
-                self,
-                *command_buffer,
+            self.insert_pipeline_barrier(
+                &command_buffer,
                 None,
                 &[],
-                &[vk_sync::ImageBarrier {
+                &[ImageBarrier {
                     previous_accesses: &[],
-                    next_accesses: &[vk_sync::AccessType::TransferWrite],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
+                    next_accesses: &[AccessType::TransferWrite],
+                    previous_layout: ImageLayout::Optimal,
+                    next_layout: ImageLayout::Optimal,
                     range: image.subresource_range,
                     discard_contents: true,
                     image: *image.image,
@@ -703,18 +737,15 @@ impl Device {
                     )],
             );
 
-            vk_sync::cmd::pipeline_barrier(
-                self,
-                *command_buffer,
+            self.insert_pipeline_barrier(
+                &command_buffer,
                 None,
                 &[],
-                &[vk_sync::ImageBarrier {
-                    previous_accesses: &[vk_sync::AccessType::TransferWrite],
-                    next_accesses: &[
-                        vk_sync::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer,
-                    ],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
+                &[ImageBarrier {
+                    previous_accesses: &[AccessType::TransferWrite],
+                    next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
+                    previous_layout: ImageLayout::Optimal,
+                    next_layout: ImageLayout::Optimal,
                     range: image.subresource_range,
                     discard_contents: false,
                     image: *image.image,
@@ -733,6 +764,73 @@ impl Device {
         }
     }
 
+    pub fn insert_pipeline_barrier(
+        &self,
+        command_buffer: &CommandBuffer,
+        global_barrier: Option<GlobalBarrier>,
+        buffer_barriers: &[BufferBarrier],
+        image_barriers: &[ImageBarrier],
+    ) {
+        vk_sync::cmd::pipeline_barrier(
+            &self,
+            **command_buffer,
+            global_barrier,
+            buffer_barriers,
+            image_barriers,
+        );
+    }
+
+    pub fn bind_internal_descriptor_sets(&self, command_buffer: &CommandBuffer) {
+        unsafe {
+            self.cmd_bind_descriptor_sets(
+                **command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                **self.pipeline_layout,
+                0,
+                &[self.descriptors.set],
+                &[],
+            );
+        }
+    }
+
+    pub fn push_constants<T: Copy>(&self, command_buffer: &CommandBuffer, data: T) {
+        unsafe {
+            self.cmd_push_constants(
+                **command_buffer,
+                **self.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE
+                    | vk::ShaderStageFlags::VERTEX
+                    | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                cast_slice(&[data]),
+            );
+        }
+    }
+
+    pub fn begin_rendering(&self, command_buffer: &CommandBuffer, width: u32, height: u32) {
+        let render_area =
+            vk::Rect2D::default().extent(vk::Extent2D::default().width(width).height(height));
+
+        unsafe {
+            self.cmd_begin_rendering(
+                **command_buffer,
+                &vk::RenderingInfo::default()
+                    .layer_count(1)
+                    .render_area(render_area),
+            );
+
+            self.cmd_set_viewport(
+                **command_buffer,
+                0,
+                &[vk::Viewport::default()
+                    .height(width as f32)
+                    .width(height as f32)
+                    .max_depth(1.0)],
+            );
+            self.cmd_set_scissor(**command_buffer, 0, &[render_area]);
+        }
+    }
+
     pub fn create_buffer(&self, desc: BufferDescriptor) -> VkResult<Buffer> {
         let buffer = unsafe {
             self.device.create_buffer(
@@ -740,7 +838,8 @@ impl Device {
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
                         | vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER
                         | vk::BufferUsageFlags::TRANSFER_SRC
-                        | vk::BufferUsageFlags::TRANSFER_DST,
+                        | vk::BufferUsageFlags::TRANSFER_DST
+                        | vk::BufferUsageFlags::INDIRECT_BUFFER,
                 ),
                 None,
             )
@@ -807,8 +906,8 @@ impl Device {
         buffer
     }
 
-    pub fn create_shader_module(&self, path: &str) -> ShaderModule {
-        let bytes = std::fs::read(path).unwrap();
+    pub fn load_shader(&self, path: &str) -> ShaderModule {
+        let bytes = std::fs::read(path).expect(path);
         let spirv_slice =
             unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u32, bytes.len() / 4) };
 
@@ -824,25 +923,6 @@ impl Device {
     }
 
     pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Pipeline {
-        let vertex_module;
-        let fragment_module;
-
-        let mut modules = arrayvec::ArrayVec::new();
-
-        if desc.vertex.path == desc.fragment.path {
-            let module = self.create_shader_module(desc.vertex.path);
-            vertex_module = *module;
-            fragment_module = *module;
-            modules.push(module);
-        } else {
-            let vertex_shader = self.create_shader_module(desc.vertex.path);
-            let fragment_shader = self.create_shader_module(desc.fragment.path);
-            vertex_module = *vertex_shader;
-            fragment_module = *fragment_shader;
-            modules.push(vertex_shader);
-            modules.push(fragment_shader);
-        }
-
         let mut dynamic_rendering = vk::PipelineRenderingCreateInfo::default()
             .color_attachment_formats(desc.color_attachment_formats);
 
@@ -869,11 +949,11 @@ impl Device {
                         vk::PipelineShaderStageCreateInfo::default()
                             .stage(vk::ShaderStageFlags::VERTEX)
                             .name(desc.vertex.entry_point)
-                            .module(vertex_module),
+                            .module(**desc.vertex.module),
                         vk::PipelineShaderStageCreateInfo::default()
                             .stage(vk::ShaderStageFlags::FRAGMENT)
                             .name(desc.fragment.entry_point)
-                            .module(fragment_module),
+                            .module(**desc.fragment.module),
                     ])
                     .vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
                     .input_assembly_state(
@@ -914,19 +994,16 @@ impl Device {
 
         Pipeline {
             pipeline: WrappedPipeline::from_raw(pipelines[0], &self.device),
-            _modules: modules,
         }
     }
 
-    pub fn create_compute_pipeline(&self, desc: ShaderDesc) -> Pipeline {
-        let shader_module = self.create_shader_module(desc.path);
-
+    pub fn create_compute_pipeline(&self, module: &ShaderModule, entry_point: &CStr) -> Pipeline {
         let create_info = vk::ComputePipelineCreateInfo::default()
             .stage(
                 vk::PipelineShaderStageCreateInfo::default()
                     .stage(vk::ShaderStageFlags::COMPUTE)
-                    .name(desc.entry_point)
-                    .module(*shader_module),
+                    .name(entry_point)
+                    .module(**module),
             )
             .layout(**self.pipeline_layout);
 
@@ -938,7 +1015,6 @@ impl Device {
 
         Pipeline {
             pipeline: WrappedPipeline::from_raw(pipelines[0], &self.device),
-            _modules: arrayvec::ArrayVec::from_iter([shader_module]),
         }
     }
 
@@ -1163,7 +1239,7 @@ impl Drop for CommandBuffer {
 
 pub struct ShaderDesc<'a> {
     pub entry_point: &'a ffi::CStr,
-    pub path: &'a str,
+    pub module: &'a ShaderModule,
 }
 
 pub struct GraphicsPipelineDesc<'a> {
@@ -1175,7 +1251,6 @@ pub struct GraphicsPipelineDesc<'a> {
 
 pub struct Pipeline {
     pub pipeline: WrappedPipeline,
-    _modules: arrayvec::ArrayVec<ShaderModule, 2>,
 }
 
 impl std::ops::Deref for Pipeline {
@@ -1196,6 +1271,10 @@ pub struct Buffer {
 impl Buffer {
     pub fn try_as_slice<T: Copy>(&self) -> Option<&[T]> {
         self.allocation.mapped_slice().map(cast_slice)
+    }
+
+    pub fn try_as_slice_mut<T: Copy>(&mut self) -> Option<&mut [T]> {
+        self.allocation.mapped_slice_mut().map(cast_slice_mut)
     }
 }
 
@@ -1256,6 +1335,15 @@ pub fn cast_slice<I: Copy, O: Copy>(slice: &[I]) -> &[O] {
     unsafe {
         std::slice::from_raw_parts(
             slice.as_ptr() as *const O,
+            std::mem::size_of_val(slice) / std::mem::size_of::<O>(),
+        )
+    }
+}
+
+pub fn cast_slice_mut<I: Copy, O: Copy>(slice: &mut [I]) -> &mut [O] {
+    unsafe {
+        std::slice::from_raw_parts_mut(
+            slice.as_mut_ptr() as *mut O,
             std::mem::size_of_val(slice) / std::mem::size_of::<O>(),
         )
     }

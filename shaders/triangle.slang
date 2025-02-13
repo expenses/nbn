@@ -1,10 +1,9 @@
 struct Interp {
-    float4 pos: SV_Position;
+    float4 pos : SV_Position;
     float3 col;
 };
 
-[shader("vertex")]
-Interp vertex(uint vertex_id: SV_VertexID) {
+[shader("vertex")] Interp vertex(uint vertex_id : SV_VertexID) {
     Interp interp;
     interp.col = float3(0);
     interp.col[vertex_id] = 1.0;
@@ -20,7 +19,6 @@ Interp vertex(uint vertex_id: SV_VertexID) {
     return interp;
 }
 
-[shader("pixel")]
-float4 fragment(Interp in) {
+    [shader("pixel")] float4 fragment(Interp in) {
     return float4(in.col, 1.0);
 }

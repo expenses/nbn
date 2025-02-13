@@ -1,8 +1,6 @@
+rm -r shaders/compiled/*
 slang_with_args="slangc -O3 -warnings-as-errors all"
-$slang_with_args shader.slang  -o shader.spv
-$slang_with_args triangle.slang -o triangle.spv
-$slang_with_args voxelize.slang -o voxelize.spv
-slang_sort="slangc -O3 -Wno-30081 -I FidelityFX-SDK/sdk/include/FidelityFX/gpu"
-
-#$slang_sort sort.slang -O3 -warnings-as-errors all -o sort.spv
-#$slang_sort sort_d.slang -O3 -warnings-as-errors all -o sort_d.spv
+$slang_with_args shaders/triangle.slang -o shaders/compiled/triangle.spv
+$slang_with_args shaders/voxelize.slang -o shaders/compiled/voxelize.spv
+$slang_with_args VkRadixSort/singleradixsort/resources/shaders/single_radixsort.comp -o shaders/compiled/radixsort.spv
+#$slang_with_args VkRadixSort/multiradixsort/resources/shaders/multi_radixsort_histograms.comp -o shaders/compiled/multi_radixsort_histograms.spv
