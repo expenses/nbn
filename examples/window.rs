@@ -68,7 +68,8 @@ impl WindowState {
                         .aspect_mask(vk::ImageAspectFlags::COLOR),
                 }],
             );
-            device.cmd_begin_rendering(
+            device.begin_rendering(**command_buffer, 800, 600);
+            /*device.cmd_begin_rendering(
                 **command_buffer,
                 &vk::RenderingInfo::default()
                     .layer_count(1)
@@ -84,7 +85,7 @@ impl WindowState {
                         width: 800,
                         height: 600,
                     })),
-            );
+            );*/
             device.cmd_bind_pipeline(
                 **command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
