@@ -1,3 +1,17 @@
 /target
 *.spv
 *.tree64
+*.png
+*.gltf
+*.bin
+*.dds
+*.fbx
+*.pyscene
+*.txt
+*.tga
+*.TGA
+*.blend
+*.hdr
+/models
+/sorting
+/experiments
