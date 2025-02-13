@@ -68,47 +68,23 @@ impl WindowState {
                         .aspect_mask(vk::ImageAspectFlags::COLOR),
                 }],
             );
-            device.cmd_begin_rendering(
-                **command_buffer,
-                &vk::RenderingInfo::default()
-                    .layer_count(1)
-                    .color_attachments(&[vk::RenderingAttachmentInfo::default()
-                        .image_view(*image_view)
-                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .clear_value(vk::ClearValue {
-                            color: vk::ClearColorValue { float32: [1.0; 4] },
-                        })
-                        .load_op(vk::AttachmentLoadOp::CLEAR)
-                        .store_op(vk::AttachmentStoreOp::STORE)])
-                    .render_area(vk::Rect2D::default().extent(vk::Extent2D {
-                        width: 800,
-                        height: 600,
-                    })),
+            device.begin_rendering(
+                &command_buffer,
+                800,
+                600,
+                &[vk::RenderingAttachmentInfo::default()
+                    .image_view(*image_view)
+                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .clear_value(vk::ClearValue {
+                        color: vk::ClearColorValue { float32: [1.0; 4] },
+                    })
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)],
             );
             device.cmd_bind_pipeline(
                 **command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 *self.pipeline,
-            );
-            device.cmd_set_scissor(
-                **command_buffer,
-                0,
-                &[vk::Rect2D::default().extent(vk::Extent2D {
-                    width: 800,
-                    height: 600,
-                })],
-            );
-            device.cmd_set_viewport(
-                **command_buffer,
-                0,
-                &[vk::Viewport {
-                    x: 0.0,
-                    y: 0.0,
-                    width: 800.0,
-                    height: 800.0,
-                    min_depth: 0.0,
-                    max_depth: 1.0,
-                }],
             );
             device.cmd_draw(**command_buffer, 3, 1, 0, 0);
 

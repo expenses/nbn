@@ -807,7 +807,13 @@ impl Device {
         }
     }
 
-    pub fn begin_rendering(&self, command_buffer: &CommandBuffer, width: u32, height: u32) {
+    pub fn begin_rendering(
+        &self,
+        command_buffer: &CommandBuffer,
+        width: u32,
+        height: u32,
+        color_attachments: &[vk::RenderingAttachmentInfo],
+    ) {
         let render_area =
             vk::Rect2D::default().extent(vk::Extent2D::default().width(width).height(height));
 
@@ -816,7 +822,8 @@ impl Device {
                 **command_buffer,
                 &vk::RenderingInfo::default()
                     .layer_count(1)
-                    .render_area(render_area),
+                    .render_area(render_area)
+                    .color_attachments(color_attachments),
             );
 
             self.cmd_set_viewport(

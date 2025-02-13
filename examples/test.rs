@@ -72,7 +72,7 @@ fn create_image(
 fn main() {
     env_logger::init();
 
-    let base = "citadel";
+    let base = "models/citadel";
 
     let bytes = std::fs::read(&format!("{}/voxelization.gltf", base)).unwrap();
     let (gltf, buffer): (
@@ -262,7 +262,7 @@ fn main() {
             .begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
             .unwrap();
 
-        device.begin_rendering(&command_buffer, dim_size, dim_size);
+        device.begin_rendering(&command_buffer, dim_size, dim_size, &[]);
 
         device.cmd_bind_pipeline(
             *command_buffer,
@@ -349,7 +349,7 @@ fn main() {
             .begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
             .unwrap();
 
-        device.begin_rendering(&command_buffer, dim_size, dim_size);
+        device.begin_rendering(&command_buffer, dim_size, dim_size, &[]);
 
         device.cmd_bind_pipeline(
             *command_buffer,
