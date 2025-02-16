@@ -182,8 +182,8 @@ impl Device {
         }
         extension_names.push(debug_utils::NAME.as_ptr());
         extension_names.push(surface::NAME.as_ptr());
-        // Needed in order to direct debug printf statements to `vulkan_debug_callback`.
-        // Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
+        // Needed in order to direct debug printf statements to
+        // `vulkan_debug_callback`. Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
         extension_names.push(ash::ext::layer_settings::NAME.as_ptr());
 
         let create_flags = vk::InstanceCreateFlags::default();
@@ -906,7 +906,7 @@ impl Device {
             desc.data,
             &mut buffer.allocation,
             0,
-            0, //buffer.alignment as usize,
+            0, // buffer.alignment as usize,
         )
         .unwrap();
 
@@ -1155,7 +1155,7 @@ impl Drop for Device {
 }
 
 macro_rules! wrap_raii_struct {
-    ($name:ident, $ty:ty, $func:expr) => {
+    ($name : ident, $ty : ty, $func : expr) => {
         pub struct $name {
             pub inner: $ty,
             device: ash::Device,

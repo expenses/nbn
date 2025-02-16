@@ -1,15 +1,17 @@
-struct Material {
-    uint emissive_image;
-    uint base_colour_image;
-    uint metallic_roughness_image;
-    uint flags;
+module gltf;
+
+public struct Material {
+    public uint emissive_image;
+    public uint base_colour_image;
+    public uint metallic_roughness_image;
+    public uint flags;
 }
 
-struct BufferView {
+public struct BufferView {
     uint byte_offset;
 }
 
-struct Accessor {
+public struct Accessor {
     uint buffer_view;
     uint count;
     uint byte_offset;
@@ -21,15 +23,15 @@ struct Accessor {
     };
 }
 
-struct Primitive {
+public struct Primitive {
     uint indices;
     uint positions;
     uint uvs;
-    uint material;
+    public uint material;
 
-    uint num_indices(Gltf *gltf) { return gltf.accessors[indices].count; }
+    public uint num_indices(Gltf *gltf) { return gltf.accessors[indices].count; }
 
-    uint read_index(Gltf *gltf, uint id) {
+    public uint read_index(Gltf *gltf, uint id) {
         let accessor = gltf.accessors[indices];
 
         let ptr = gltf.accessors[indices].ptr(gltf);
@@ -41,20 +43,20 @@ struct Primitive {
         }
     }
 
-    float3 *positions_ptr(Gltf *gltf) {
+    public float3 *positions_ptr(Gltf *gltf) {
         return (float3 *)gltf.accessors[positions].ptr(gltf);
     }
 
-    float2 *uvs_ptr(Gltf *gltf) {
+    public float2 *uvs_ptr(Gltf *gltf) {
         return (float2 *)gltf.accessors[uvs].ptr(gltf);
     }
 }
 
-struct Gltf {
-    BufferView *buffer_views;
-    Accessor *accessors;
-    Primitive *primitives;
-    uint8_t *buffer;
-    Material *materials;
-    uint num_primitives;
+public struct Gltf {
+    public BufferView *buffer_views;
+    public Accessor *accessors;
+    public Primitive *primitives;
+    public uint8_t *buffer;
+    public Material *materials;
+    public uint num_primitives;
 }

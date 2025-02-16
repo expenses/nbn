@@ -16,3 +16,6 @@
 /sorting
 /experiments
 perf.data*
+/.ninja_log
+*.slang-module
+*.spv

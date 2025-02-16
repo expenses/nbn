@@ -1,4 +1,4 @@
-#include "gltf.slang"
+import gltf;
 
 struct Interp {
     float4 pos : SV_Position;
