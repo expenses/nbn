@@ -238,9 +238,9 @@ fn main() {
     });
 
     let dim_size = 2048;
-    let total_size = 8192;
+    let total_size = 2048;
     let output_buffer_size = 2_000_000_000;
-    let scale = 8192.0;
+    let scale = 7500.0;
     let num_tiles_on_side = dbg!(total_size / dim_size);
 
     let transfer_fence = device.create_fence();
@@ -429,11 +429,14 @@ fn main() {
     dbg!(nodes_a.len());
 
     dbg!(&tree.stats);
-    tree.push_new_root_node(
-        nodes_a[0].1,
-        (total_size as f32).log2() as u8,
-        glam::IVec3::splat(total_size as i32) / 2,
-    );
+    //let mut log_size = total_size.ilog2();
+    //if log_size % 2 == 1 {
+    //    log_size += 1;
+    //}
+    //
+    let num_levels = 7;
+    // size = dim_size * (num_tiles_on_side / 2) + dim_size/2;
+    tree.push_new_root_node(nodes_a[0].1, num_levels, glam::IVec3::splat(1024));
 
     dbg!(
         std::mem::size_of_val(&tree.nodes[..]),

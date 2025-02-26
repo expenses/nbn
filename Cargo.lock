@@ -2227,7 +2227,7 @@ checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 [[package]]
 name = "tree64"
 version = "0.1.0"
-source = "git+https://github.com/expenses/tree64#286aeda7a51c614eb9dcd7e86cbce68183bc71c0"
+source = "git+https://github.com/expenses/tree64#96fd2c9603e92a72733eafa3e6e84a49b78a5756"
 dependencies = [
  "arrayvec",
  "bytemuck",
