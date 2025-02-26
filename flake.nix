@@ -8,7 +8,7 @@
     self,
     nixpkgs,
     flake-utils,
-    slang-gen-ninja
+    slang-gen-ninja,
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
@@ -31,33 +31,27 @@
             buildInputs = [stdenv.cc.cc libtinfo];
             postFixup = "wrapProgram $out/bin/rps-hlslc --prefix LD_LIBRARY_PATH : $out/lib";
           };
+        vcc = with pkgs;
+          stdenv.mkDerivation {
+            name = "vcc";
+            src = fetchGit {
+              url = "https://github.com/shady-gang/shady";
+              rev = "9bf761f5a7df3d9a63ee99cdf686e2f559fd8638";
+              submodules = true;
+            };
+            nativeBuildInputs = [cmake python3 llvmPackages_18.clang-unwrapped llvmPackages_18.clang-unwrapped.lib.dev];
+            buildInputs = [json_c spirv-headers   clang llvmPackages_18.libllvm llvmPackages_18.clang-unwrapped.lib];
+            cmakeFlags = ["-DSHADY_USE_FETCHCONTENT=0" "-DPython_EXECUTABLE=${python3}/bin/python3"];
+            NIX_CFLAGS_COMPILE = "-isystem ${llvmPackages_18.clang-unwrapped.lib}/lib/clang/18/include";
+          };
       in {
-        packages = {inherit render-pipeline-shaders;};
+        packages = {inherit render-pipeline-shaders vcc;};
         devShells.default = with pkgs;
           mkShell {
             nativeBuildInputs = [
-                slang-gen-ninja-bin
+              slang-gen-ninja-bin
               directx-shader-compiler
-              ((shader-slang.override {
-                spirv-headers = (spirv-headers.overrideAttrs {
-                    src = fetchFromGitHub {
-                        owner = "KhronosGroup";
-                        repo = "SPIRV-Headers";
-                        rev = "767e901c986e9755a17e7939b3046fc2911a4bbd";
-                        hash = "sha256-mXj6HDIEEjvGLO3nJEIRxdJN28/xUA2W+r9SRnh71LU=";
-                      };
-                });
-                
-              }).overrideAttrs (arrs: {
-                src = fetchFromGitHub {
-                  owner = "shader-slang";
-
-                  repo = "slang";
-                  rev = "e043428c5ac263fdb61072bd769fef769e8b08e4";
-                  fetchSubmodules = true;
-                  hash = "sha256-qyUx0fwr6pLo9fAynBlo4m7JFcs3lnTcnebA6LGqTo0=";
-                };
-              }))
+              shader-slang
               spirv-tools
               cargo-expand
               linuxPackages_latest.perf
@@ -72,6 +66,11 @@
             ];
             buildInputs = [vulkan-loader];
             LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon];
+          };
+        devShells.slang-build = with pkgs;
+          mkShell {
+            nativeBuildInputs = [cmake ninja python3];
+            buildInputs = [vulkan-headers];
           };
       }
     );

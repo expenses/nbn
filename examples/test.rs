@@ -1,4 +1,5 @@
 use ash::vk;
+use indicatif::ProgressIterator;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 slang_struct::slang_include!("shaders/gltf.slang");
@@ -69,12 +70,25 @@ fn create_image(
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Voxelization {
+    tile_offset: [u32; 4],
+    gltf: u64,
+    output: u64,
+    num_outputs: u64,
+    dim_size: u32,
+    output_size: u32,
+    scale: f32,
+    num_tiles_on_side: u32,
+}
+
 fn main() {
     env_logger::init();
 
-    let base = "models/citadel";
+    let base = "models/bi/Bistro_v5_2";
 
-    let bytes = std::fs::read(&format!("{}/voxelization.gltf", base)).unwrap();
+    let bytes = std::fs::read(&format!("{}/bistro_combined.gltf", base)).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         _,
@@ -208,86 +222,28 @@ fn main() {
         }],
     });
 
-    let dim_size = 10384;
-
     let voxelization_shader = device.load_shader("shaders/compiled/voxelize.spv");
 
     let voxelization_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
         vertex: nbn::ShaderDesc {
             module: &voxelization_shader,
-            entry_point: c"vertex",
+            entry_point: c"main",
         },
         fragment: nbn::ShaderDesc {
             module: &voxelization_shader,
-            entry_point: c"fragment",
+            entry_point: c"main",
         },
         color_attachment_formats: &[],
         conservative_rasterization: true,
     });
 
-    let output_buffer_size = 4_000_000_000;
+    let dim_size = 2048;
+    let total_size = 8192;
+    let output_buffer_size = 2_000_000_000;
+    let scale = 8192.0;
+    let num_tiles_on_side = dbg!(total_size / dim_size);
 
-    let output_buffer = device
-        .create_buffer(nbn::BufferDescriptor {
-            name: "outputs",
-            size: output_buffer_size,
-            ty: nbn::BufferType::Download,
-        })
-        .unwrap();
-
-    let max_outputs = output_buffer_size / std::mem::size_of::<(u32, u32, u32)>() as u64;
-
-    let num_outputs_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-        name: "num_outputs",
-        data: &[0_u32],
-    });
-
-    let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
-
-    let transfer_semaphore = device.create_semaphore();
-    let fence = device.create_fence();
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct Voxelization {
-        gltf: u64,
-        output: u64,
-        num_outputs: u64,
-        dim_size: u32,
-        output_size: u32,
-    }
-
-    unsafe {
-        device
-            .begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
-            .unwrap();
-
-        device.begin_rendering(&command_buffer, dim_size, dim_size, &[]);
-
-        device.cmd_bind_pipeline(
-            *command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            *voxelization_pipeline,
-        );
-        device.bind_internal_descriptor_sets(&command_buffer);
-
-        device.push_constants(
-            &command_buffer,
-            Voxelization {
-                output: *output_buffer,
-                gltf: *gltf,
-                num_outputs: *num_outputs_buffer,
-                dim_size,
-                output_size: max_outputs as u32,
-            },
-        );
-
-        device.cmd_draw(*command_buffer, num_indices, 1, 0, 0);
-
-        device.cmd_end_rendering(*command_buffer);
-
-        device.end_command_buffer(*command_buffer).unwrap();
-    }
+    let transfer_fence = device.create_fence();
 
     let transfer_command_buffers: Vec<vk::CommandBuffer> =
         images.iter().map(|image| *image.command_buffer).collect();
@@ -296,53 +252,32 @@ fn main() {
         device
             .queue_submit(
                 *device.transfer_queue,
-                &[vk::SubmitInfo::default()
-                    .signal_semaphores(&[*transfer_semaphore])
-                    .command_buffers(&transfer_command_buffers)],
-                vk::Fence::null(),
+                &[vk::SubmitInfo::default().command_buffers(&transfer_command_buffers)],
+                *transfer_fence,
             )
             .unwrap();
 
         device
-            .queue_submit(
-                *device.graphics_queue,
-                &[vk::SubmitInfo::default()
-                    .wait_semaphores(&[*transfer_semaphore])
-                    .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
-                    .command_buffers(&[*command_buffer])],
-                *fence,
-            )
+            .wait_for_fences(&[*transfer_fence], true, !0)
             .unwrap();
-
-        println!("Waiting for voxelization");
-        device.wait_for_fences(&[*fence], true, !0).unwrap();
     }
 
-    println!("{:#.10?}", device.allocator.generate_report());
+    let images: Vec<_> = images.into_iter().map(|image| image.into_inner()).collect();
 
-    drop(images);
-    drop(buffer);
+    let max_outputs = output_buffer_size / 2 / std::mem::size_of::<(u32, u32, u32)>() as u64;
 
-    let num_outputs = num_outputs_buffer.try_as_slice::<u32>().unwrap()[0];
+    let mut num_outputs_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+        name: "num_outputs",
+        data: &[0_u32],
+    });
 
-    dbg!(num_outputs, max_outputs);
-
-    if num_outputs as u64 > max_outputs {
-        panic!("Overflowed. {}/{}", num_outputs, max_outputs);
-    }
-
-    let mut output = output_buffer
-        .try_as_slice::<(u32, u32, PackedMaterial)>()
-        .unwrap()[..num_outputs as usize]
-        .to_vec();
-
-    drop(output_buffer);
-
-    dbg!("Starting sort");
-    radsort::sort_by_key(&mut output, |&(pos_high, pos_low, _)| (pos_high, pos_low));
-    dbg!(output.len());
-    output.dedup_by_key(|&mut (pos_high, pos_low, _)| (pos_high, pos_low));
-    dbg!(output.len());
+    let mut output_buffer = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "outputs",
+            size: output_buffer_size,
+            ty: nbn::BufferType::Download,
+        })
+        .unwrap();
 
     let mut tree: tree64::Tree64<PackedMaterial> = tree64::Tree64 {
         nodes: Default::default(),
@@ -354,86 +289,151 @@ fn main() {
     let mut nodes_a = Vec::new();
     let mut nodes_b = Vec::new();
 
-    dbg!("Starting first");
-    collect(
-        |(pos_high, pos_low, val)| {
-            (
-                undo_morton_encoding(((pos_high as u64) << 32) | (pos_low as u64)),
-                val,
-            )
-        },
-        &output,
-        &mut nodes_a,
-        |arr, pop_mask| tree64::Node::new(true, tree.insert_values(arr), pop_mask),
-    );
-    dbg!("Done first");
+    let add_node_level = |tree: &mut tree64::Tree64<PackedMaterial>,
+                          nodes_a: &mut Vec<(glam::UVec3, tree64::Node)>,
+                          nodes_b: &mut Vec<(glam::UVec3, tree64::Node)>| {
+        collect(
+            true,
+            |pos| pos,
+            &nodes_a,
+            nodes_b,
+            |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
+        );
+        std::mem::swap(nodes_a, nodes_b);
+    };
 
-    collect(
-        |pos| pos,
-        &nodes_a,
-        &mut nodes_b,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
+    let mut max_voxels = 0;
+
+    let mut run_pass = |offset: glam::UVec3| {
+        num_outputs_buffer.try_as_slice_mut::<u32>().unwrap()[0] = 0;
+
+        let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
+
+        let fence = device.create_fence();
+        unsafe {
+            device
+                .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
+                .unwrap();
+
+            device.begin_rendering(&command_buffer, dim_size, dim_size, &[]);
+
+            device.cmd_bind_pipeline(
+                *command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                *voxelization_pipeline,
+            );
+            device.bind_internal_descriptor_sets(&command_buffer);
+
+            device.push_constants(
+                &command_buffer,
+                Voxelization {
+                    tile_offset: offset.extend(0).into(),
+                    output: *output_buffer,
+                    gltf: *gltf,
+                    num_outputs: *num_outputs_buffer,
+                    dim_size,
+                    output_size: max_outputs as u32,
+                    scale,
+                    num_tiles_on_side,
+                },
+            );
+
+            device.cmd_draw(*command_buffer, num_indices, 1, 0, 0);
+
+            device.cmd_end_rendering(*command_buffer);
+
+            device.end_command_buffer(*command_buffer).unwrap();
+
+            device
+                .queue_submit(
+                    *device.graphics_queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[*command_buffer])],
+                    *fence,
+                )
+                .unwrap();
+
+            device.wait_for_fences(&[*fence], true, !0).unwrap();
+        }
+
+        let num_outputs = num_outputs_buffer.try_as_slice::<u32>().unwrap()[0];
+
+        if num_outputs as u64 > max_outputs {
+            panic!("Overflowed. {}/{}", num_outputs, max_outputs);
+        }
+
+        max_voxels = max_voxels.max(num_outputs);
+
+        let mut outputs = &mut output_buffer
+            .try_as_slice_mut::<(u32, u32, PackedMaterial)>()
+            .unwrap()[..num_outputs as usize];
+
+        if num_outputs == 0 {
+            return;
+        }
+
+        //if !wrote_out {
+        //    std::fs::write("out.dat", nbn::cast_slice(&outputs)).unwrap();
+        //    wrote_out = true;
+        //}
+
+        println!("{}", num_outputs as f32 / max_outputs as f32);
+        radsort::sort_by_key(&mut outputs, |&(pos_high, pos_low, ..)| (pos_high, pos_low));
+
+        collect(
+            true,
+            |(pos_high, pos_low, val)| {
+                (
+                    undo_morton_encoding(((pos_high as u64) << 32) | (pos_low as u64)),
+                    val,
+                )
+            },
+            &outputs,
+            &mut nodes_a,
+            |arr, pop_mask| tree64::Node::new(true, tree.insert_values(arr), pop_mask),
+        );
+        collect(
+            false,
+            |pos| pos,
+            &nodes_a,
+            &mut nodes_b,
+            |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
+        );
+    };
+
+    for i in (0..num_tiles_on_side * num_tiles_on_side * num_tiles_on_side).progress() {
+        run_pass(undo_morton_encoding(i as u64));
+    }
+
+    println!("{}", max_voxels as f32 / max_outputs as f32);
+
+    std::mem::swap(&mut nodes_a, &mut nodes_b);
 
     dbg!(nodes_a.len(), nodes_b.len());
 
-    collect(
-        |pos| pos,
-        &nodes_b,
-        &mut nodes_a,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
+    assert!(nodes_a.is_sorted_by_key(|&(pos, ..)| morton_encoding(pos)));
 
+    //println!("{:#.10?}", device.allocator.generate_report());
+
+    drop(images);
+    drop(buffer);
+    drop(output_buffer);
+    add_node_level(&mut tree, &mut nodes_a, &mut nodes_b);
+    dbg!(nodes_a.len());
+    add_node_level(&mut tree, &mut nodes_a, &mut nodes_b);
+    dbg!(nodes_a.len());
+    add_node_level(&mut tree, &mut nodes_a, &mut nodes_b);
+    dbg!(nodes_a.len());
+    add_node_level(&mut tree, &mut nodes_a, &mut nodes_b);
+    dbg!(nodes_a.len());
+    add_node_level(&mut tree, &mut nodes_a, &mut nodes_b);
     dbg!(nodes_a.len());
 
-    collect(
-        |pos| pos,
-        &nodes_a,
-        &mut nodes_b,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
-    dbg!(nodes_b.len());
-
-    collect(
-        |pos| pos,
-        &nodes_b,
-        &mut nodes_a,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
-
-    dbg!(nodes_a.len());
-
-    collect(
-        |pos| pos,
-        &nodes_a,
-        &mut nodes_b,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
-    dbg!(nodes_b.len());
-
-    collect(
-        |pos| pos,
-        &nodes_b,
-        &mut nodes_a,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
-    dbg!(nodes_a.len());
-    collect(
-        |pos| pos,
-        &nodes_a,
-        &mut nodes_b,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
-    dbg!(nodes_b.len());
-    collect(
-        |pos| pos,
-        &nodes_b,
-        &mut nodes_a,
-        |arr, pop_mask| tree64::Node::new(false, tree.insert_nodes(arr), pop_mask),
-    );
-    dbg!(nodes_a.len());
     dbg!(&tree.stats);
-    tree.push_new_root_node(nodes_a[0].1, 11, -glam::IVec3::splat(dim_size as i32) / 2);
+    tree.push_new_root_node(
+        nodes_a[0].1,
+        (total_size as f32).log2() as u8,
+        glam::IVec3::splat(total_size as i32) / 2,
+    );
 
     dbg!(
         std::mem::size_of_val(&tree.nodes[..]),
@@ -450,12 +450,15 @@ fn collect<
     S: Copy + std::fmt::Debug,
     E: Fn(S) -> (glam::UVec3, T),
 >(
+    clear_output: bool,
     extractor: E,
     sorted_values: &[S],
     output: &mut Vec<(glam::UVec3, O)>,
     mut transform: F,
 ) {
-    output.clear();
+    if clear_output {
+        output.clear();
+    }
     let mut values = tree64::PopMaskedData::default();
 
     let mut prev_pos = glam::UVec3::splat(u32::MAX);
@@ -505,22 +508,22 @@ fn combine_bits_64(mut x: u64) -> u32 {
     return x as u32;
 }
 
+fn morton_encoding(pos: glam::UVec3) -> u64 {
+    separate_bits_64(pos.x) | (separate_bits_64(pos.y) << 1) | (separate_bits_64(pos.z) << 2)
+}
+
+fn separate_bits_64(n: u32) -> u64 {
+    let mut n = n as u64;
+    n = (n ^ (n << 32)) & 0b1111111111111111000000000000000000000000000000001111111111111111u64;
+    n = (n ^ (n << 16)) & 0b0000000011111111000000000000000011111111000000000000000011111111u64;
+    n = (n ^ (n << 8)) & 0b1111000000001111000000001111000000001111000000001111000000001111u64;
+    n = (n ^ (n << 4)) & 0b0011000011000011000011000011000011000011000011000011000011000011u64;
+    n = (n ^ (n << 2)) & 0b1001001001001001001001001001001001001001001001001001001001001001u64;
+    n
+}
+
 #[test]
 fn morton_xyz() {
-    fn morton_encoding(pos: glam::UVec3) -> u64 {
-        separate_bits_64(pos.x) | (separate_bits_64(pos.y) << 1) | (separate_bits_64(pos.z) << 2)
-    }
-
-    fn separate_bits_64(n: u32) -> u64 {
-        let mut n = n as u64;
-        n = (n ^ (n << 32)) & 0b1111111111111111000000000000000000000000000000001111111111111111u64;
-        n = (n ^ (n << 16)) & 0b0000000011111111000000000000000011111111000000000000000011111111u64;
-        n = (n ^ (n << 8)) & 0b1111000000001111000000001111000000001111000000001111000000001111u64;
-        n = (n ^ (n << 4)) & 0b0011000011000011000011000011000011000011000011000011000011000011u64;
-        n = (n ^ (n << 2)) & 0b1001001001001001001001001001001001001001001001001001001001001001u64;
-        n
-    }
-
     assert_eq!(
         combine_bits_64(separate_bits_64(12345 * 2 * 100)),
         12345 * 2 * 100

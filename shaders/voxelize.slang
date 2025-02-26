@@ -8,11 +8,14 @@ struct Interp {
 };
 
 struct PushConstants {
+    uint4 tile_offset;
     Gltf *gltf;
-    uint32_t *output;
+    uint3 *output;
     Atomic<uint> *num_outputs;
     uint dim_size;
     uint output_size;
+    float scale;
+    uint num_tiles_on_side;
 };
 
 float3 normal_for_triangle(float3[3] positions) {
@@ -60,6 +63,15 @@ func fetch_3<T>(T *values, uint[3] indices) -> T[3] {
     let normal = abs(normal_for_triangle(positions));
     let max = max3(normal.x, normal.y, normal.z);
 
+    // Scale down
+    position /= push_constants.scale;
+    // Scale up by num times to a size (so a scene normalized to -1,1 might become -4,4)
+    position *= push_constants.num_tiles_on_side;
+    // Offset for the specific tile (*2 to turn 1,3 into -1,1)
+    position -= push_constants.tile_offset.xzy * 2;
+    // Offset to put the middle tile into the middle.
+    position += (push_constants.num_tiles_on_side/2)*2;
+
     uint8_t swizzle;
     if (normal.z == max) {
         // do nothing
@@ -74,13 +86,12 @@ func fetch_3<T>(T *values, uint[3] indices) -> T[3] {
 
     let index = indices[vertex_in_triangle];
 
-    let size = 2048 << 3;
-
     Interp interp;
     interp.uv = primitive.uvs_ptr(push_constants.gltf)[index];
     interp.material_index = primitive.material;
+
     interp.pos =
-        float4(position.xy / size, (position.z / (size * 2)) + 0.5, 1.0);
+        float4(position.xy, (position.z / 2) + 0.5, 1.0);
     interp.swizzle = swizzle;
     return interp;
 }
@@ -169,15 +180,19 @@ func linear_to_srgb<int N>(value : vector<float, N>) -> vector<uint8_t, N> {
         is_metallic = metal_roughness.b > 0.5;
     }
 
+    // Needs to be -1 so that 4096 becomes 4095 and morton encoding for tiles works.
+    let position = clamp(uint3(values.pos.xyz),0,push_constants.dim_size-1) + push_constants.tile_offset.xyz * push_constants.dim_size;
+
+    let emissive_factor = 50;
+
+    var aux = is_emissive ? log10(emissive_factor)/4 : roughness;
+
     let output_index = push_constants.num_outputs.add(1);
     if (output_index < push_constants.output_size) {
-        let encoded = morton_encode(uint3(values.pos.xyz));
-        push_constants.output[output_index * 3] = uint(encoded >> 32);
-        push_constants.output[output_index * 3 + 1] = uint(encoded);
-        push_constants.output[output_index * 3 + 2] =
-            reinterpret<uint, uint8_t4>(
+        let encoded = morton_encode(position);
+        push_constants.output[output_index] = uint3(uint(encoded >> 32), uint(encoded), reinterpret<uint, uint8_t4>(
                 uint8_t4(linear_to_srgb(base_colour),
                          uint8_t(is_emissive) | (uint8_t(is_metallic) << 1) |
-                             (posterize(roughness, 6) << 2)));
+                             (posterize(aux, 6) << 2))));
     }
 }
