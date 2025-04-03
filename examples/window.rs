@@ -70,8 +70,8 @@ impl WindowState {
             );
             device.begin_rendering(
                 &command_buffer,
-                800,
-                600,
+                self.swapchain.create_info.image_extent.width,
+                self.swapchain.create_info.image_extent.height,
                 &[vk::RenderingAttachmentInfo::default()
                     .image_view(*image_view)
                     .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -156,7 +156,7 @@ impl winit::application::ApplicationHandler for App {
                 module: &shader,
                 entry_point: c"fragment",
             },
-            color_attachment_formats: &[swapchain.surface_format],
+            color_attachment_formats: &[swapchain.create_info.image_format],
             conservative_rasterization: false,
         });
 
@@ -181,6 +181,18 @@ impl winit::application::ApplicationHandler for App {
         event: winit::event::WindowEvent,
     ) {
         match event {
+            winit::event::WindowEvent::Resized(new_size) => {
+                let window_state = self.window_state.as_mut().unwrap();
+
+                window_state.swapchain.create_info.image_extent = vk::Extent2D {
+                    width: new_size.width,
+                    height: new_size.height,
+                };
+                let device = self.state.as_ref().unwrap();
+                device
+                    .device
+                    .recreate_swapchain(&mut window_state.swapchain);
+            }
             winit::event::WindowEvent::RedrawRequested => {
                 let device = self.state.as_ref().unwrap();
 

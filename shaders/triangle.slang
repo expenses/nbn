@@ -7,7 +7,7 @@ struct Interp {
     Interp interp;
     interp.col = float3(0);
     interp.col[vertex_id] = 1.0;
-    interp.pos = float4(0.0, 0.0, 0.0, 1.0);
+    interp.pos = float4(0.0, 0.5, 0.0, 1.0);
     if (vertex_id == 0) {
         interp.pos.y = -0.5;
     } else if (vertex_id == 1) {

@@ -39,10 +39,13 @@
               rev = "9bf761f5a7df3d9a63ee99cdf686e2f559fd8638";
               submodules = true;
             };
-            nativeBuildInputs = [cmake python3 llvmPackages_18.clang-unwrapped llvmPackages_18.clang-unwrapped.lib.dev];
-            buildInputs = [json_c spirv-headers   clang llvmPackages_18.libllvm llvmPackages_18.clang-unwrapped.lib];
-            cmakeFlags = ["-DSHADY_USE_FETCHCONTENT=0" "-DPython_EXECUTABLE=${python3}/bin/python3"];
-            NIX_CFLAGS_COMPILE = "-isystem ${llvmPackages_18.clang-unwrapped.lib}/lib/clang/18/include";
+            patches = [
+              ./nix/shady.patch
+            ];
+            nativeBuildInputs = [cmake makeWrapper];
+            buildInputs = [json_c vulkan-headers vulkan-loader llvmPackages_17.libllvm];
+            cmakeFlags = ["-DSHADY_USE_FETCHCONTENT=0" "-DPython_EXECUTABLE=${python3}/bin/python3" "-DBUILD_TESING=0"];
+            postInstall = "wrapProgram $out/bin/vcc --prefix PATH : ${lib.makeBinPath [llvmPackages_17.clang-unwrapped]}";
           };
       in {
         packages = {inherit render-pipeline-shaders vcc;};
@@ -50,7 +53,6 @@
           mkShell {
             nativeBuildInputs = [
               slang-gen-ninja-bin
-              directx-shader-compiler
               shader-slang
               spirv-tools
               cargo-expand
@@ -65,12 +67,16 @@
               '')
             ];
             buildInputs = [vulkan-loader];
-            LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon];
+            LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon xorg.libXcursor xorg.libX11 xorg.libXi];
           };
         devShells.slang-build = with pkgs;
           mkShell {
             nativeBuildInputs = [cmake ninja python3];
             buildInputs = [vulkan-headers];
+          };
+        devShells.vcc-testing = with pkgs;
+          mkShell {
+            nativeBuildInputs = [vcc spirv-tools];
           };
       }
     );

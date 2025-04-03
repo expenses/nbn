@@ -7,6 +7,7 @@ use ash::{
 };
 use parking_lot::Mutex;
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::ffi::c_char;
 use std::ffi::{self, CStr};
 use std::sync::atomic::AtomicU32;
@@ -171,20 +172,27 @@ impl Device {
             .map(|raw_name| raw_name.as_ptr())
             .collect();
 
-        let mut extension_names = Vec::new();
+        let mut required_instance_extensions = Vec::new();
         if let Some(window) = window {
-            extension_names.extend_from_slice(
+            required_instance_extensions.extend_from_slice(
                 ash_window::enumerate_required_extensions(
                     window.display_handle().unwrap().as_raw(),
                 )
                 .unwrap(),
             );
         }
-        extension_names.push(debug_utils::NAME.as_ptr());
-        extension_names.push(surface::NAME.as_ptr());
+        required_instance_extensions.push(debug_utils::NAME.as_ptr());
+        required_instance_extensions.push(surface::NAME.as_ptr());
         // Needed in order to direct debug printf statements to
         // `vulkan_debug_callback`. Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
-        extension_names.push(ash::ext::layer_settings::NAME.as_ptr());
+        //required_instance_extensions.push(ash::ext::layer_settings::NAME.as_ptr());
+
+        let available_instance_extensions =
+            unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap();
+        let available_instance_extensions: HashSet<_> = available_instance_extensions
+            .iter()
+            .filter_map(|ext| ext.extension_name_as_c_str().ok())
+            .collect();
 
         let create_flags = vk::InstanceCreateFlags::default();
 
@@ -195,15 +203,23 @@ impl Device {
         let create_info = vk::InstanceCreateInfo::default()
             .application_info(&appinfo)
             .enabled_layer_names(&layers_names_raw)
-            .enabled_extension_names(&extension_names)
+            .enabled_extension_names(&required_instance_extensions)
             .flags(create_flags)
             .push_next(&mut validation_features);
 
-        let instance: ash::Instance = unsafe {
-            entry
-                .create_instance(&create_info, None)
-                .expect("Instance creation error")
+        let instance: ash::Instance = match unsafe { entry.create_instance(&create_info, None) } {
+            Ok(instance) => instance,
+            Err(error) => {
+                for extension in required_instance_extensions {
+                    let extension = unsafe { CStr::from_ptr(extension) };
+                    if !available_instance_extensions.contains(extension) {
+                        dbg!(extension);
+                    }
+                }
+                panic!("Instance creation error: {}", error);
+            }
         };
+
         let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
@@ -316,24 +332,32 @@ impl Device {
             .dynamic_rendering(true)
             .synchronization2(true);
 
-        let queue_infos = &[
-            vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(graphics_queue_family_index)
-                .queue_priorities(&[1.0]),
-            vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(compute_queue_family_index)
-                .queue_priorities(&[1.0]),
-            vk::DeviceQueueCreateInfo::default()
-                .queue_family_index(transfer_queue_family_index)
-                .queue_priorities(&[1.0]),
-        ];
+        let mut queue_infos = vec![vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(graphics_queue_family_index)
+            .queue_priorities(&[1.0])];
+
+        if compute_queue_family_index != graphics_queue_family_index {
+            queue_infos.push(
+                vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(compute_queue_family_index)
+                    .queue_priorities(&[1.0]),
+            );
+        }
+
+        if transfer_queue_family_index != compute_queue_family_index {
+            queue_infos.push(
+                vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(transfer_queue_family_index)
+                    .queue_priorities(&[1.0]),
+            );
+        }
 
         let device: ash::Device = unsafe {
             instance
                 .create_device(
                     pdevice,
                     &vk::DeviceCreateInfo::default()
-                        .queue_create_infos(queue_infos)
+                        .queue_create_infos(&queue_infos)
                         .enabled_extension_names(&[
                             swapchain::NAME.as_ptr(),
                             ash::ext::conservative_rasterization::NAME.as_ptr(),
@@ -500,26 +524,29 @@ impl Device {
         let size = window.inner_size();
         let surface_format = self.select_surface_format(*surface);
 
-        let swapchain = unsafe {
-            self.swapchain_loader.create_swapchain(
-                &vk::SwapchainCreateInfoKHR::default()
-                    .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-                    .image_array_layers(1)
-                    .min_image_count(FRAMES_IN_FLIGHT as u32)
-                    .present_mode(vk::PresentModeKHR::MAILBOX)
-                    .image_extent(vk::Extent2D {
-                        width: size.width,
-                        height: size.height,
-                    })
-                    .image_format(surface_format.format)
-                    .image_color_space(surface_format.color_space)
-                    .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
-                    .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-                    .surface(*surface),
-                None,
-            )
+        let surface_caps = unsafe {
+            self.surface_loader
+                .get_physical_device_surface_capabilities(self.physical_device, *surface)
         }
         .unwrap();
+
+        let create_info = vk::SwapchainCreateInfoKHR::default()
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_array_layers(1)
+            .min_image_count((FRAMES_IN_FLIGHT as u32).max(surface_caps.min_image_count))
+            .present_mode(vk::PresentModeKHR::MAILBOX)
+            .image_extent(vk::Extent2D {
+                width: size.width,
+                height: size.height,
+            })
+            .image_format(surface_format.format)
+            .image_color_space(surface_format.color_space)
+            .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .surface(*surface);
+
+        let swapchain =
+            unsafe { self.swapchain_loader.create_swapchain(&create_info, None) }.unwrap();
 
         let swapchain_images = unsafe {
             self.swapchain_loader
@@ -563,8 +590,59 @@ impl Device {
             images: swapchain_images,
             surface: std::mem::ManuallyDrop::new(surface),
             swapchain: std::mem::ManuallyDrop::new(swapchain),
-            surface_format: surface_format.format,
+            create_info,
         }
+    }
+
+    pub fn recreate_swapchain(&self, swapchain: &mut Swapchain) {
+        swapchain.create_info.old_swapchain = **swapchain.swapchain;
+
+        let raw_swapchain = WrappedSwapchain {
+            swapchain: unsafe {
+                self.swapchain_loader
+                    .create_swapchain(&swapchain.create_info, None)
+            }
+            .unwrap(),
+            loader: self.swapchain_loader.clone(),
+        };
+
+        let swapchain_images = unsafe {
+            self.swapchain_loader
+                .get_swapchain_images(*raw_swapchain)
+                .unwrap()
+        };
+
+        swapchain.images = swapchain_images
+            .into_iter()
+            .map(|image| {
+                let view = ImageView::from_raw(
+                    unsafe {
+                        self.create_image_view(
+                            &vk::ImageViewCreateInfo::default()
+                                .image(image)
+                                .subresource_range(
+                                    vk::ImageSubresourceRange::default()
+                                        .layer_count(1)
+                                        .level_count(1)
+                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
+                                )
+                                .format(swapchain.create_info.image_format)
+                                .view_type(vk::ImageViewType::TYPE_2D),
+                            None,
+                        )
+                        .unwrap()
+                    },
+                    self,
+                );
+
+                SwapchainImage { image, view }
+            })
+            .collect();
+
+        unsafe {
+            std::mem::ManuallyDrop::drop(&mut swapchain.swapchain);
+        }
+        swapchain.swapchain = std::mem::ManuallyDrop::new(raw_swapchain);
     }
 
     pub fn create_surface(&self, window: &Window) -> Surface {
@@ -830,8 +908,8 @@ impl Device {
                 **command_buffer,
                 0,
                 &[vk::Viewport::default()
-                    .height(width as f32)
-                    .width(height as f32)
+                    .width(width as f32)
+                    .height(height as f32)
                     .max_depth(1.0)],
             );
             self.cmd_set_scissor(**command_buffer, 0, &[render_area]);
@@ -1488,7 +1566,7 @@ pub struct Swapchain {
     surface: std::mem::ManuallyDrop<Surface>,
     swapchain: std::mem::ManuallyDrop<WrappedSwapchain>,
     pub images: Vec<SwapchainImage>,
-    pub surface_format: vk::Format,
+    pub create_info: vk::SwapchainCreateInfoKHR<'static>,
 }
 
 impl std::ops::Deref for Swapchain {

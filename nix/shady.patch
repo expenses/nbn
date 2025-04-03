@@ -1,0 +1,11 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 8a38d3da..32940817 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -106,7 +106,6 @@ if (BUILD_TESTING)
+   add_subdirectory(test)
+ endif()
+
+-add_subdirectory(samples)
+
+ include(CMakePackageConfigHelpers)
