@@ -8,134 +8,9 @@ struct WindowState {
     pipeline: nbn::Pipeline,
 }
 
-impl WindowState {
-    fn render(&mut self, device: &nbn::Device) {
-        unsafe {
-            let command_buffer = &self.per_frame_command_buffers[self.sync_resources.current_frame];
-            let mut frame = self.sync_resources.wait_for_frame(device);
-
-            let (next_image, _suboptimal) = device
-                .swapchain_loader
-                .acquire_next_image(
-                    *self.swapchain,
-                    !0,
-                    *frame.image_available_semaphore,
-                    vk::Fence::null(),
-                )
-                .unwrap();
-            let image = &self.swapchain.images[next_image as usize];
-
-            let image_view = nbn::ImageView::from_raw(
-                device
-                    .create_image_view(
-                        &vk::ImageViewCreateInfo::default()
-                            .image(image.image)
-                            .subresource_range(
-                                vk::ImageSubresourceRange::default()
-                                    .layer_count(1)
-                                    .level_count(1)
-                                    .aspect_mask(vk::ImageAspectFlags::COLOR),
-                            )
-                            .format(vk::Format::B8G8R8A8_SRGB)
-                            .view_type(vk::ImageViewType::TYPE_2D),
-                        None,
-                    )
-                    .unwrap(),
-                &device,
-            );
-
-            device.reset_command_buffer(&command_buffer);
-            device
-                .begin_command_buffer(**command_buffer, &vk::CommandBufferBeginInfo::default())
-                .unwrap();
-            vk_sync::cmd::pipeline_barrier(
-                &device,
-                **command_buffer,
-                None,
-                &[],
-                &[vk_sync::ImageBarrier {
-                    previous_accesses: &[vk_sync::AccessType::Present],
-                    next_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: true,
-                    src_queue_family_index: device.graphics_queue.index,
-                    dst_queue_family_index: device.graphics_queue.index,
-                    image: image.image,
-                    range: vk::ImageSubresourceRange::default()
-                        .layer_count(1)
-                        .level_count(1)
-                        .aspect_mask(vk::ImageAspectFlags::COLOR),
-                }],
-            );
-            device.begin_rendering(
-                &command_buffer,
-                self.swapchain.create_info.image_extent.width,
-                self.swapchain.create_info.image_extent.height,
-                &[vk::RenderingAttachmentInfo::default()
-                    .image_view(*image_view)
-                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .clear_value(vk::ClearValue {
-                        color: vk::ClearColorValue { float32: [1.0; 4] },
-                    })
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE)],
-            );
-            device.cmd_bind_pipeline(
-                **command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                *self.pipeline,
-            );
-            device.cmd_draw(**command_buffer, 3, 1, 0, 0);
-
-            device.cmd_end_rendering(**command_buffer);
-            vk_sync::cmd::pipeline_barrier(
-                &device,
-                **command_buffer,
-                None,
-                &[],
-                &[vk_sync::ImageBarrier {
-                    previous_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
-                    next_accesses: &[vk_sync::AccessType::Present],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: false,
-                    src_queue_family_index: device.graphics_queue.index,
-                    dst_queue_family_index: device.graphics_queue.index,
-                    image: image.image,
-                    range: vk::ImageSubresourceRange::default()
-                        .layer_count(1)
-                        .level_count(1)
-                        .aspect_mask(vk::ImageAspectFlags::COLOR),
-                }],
-            );
-            device.end_command_buffer(**command_buffer).unwrap();
-
-            let cb_infos =
-                &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)];
-
-            frame.submit(&device, cb_infos);
-            device
-                .swapchain_loader
-                .queue_present(
-                    *device.graphics_queue,
-                    &vk::PresentInfoKHR::default()
-                        .wait_semaphores(&[*frame.render_finished_semaphore])
-                        .swapchains(&[*self.swapchain])
-                        .image_indices(&[next_image]),
-                )
-                .unwrap();
-        }
-    }
-}
-
-struct State {
-    device: nbn::Device,
-}
-
 struct App {
     window_state: Option<WindowState>,
-    state: Option<State>,
+    device: Option<nbn::Device>,
 }
 
 impl winit::application::ApplicationHandler for App {
@@ -171,7 +46,7 @@ impl winit::application::ApplicationHandler for App {
             window,
             pipeline,
         });
-        self.state = Some(State { device });
+        self.device = Some(device);
     }
 
     fn window_event(
@@ -188,41 +63,143 @@ impl winit::application::ApplicationHandler for App {
                     width: new_size.width,
                     height: new_size.height,
                 };
-                let device = self.state.as_ref().unwrap();
-                device
-                    .device
-                    .recreate_swapchain(&mut window_state.swapchain);
+                let device = self.device.as_ref().unwrap();
+                device.recreate_swapchain(&mut window_state.swapchain);
             }
             winit::event::WindowEvent::RedrawRequested => {
-                let device = self.state.as_ref().unwrap();
+                let device = self.device.as_ref().unwrap();
 
                 if let Some(state) = self.window_state.as_mut() {
-                    state.render(&device.device);
+                    unsafe {
+                        let command_buffer =
+                            &state.per_frame_command_buffers[state.sync_resources.current_frame];
+                        let mut frame = state.sync_resources.wait_for_frame(device);
+
+                        let (next_image, _suboptimal) = device
+                            .swapchain_loader
+                            .acquire_next_image(
+                                *state.swapchain,
+                                !0,
+                                *frame.image_available_semaphore,
+                                vk::Fence::null(),
+                            )
+                            .unwrap();
+                        let image = &state.swapchain.images[next_image as usize];
+
+                        device.reset_command_buffer(&command_buffer);
+                        device
+                            .begin_command_buffer(
+                                **command_buffer,
+                                &vk::CommandBufferBeginInfo::default(),
+                            )
+                            .unwrap();
+                        vk_sync::cmd::pipeline_barrier(
+                            &device,
+                            **command_buffer,
+                            None,
+                            &[],
+                            &[vk_sync::ImageBarrier {
+                                previous_accesses: &[vk_sync::AccessType::Present],
+                                next_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
+                                previous_layout: vk_sync::ImageLayout::Optimal,
+                                next_layout: vk_sync::ImageLayout::Optimal,
+                                discard_contents: true,
+                                src_queue_family_index: device.graphics_queue.index,
+                                dst_queue_family_index: device.graphics_queue.index,
+                                image: image.image,
+                                range: vk::ImageSubresourceRange::default()
+                                    .layer_count(1)
+                                    .level_count(1)
+                                    .aspect_mask(vk::ImageAspectFlags::COLOR),
+                            }],
+                        );
+                        device.begin_rendering(
+                            &command_buffer,
+                            state.swapchain.create_info.image_extent.width,
+                            state.swapchain.create_info.image_extent.height,
+                            &[vk::RenderingAttachmentInfo::default()
+                                .image_view(*image.view)
+                                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                                .clear_value(vk::ClearValue {
+                                    color: vk::ClearColorValue { float32: [1.0; 4] },
+                                })
+                                .load_op(vk::AttachmentLoadOp::CLEAR)
+                                .store_op(vk::AttachmentStoreOp::STORE)],
+                            None,
+                        );
+                        device.cmd_bind_pipeline(
+                            **command_buffer,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            *state.pipeline,
+                        );
+                        device.cmd_draw(**command_buffer, 3, 1, 0, 0);
+
+                        device.cmd_end_rendering(**command_buffer);
+                        vk_sync::cmd::pipeline_barrier(
+                            &device,
+                            **command_buffer,
+                            None,
+                            &[],
+                            &[vk_sync::ImageBarrier {
+                                previous_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
+                                next_accesses: &[vk_sync::AccessType::Present],
+                                previous_layout: vk_sync::ImageLayout::Optimal,
+                                next_layout: vk_sync::ImageLayout::Optimal,
+                                discard_contents: false,
+                                src_queue_family_index: device.graphics_queue.index,
+                                dst_queue_family_index: device.graphics_queue.index,
+                                image: image.image,
+                                range: vk::ImageSubresourceRange::default()
+                                    .layer_count(1)
+                                    .level_count(1)
+                                    .aspect_mask(vk::ImageAspectFlags::COLOR),
+                            }],
+                        );
+                        device.end_command_buffer(**command_buffer).unwrap();
+
+                        frame.submit(
+                            &device,
+                            &[vk::CommandBufferSubmitInfo::default()
+                                .command_buffer(**command_buffer)],
+                        );
+                        device
+                            .swapchain_loader
+                            .queue_present(
+                                *device.graphics_queue,
+                                &vk::PresentInfoKHR::default()
+                                    .wait_semaphores(&[*frame.render_finished_semaphore])
+                                    .swapchains(&[*state.swapchain])
+                                    .image_indices(&[next_image]),
+                            )
+                            .unwrap();
+                    }
                 }
             }
             winit::event::WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {
                         physical_key:
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyQ),
+                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape),
                         state: winit::event::ElementState::Pressed,
                         ..
                     },
                 ..
             } => {
-                let device = self.state.as_ref().unwrap();
-
-                unsafe {
-                    device.device.device_wait_idle().unwrap();
-                }
-
-                self.window_state = None;
-                self.state = None;
-
                 event_loop.exit();
             }
             _ => {}
         }
+    }
+
+    fn exiting(&mut self, _: &winit::event_loop::ActiveEventLoop) {
+        let device = self.device.as_ref().unwrap();
+
+        unsafe {
+            device.device_wait_idle().unwrap();
+        }
+
+        self.window_state = None;
+        self.device = None;
     }
 
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -238,7 +215,7 @@ fn main() {
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     event_loop
         .run_app(&mut App {
-            state: None,
+            device: None,
             window_state: None,
         })
         .unwrap();
