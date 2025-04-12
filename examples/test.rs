@@ -38,8 +38,8 @@ fn create_image(
             ddsfile::DxgiFormat::BC5_UNorm => vk::Format::BC5_UNORM_BLOCK,
             other => panic!("{:?}", other),
         };
-        device.create_image_with_data(
-            nbn::ImageDescriptor {
+        device.create_sampled_image_with_data(
+            nbn::SampledImageDescriptor {
                 name: filename,
                 extent: vk::Extent3D {
                     width: dds.get_width(),
@@ -54,8 +54,8 @@ fn create_image(
     } else {
         let image_data = image::open(filename).unwrap().to_rgba8();
 
-        device.create_image_with_data(
-            nbn::ImageDescriptor {
+        device.create_sampled_image_with_data(
+            nbn::SampledImageDescriptor {
                 name: filename,
                 extent: vk::Extent3D {
                     width: image_data.width(),
@@ -227,14 +227,15 @@ fn main() {
     let voxelization_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
         vertex: nbn::ShaderDesc {
             module: &voxelization_shader,
-            entry_point: c"main",
+            entry_point: c"vertex",
         },
         fragment: nbn::ShaderDesc {
             module: &voxelization_shader,
-            entry_point: c"main",
+            entry_point: c"fragment",
         },
         color_attachment_formats: &[],
         conservative_rasterization: true,
+        depth: Default::default(),
     });
 
     let dim_size = 2048;
@@ -315,7 +316,7 @@ fn main() {
                 .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
                 .unwrap();
 
-            device.begin_rendering(&command_buffer, dim_size, dim_size, &[]);
+            device.begin_rendering(&command_buffer, dim_size, dim_size, &[], None);
 
             device.cmd_bind_pipeline(
                 *command_buffer,

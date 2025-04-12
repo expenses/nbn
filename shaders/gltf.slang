@@ -4,6 +4,7 @@ public struct Material {
     public uint emissive_image;
     public uint base_colour_image;
     public uint metallic_roughness_image;
+    public uint normal_image;
     public uint flags;
 }
 
@@ -27,6 +28,7 @@ public struct Primitive {
     uint indices;
     uint positions;
     uint uvs;
+    uint normals;
     public uint material;
 
     public uint num_indices(Gltf *gltf) { return gltf.accessors[indices].count; }
@@ -45,6 +47,10 @@ public struct Primitive {
 
     public float3 *positions_ptr(Gltf *gltf) {
         return (float3 *)gltf.accessors[positions].ptr(gltf);
+    }
+
+    public float3 *normals_ptr(Gltf *gltf) {
+        return (float3 *)gltf.accessors[normals].ptr(gltf);
     }
 
     public float2 *uvs_ptr(Gltf *gltf) {

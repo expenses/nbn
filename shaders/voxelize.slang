@@ -1,4 +1,5 @@
 import gltf;
+import common;
 
 struct Interp {
     float4 pos : SV_Position;
@@ -22,10 +23,6 @@ float3 normal_for_triangle(float3[3] positions) {
     let u = positions[1] - positions[0];
     let v = positions[2] - positions[0];
     return cross(u, v);
-}
-
-func fetch_3<T>(T *values, uint[3] indices) -> T[3] {
-    return {values[indices[0]], values[indices[1]], values[indices[2]]};
 }
 
 [shader("vertex")] Interp vertex(uniform PushConstants push_constants,
@@ -139,8 +136,6 @@ func linear_to_srgb<int N>(value : vector<float, N>) -> vector<uint8_t, N> {
     }
 
     values.pos.yz = values.pos.zy;
-
-    uint max_value = 4294967295;
 
     let material = push_constants.gltf.materials[values.material_index];
     var base_colour = float3(1);

@@ -1,11 +1,33 @@
 use ash::vk;
 
+fn create_pipeline(
+    device: &nbn::Device,
+    shader: &nbn::ShaderModule,
+    swapchain: &nbn::Swapchain,
+) -> nbn::Pipeline {
+    device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+        vertex: nbn::ShaderDesc {
+            module: &shader,
+            entry_point: c"vertex",
+        },
+        fragment: nbn::ShaderDesc {
+            module: &shader,
+            entry_point: c"fragment",
+        },
+        color_attachment_formats: &[swapchain.create_info.image_format],
+        conservative_rasterization: false,
+        depth: Default::default(),
+        cull_mode: Default::default(),
+    })
+}
+
 struct WindowState {
     window: winit::window::Window,
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
     pipeline: nbn::Pipeline,
+    shader: nbn::ReloadableShader,
 }
 
 struct App {
@@ -21,19 +43,8 @@ impl winit::application::ApplicationHandler for App {
         let device = nbn::Device::new(Some(&window));
 
         let swapchain = device.create_swapchain(&window);
-        let shader = device.load_shader("shaders/compiled/triangle.spv");
-        let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-            vertex: nbn::ShaderDesc {
-                module: &shader,
-                entry_point: c"vertex",
-            },
-            fragment: nbn::ShaderDesc {
-                module: &shader,
-                entry_point: c"fragment",
-            },
-            color_attachment_formats: &[swapchain.create_info.image_format],
-            conservative_rasterization: false,
-        });
+        let shader = device.load_reloadable_shader("shaders/compiled/triangle.spv");
+        let pipeline = create_pipeline(&device, &shader, &swapchain);
 
         self.window_state = Some(WindowState {
             per_frame_command_buffers: [
@@ -45,6 +56,7 @@ impl winit::application::ApplicationHandler for App {
             swapchain,
             window,
             pipeline,
+            shader,
         });
         self.device = Some(device);
     }
@@ -70,6 +82,11 @@ impl winit::application::ApplicationHandler for App {
                 let device = self.device.as_ref().unwrap();
 
                 if let Some(state) = self.window_state.as_mut() {
+                    if state.shader.try_reload(&device) {
+                        unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
+                        state.pipeline = create_pipeline(&device, &state.shader, &state.swapchain);
+                    }
+
                     unsafe {
                         let command_buffer =
                             &state.per_frame_command_buffers[state.sync_resources.current_frame];
