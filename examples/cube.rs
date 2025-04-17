@@ -1,7 +1,9 @@
-use ash::vk;
+use std::io::Read;
+
+use ash::vk::{self, DrawIndirectCommand};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-slang_struct::slang_include!("shaders/gltf.slang");
+slang_struct::slang_include!("shaders/models.slang");
 
 fn create_image(
     device: &nbn::Device,
@@ -119,11 +121,229 @@ struct WindowState {
     shader: nbn::ReloadableShader,
     depth_buffer: nbn::Image,
     time: f32,
-    gltf: nbn::Buffer,
-    aux: Vec<nbn::Buffer>,
-    num_indices: u32,
+    _gltf: GltfData,
+    instances: nbn::Buffer,
+    meshlet_instances: nbn::Buffer,
     draws: nbn::Buffer,
-    images: Vec<nbn::SampledImage>,
+    num_draws: u32,
+}
+
+struct GltfData {
+    _images: Vec<nbn::SampledImage>,
+    _buffer: nbn::Buffer,
+    _meshlets_buffer: nbn::Buffer,
+    meshes: Vec<Vec<LoadedPrimitive>>,
+}
+
+struct LoadedPrimitive {
+    model: Model,
+    num_indices: u32,
+    num_meshlets: u32,
+    meshlet_data: Vec<Meshlet>,
+}
+
+struct Meshlets {
+    data: Vec<u8>,
+    metadata: Vec<Vec<[u32; 4]>>,
+}
+
+fn read_meshlets_file(path: &std::path::Path) -> std::io::Result<Meshlets> {
+    let mut reader = std::fs::File::open(path)?;
+    let mut header = [0; 8];
+    reader.read_exact(&mut header)?;
+    assert_eq!(b"MESHLETS", &header);
+    let mut val = [0; 4];
+    reader.read_exact(&mut val)?;
+
+    let num_meshes = u32::from_le_bytes(val);
+    let mut meshes = Vec::with_capacity(num_meshes as _);
+
+    for _ in 0..num_meshes {
+        reader.read_exact(&mut val)?;
+        let num_primitives = u32::from_le_bytes(val);
+        let mut primitives = vec![[0_u32; 4]; num_primitives as _];
+        reader.read_exact(nbn::cast_slice_mut(&mut primitives))?;
+        meshes.push(primitives);
+    }
+
+    reader.read_exact(&mut val)?;
+
+    let len_data = u32::from_le_bytes(val);
+    let mut data = vec![0; len_data as _];
+    reader.read_exact(&mut data)?;
+
+    Ok(Meshlets {
+        data,
+        metadata: meshes,
+    })
+}
+
+fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
+    let bytes = std::fs::read(path).unwrap();
+    let (gltf, buffer): (
+        goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
+        _,
+    ) = goth_gltf::Gltf::from_bytes(&bytes).unwrap();
+    assert!(buffer.is_none());
+    dbg!(gltf.meshes.len(), gltf.meshes[0].primitives.len());
+
+    let mut image_formats = vec![vk::Format::R8G8B8A8_UNORM; gltf.images.len()];
+
+    for material in &gltf.materials {
+        if let Some(tex) = &material.emissive_texture {
+            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
+        }
+        if let Some(tex) = &material.pbr_metallic_roughness.base_color_texture {
+            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
+        }
+    }
+
+    let meshlets = read_meshlets_file(&path.with_extension("meshlets")).unwrap();
+
+    let meshlets_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+        name: &format!("{} meshlets buffer", path.display()),
+        data: &meshlets.data,
+    });
+
+    let buffer = std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
+
+    let buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+        name: &format!("{} buffer", path.display()),
+        data: &buffer,
+    });
+
+    let images = gltf
+        .images
+        .iter()
+        .zip(&image_formats)
+        .map(|(image, format)| {
+            create_image(
+                &device,
+                path.with_file_name(image.uri.as_ref().unwrap())
+                    .to_str()
+                    .unwrap(),
+                *format,
+                nbn::QueueType::Graphics,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    dbg!(images.len());
+
+    let materials: Vec<Material> = gltf
+        .materials
+        .iter()
+        .map(|material| Material {
+            base_colour_image: material
+                .pbr_metallic_roughness
+                .base_color_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .unwrap_or(u32::MAX),
+            metallic_roughness_image: material
+                .pbr_metallic_roughness
+                .metallic_roughness_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .unwrap_or(u32::MAX),
+            normal_image: material
+                .normal_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .unwrap_or(u32::MAX),
+            emissive_image: material
+                .emissive_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .unwrap_or(u32::MAX),
+            flags: !matches!(material.alpha_mode, goth_gltf::AlphaMode::Opaque) as u32,
+        })
+        .collect();
+
+    let get_buffer_offset = |accessor: &goth_gltf::Accessor| {
+        let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
+        assert_eq!(bv.byte_stride, None);
+        (*buffer) + bv.byte_offset as u64 + accessor.byte_offset as u64
+    };
+
+    let mut meshes = Vec::new();
+
+    for (mesh, meshlets_mesh) in gltf.meshes.iter().zip(&meshlets.metadata) {
+        let mut primitives = Vec::new();
+
+        for (primitive, &[num_meshlets, meshlets_offset, vertices_offset, triangles_offset]) in
+            mesh.primitives.iter().zip(meshlets_mesh)
+        {
+            let material = materials[primitive.material.unwrap()];
+
+            let get = |accessor_index: Option<usize>| {
+                let accessor = &gltf.accessors[accessor_index.unwrap()];
+                assert_eq!(accessor.component_type, goth_gltf::ComponentType::Float);
+                get_buffer_offset(accessor)
+            };
+
+            let indices = &gltf.accessors[primitive.indices.unwrap()];
+            let is_32_bit = match indices.component_type {
+                goth_gltf::ComponentType::UnsignedShort => false,
+                goth_gltf::ComponentType::UnsignedInt => true,
+                other => unimplemented!("{:?}", other),
+            };
+
+            let meshlet_data =
+                nbn::cast_slice::<_, Meshlet>(&meshlets.data[meshlets_offset as usize..])
+                    [..num_meshlets as _]
+                    .to_vec();
+
+            primitives.push(LoadedPrimitive {
+                model: Model {
+                    material,
+                    positions: get(primitive.attributes.position),
+                    uvs: get(primitive.attributes.texcoord_0),
+                    normals: get(primitive.attributes.normal),
+                    indices: get_buffer_offset(indices),
+                    meshlets: *meshlets_buffer + meshlets_offset as u64,
+                    triangles: *meshlets_buffer + triangles_offset as u64,
+                    vertices: *meshlets_buffer + vertices_offset as u64,
+                    flags: is_32_bit as u32,
+                },
+                num_indices: indices.count as u32,
+                num_meshlets,
+                meshlet_data,
+            });
+        }
+
+        meshes.push(primitives);
+    }
+
+    dbg!(&materials.len());
+
+    let transfer_fence = device.create_fence();
+
+    let transfer_command_buffers: Vec<vk::CommandBuffer> =
+        images.iter().map(|image| *image.command_buffer).collect();
+
+    unsafe {
+        device
+            .queue_submit(
+                *device.transfer_queue,
+                &[vk::SubmitInfo::default().command_buffers(&transfer_command_buffers)],
+                *transfer_fence,
+            )
+            .unwrap();
+
+        device
+            .wait_for_fences(&[*transfer_fence], true, !0)
+            .unwrap();
+    }
+
+    let images: Vec<_> = images.into_iter().map(|image| image.into_inner()).collect();
+
+    GltfData {
+        _images: images,
+        _buffer: buffer,
+        _meshlets_buffer: meshlets_buffer,
+        meshes,
+    }
 }
 
 struct App {
@@ -138,197 +358,58 @@ impl winit::application::ApplicationHandler for App {
             .unwrap();
         let device = nbn::Device::new(Some(&window));
 
-        let (gltf, images, draws, num_indices, aux) = {
-            let base = "models/citadel";
+        let gltf = load_gltf(
+            &device,
+            std::path::Path::new("models/citadel/voxelization_ktx2.gltf"),
+        );
 
-            let bytes = std::fs::read(&format!("{}/voxelization_ktx2.gltf", base)).unwrap();
-            let (gltf, buffer): (
-                goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
-                _,
-            ) = goth_gltf::Gltf::from_bytes(&bytes).unwrap();
-            assert!(buffer.is_none());
-            dbg!(gltf.meshes.len(), gltf.meshes[0].primitives.len());
+        let mut instances = Vec::new();
+        let mut draws = Vec::new();
+        let mut meshlet_instances = Vec::new();
 
-            let mut image_formats = vec![vk::Format::R8G8B8A8_UNORM; gltf.images.len()];
-
-            for material in &gltf.materials {
-                if let Some(tex) = &material.emissive_texture {
-                    image_formats[gltf.textures[tex.index].source.unwrap()] =
-                        vk::Format::R8G8B8A8_SRGB;
-                }
-                if let Some(tex) = &material.pbr_metallic_roughness.base_color_texture {
-                    image_formats[gltf.textures[tex.index].source.unwrap()] =
-                        vk::Format::R8G8B8A8_SRGB;
-                }
-            }
-
-            let buffer = std::fs::read(&format!(
-                "{}/{}",
-                base,
-                gltf.buffers[0].uri.as_ref().unwrap()
-            ))
-            .unwrap();
-
-            let images = gltf
-                .images
-                .iter()
-                .zip(&image_formats)
-                .map(|(image, format)| {
-                    let path = format!("{}/{}", base, image.uri.as_ref().unwrap());
-                    create_image(&device, &path, *format, nbn::QueueType::Graphics)
-                })
-                .collect::<Vec<_>>();
-
-            dbg!(images.len());
-
-            let materials: Vec<Material> = gltf
-                .materials
-                .iter()
-                .map(|material| Material {
-                    base_colour_image: material
-                        .pbr_metallic_roughness
-                        .base_color_texture
-                        .as_ref()
-                        .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
-                        .unwrap_or(u32::MAX),
-                    metallic_roughness_image: material
-                        .pbr_metallic_roughness
-                        .metallic_roughness_texture
-                        .as_ref()
-                        .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
-                        .unwrap_or(u32::MAX),
-                    normal_image: material
-                        .normal_texture
-                        .as_ref()
-                        .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
-                        .unwrap_or(u32::MAX),
-                    emissive_image: material
-                        .emissive_texture
-                        .as_ref()
-                        .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
-                        .unwrap_or(u32::MAX),
-                    flags: !matches!(material.alpha_mode, goth_gltf::AlphaMode::Opaque) as u32,
-                })
-                .collect();
-
-            dbg!(&materials.len());
-
-            let primitives_iter = || gltf.meshes.iter().flat_map(|mesh| &mesh.primitives);
-
-            let primitives: Vec<Primitive> = primitives_iter()
-                .map(|primitive| Primitive {
-                    indices: primitive.indices.unwrap() as u32,
-                    positions: primitive.attributes.position.unwrap() as u32,
-                    uvs: primitive.attributes.texcoord_0.unwrap() as u32,
-                    normals: primitive.attributes.normal.unwrap() as u32,
-                    material: primitive.material.unwrap() as u32,
-                })
-                .collect();
-
-            let buffer_views: Vec<BufferView> = gltf
-                .buffer_views
-                .iter()
-                .map(|buffer_view| BufferView {
-                    byte_offset: buffer_view.byte_offset as u32,
-                })
-                .collect();
-
-            let accessors: Vec<Accessor> = gltf
-                .accessors
-                .iter()
-                .map(|accessor| Accessor {
-                    buffer_view: accessor.buffer_view.unwrap() as u32,
-                    count: accessor.count as _,
-                    byte_offset: accessor.byte_offset as u32,
-                    flags: (accessor.component_type == goth_gltf::ComponentType::UnsignedInt)
-                        as u32,
-                })
-                .collect();
-
-            //panic!();
-
-            let draws: Vec<_> = primitives_iter()
-                .enumerate()
-                .map(|(i, primitive)| vk::DrawIndirectCommand {
-                    vertex_count: accessors[primitive.indices.unwrap()].count,
+        for mesh in &gltf.meshes {
+            for primitive in mesh {
+                /*draws.push(DrawIndirectCommand {
+                    vertex_count: primitive.num_indices,
                     instance_count: 1,
                     first_vertex: 0,
-                    first_instance: i as _,
-                })
-                .collect();
-
-            let draws = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-                name: "draws",
-                data: &draws,
-            });
-
-            let num_indices: u32 = primitives.len() as _;
-
-            dbg!(num_indices);
-
-            let materials = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-                name: "materials",
-                data: &materials,
-            });
-
-            let buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-                name: "buffer",
-                data: &buffer,
-            });
-            let primitives = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-                name: "primitives",
-                data: &primitives,
-            });
-            let buffer_views = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-                name: "buffer_views",
-                data: &buffer_views,
-            });
-            let accessors = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-                name: "accessors",
-                data: &accessors,
-            });
-            let gltf = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-                name: "gltf",
-                data: &[Gltf {
-                    buffer_views: *buffer_views,
-                    accessors: *accessors,
-                    buffer: *buffer,
-                    primitives: *primitives,
-                    materials: *materials,
-                    num_primitives: primitives_iter().count() as u32,
-                }],
-            });
-            (
-                gltf,
-                images,
-                draws,
-                num_indices,
-                vec![accessors, buffer_views, primitives, buffer, materials],
-            )
-        };
-
-        dbg!(&images.len());
-
-        let transfer_fence = device.create_fence();
-
-        let transfer_command_buffers: Vec<vk::CommandBuffer> =
-            images.iter().map(|image| *image.command_buffer).collect();
-
-        unsafe {
-            device
-                .queue_submit(
-                    *device.transfer_queue,
-                    &[vk::SubmitInfo::default().command_buffers(&transfer_command_buffers)],
-                    *transfer_fence,
-                )
-                .unwrap();
-
-            device
-                .wait_for_fences(&[*transfer_fence], true, !0)
-                .unwrap();
+                    first_instance: instances.len() as _,
+                });*/
+                for &meshlet in &primitive.meshlet_data {
+                    draws.push(DrawIndirectCommand {
+                        instance_count: 1,
+                        first_instance: meshlet_instances.len() as _,
+                        first_vertex: 0,
+                        vertex_count: meshlet.triangle_count * 3,
+                    });
+                    meshlet_instances.push(MeshletInstance {
+                        instance_index: instances.len() as _,
+                        meshlet,
+                    });
+                }
+                instances.push(Instance {
+                    model: primitive.model,
+                });
+            }
         }
 
-        let images: Vec<_> = images.into_iter().map(|image| image.into_inner()).collect();
+        //dbg!(&instances[..3]);
+        //dbg!(&draws[..3]);
+        //dbg!(&meshlet_instances[..3]);
+
+        let instances = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+            name: "instances",
+            data: &instances,
+        });
+        let num_draws = draws.len() as u32;
+        let draws = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+            name: "draws",
+            data: &draws,
+        });
+        let meshlet_instances = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+            name: "meshlet_instances",
+            data: &meshlet_instances,
+        });
 
         let swapchain = device.create_swapchain(&window);
         let shader = device.load_reloadable_shader("shaders/compiled/gltf_raster.spv");
@@ -360,11 +441,11 @@ impl winit::application::ApplicationHandler for App {
                 aspect_mask: vk::ImageAspectFlags::DEPTH,
                 mip_levels: 1,
             }),
-            gltf,
+            _gltf: gltf,
+            instances,
             draws,
-            images,
-            aux,
-            num_indices,
+            num_draws,
+            meshlet_instances,
             time: 0.0,
         });
         self.device = Some(device);
@@ -523,13 +604,16 @@ impl winit::application::ApplicationHandler for App {
                             -glam::Vec3::Y,
                         );
 
-                        device.push_constants(&command_buffer, (mat, *state.gltf));
+                        device.push_constants(
+                            &command_buffer,
+                            (mat, *state.instances, *state.meshlet_instances),
+                        );
                         state.time += 0.005;
                         device.cmd_draw_indirect(
                             **command_buffer,
                             *state.draws.buffer,
                             0,
-                            state.num_indices,
+                            state.num_draws,
                             std::mem::size_of::<vk::DrawIndirectCommand>() as _,
                         );
 

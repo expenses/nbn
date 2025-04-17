@@ -766,6 +766,8 @@ impl Device {
             &self.device,
         );
 
+        self.set_object_name(*image, desc.name);
+
         let memory_requirements = unsafe { self.device.get_image_memory_requirements(*image) };
 
         let allocator = (*self.allocator).clone();
@@ -807,6 +809,8 @@ impl Device {
             .unwrap(),
             &self.device,
         );
+
+        self.set_object_name(*image_view, desc.name);
 
         Image {
             image,
@@ -1054,15 +1058,10 @@ impl Device {
             })
             .unwrap();
 
-        unsafe {
-            self.debug_utils_device_loader
-                .set_debug_utils_object_name(
-                    &vk::DebugUtilsObjectNameInfoEXT::default()
-                        .object_handle(allocation.memory())
-                        .object_name(&std::ffi::CString::new(desc.name).unwrap()),
-                )
-                .unwrap();
+        self.set_object_name(unsafe { allocation.memory() }, &desc.name);
+        self.set_object_name(buffer, &desc.name);
 
+        unsafe {
             self.device
                 .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
         }
@@ -1355,6 +1354,20 @@ impl Device {
                 FrameResources::new(self, 1),
                 FrameResources::new(self, 2),
             ],
+        }
+    }
+
+    fn set_object_name<T: vk::Handle>(&self, object: T, name: &str) {
+        let name = format!("{} ({})", name, std::any::type_name_of_val(&object));
+
+        unsafe {
+            self.debug_utils_device_loader
+                .set_debug_utils_object_name(
+                    &vk::DebugUtilsObjectNameInfoEXT::default()
+                        .object_handle(object)
+                        .object_name(&std::ffi::CString::new(name).unwrap()),
+                )
+                .unwrap();
         }
     }
 }

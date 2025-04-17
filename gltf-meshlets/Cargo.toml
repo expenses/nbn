@@ -1,0 +1,8 @@
+[package]
+name = "gltf-meshlets"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1" }
+meshopt = "0.4.1"

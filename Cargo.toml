@@ -36,4 +36,4 @@ indicatif = "0.17.11"
 ktx2 = "0.4.0"
 
 [workspace]
-members = [".", "gltf-compress"]
+members = [".", "gltf-compress", "gltf-meshlets"]

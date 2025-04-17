@@ -1,9 +1,11 @@
 import common;
 import gltf;
+import models;
 
 struct PushConstants {
     float4x4 mat;
-    Gltf *gltf;
+    Instance* instances;
+    MeshletInstance* meshlet_instances;
 };
 
 struct Interp {
@@ -11,7 +13,7 @@ struct Interp {
     float3 world_pos;
     float2 uv;
     float3 normal;
-    uint material_index;
+    uint instance_index;
 };
 
 struct WithDerivatives<T> {
@@ -53,26 +55,32 @@ float3x3 compute_cotangent_frame(
 
 [shader("vertex")] Interp vertex(uniform PushConstants push_constants,
                                  uint vertex_index : SV_VertexID,
-                                 uint primitive_index: SV_StartInstanceLocation) {
-    let primitive = push_constants.gltf.primitives[primitive_index];
+                                 uint local_instance_id: SV_InstanceID,
+                                 uint first_instance: SV_StartInstanceLocation) {
+    let instance_index = first_instance + local_instance_id;
+    let meshlet_instance = push_constants.meshlet_instances[instance_index];
+    let instance = push_constants.instances[meshlet_instance.instance_index];
 
-    let index = primitive.read_index(push_constants.gltf, vertex_index);
-
-    let position = primitive.positions_ptr(push_constants.gltf)[index];
+    let model = instance.model;
+    let index = model.index(meshlet_instance, vertex_index);
+    let position = model.positions[index];
 
     Interp out;
     out.pos = mul(push_constants.mat, float4(position, 1.0));
     out.world_pos = position;
-    out.uv = primitive.uvs_ptr(push_constants.gltf)[index];
-    out.normal = primitive.normals_ptr(push_constants.gltf)[index];
-    out.material_index = primitive.material;
+    out.uv = model.uvs[index];
+    out.normal = model.normals[index];
+    out.instance_index = meshlet_instance.instance_index;
 
     return out;
 }
 
 [shader("pixel")]
 float4 fragment(uniform PushConstants push_constants, Interp in) {
-    let material = push_constants.gltf.materials[in.material_index];
+    let instance = push_constants.instances[in.instance_index];
+    let model = instance.model;
+    let material = model.material;
+
 
     var base_colour = float3(1);
     var roughness = 1.0;
