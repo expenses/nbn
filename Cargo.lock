@@ -1409,7 +1409,6 @@ checksum = "e943b2c21337b7e3ec6678500687cdc741b7639ad457f234693352075c082204"
 name = "nbn"
 version = "0.1.0"
 dependencies = [
- "arrayvec",
  "ash",
  "ash-window",
  "bytemuck",

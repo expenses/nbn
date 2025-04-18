@@ -24,9 +24,9 @@ public struct Model {
     public float3* normals;
     public uint* indices;
 
-    Meshlet* meshlets;
-    uint8_t* triangles;
-    uint* vertices;
+    public Meshlet* meshlets;
+    public uint8_t* triangles;
+    public uint* vertices;
 
     public uint flags;
     public Material material;

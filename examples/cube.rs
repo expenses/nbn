@@ -1,7 +1,6 @@
-use std::io::Read;
+use std::{ffi::CStr, io::Read};
 
-use ash::vk::{self, DrawIndirectCommand};
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use ash::vk;
 
 slang_struct::slang_include!("shaders/models.slang");
 
@@ -30,7 +29,7 @@ fn create_image(
                 },
                 format,
             },
-            &dds.get_data(0).unwrap(),
+            dds.get_data(0).unwrap(),
             transition_to,
             &[0],
         )
@@ -48,7 +47,7 @@ fn create_image(
         for level in ktx2.levels() {
             offsets.push(data.len() as _);
             data.extend_from_slice(
-                &zstd::bulk::decompress(&level.data, level.uncompressed_byte_length as _).unwrap(),
+                &zstd::bulk::decompress(level.data, level.uncompressed_byte_length as _).unwrap(),
             );
         }
 
@@ -89,18 +88,18 @@ fn create_image(
 fn create_pipeline(
     device: &nbn::Device,
     shader: &nbn::ShaderModule,
-    swapchain: &nbn::Swapchain,
+    fragment: &CStr,
 ) -> nbn::Pipeline {
     device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
         vertex: nbn::ShaderDesc {
-            module: &shader,
+            module: shader,
             entry_point: c"vertex",
         },
         fragment: nbn::ShaderDesc {
-            module: &shader,
-            entry_point: c"fragment",
+            module: shader,
+            entry_point: fragment,
         },
-        color_attachment_formats: &[swapchain.create_info.image_format],
+        color_attachment_formats: &[vk::Format::R32_UINT],
         conservative_rasterization: false,
         depth: nbn::GraphicsPipelineDepthDesc {
             write_enable: true,
@@ -109,23 +108,30 @@ fn create_pipeline(
             format: vk::Format::D32_SFLOAT,
         },
         cull_mode: vk::CullModeFlags::FRONT,
+        mesh_shader: true,
     })
 }
 
 struct WindowState {
     window: winit::window::Window,
     swapchain: nbn::Swapchain,
+    swapchain_image_heap_indices: Vec<u32>,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
-    pipeline: nbn::Pipeline,
+    opaque_pipeline: nbn::Pipeline,
+    alpha_clipped_pipeline: nbn::Pipeline,
     shader: nbn::ReloadableShader,
+    mesh_shader: nbn::ReloadableShader,
     depth_buffer: nbn::Image,
+    visbuffer: nbn::Image,
+    visbuffer_heap_index: u32,
     time: f32,
     _gltf: GltfData,
     instances: nbn::Buffer,
     meshlet_instances: nbn::Buffer,
-    draws: nbn::Buffer,
-    num_draws: u32,
+    num_opaque_meshlet_instances: u32,
+    num_alpha_clipped_meshlet_instances: u32,
+    blit_pipeline: nbn::Pipeline,
 }
 
 struct GltfData {
@@ -137,9 +143,8 @@ struct GltfData {
 
 struct LoadedPrimitive {
     model: Model,
-    num_indices: u32,
-    num_meshlets: u32,
     meshlet_data: Vec<Meshlet>,
+    is_alpha_clipped: bool,
 }
 
 struct Meshlets {
@@ -218,7 +223,7 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
         .zip(&image_formats)
         .map(|(image, format)| {
             create_image(
-                &device,
+                device,
                 path.with_file_name(image.uri.as_ref().unwrap())
                     .to_str()
                     .unwrap(),
@@ -306,9 +311,11 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
                     vertices: *meshlets_buffer + vertices_offset as u64,
                     flags: is_32_bit as u32,
                 },
-                num_indices: indices.count as u32,
-                num_meshlets,
                 meshlet_data,
+                is_alpha_clipped: !matches!(
+                    gltf.materials[primitive.material.unwrap()].alpha_mode,
+                    goth_gltf::AlphaMode::Opaque
+                ),
             });
         }
 
@@ -364,25 +371,18 @@ impl winit::application::ApplicationHandler for App {
         );
 
         let mut instances = Vec::new();
-        let mut draws = Vec::new();
-        let mut meshlet_instances = Vec::new();
+        let mut opaque_meshlet_instances = Vec::new();
+        let mut alpha_clipped_meshlet_instances = Vec::new();
 
         for mesh in &gltf.meshes {
             for primitive in mesh {
-                /*draws.push(DrawIndirectCommand {
-                    vertex_count: primitive.num_indices,
-                    instance_count: 1,
-                    first_vertex: 0,
-                    first_instance: instances.len() as _,
-                });*/
+                let buffer = if primitive.is_alpha_clipped {
+                    &mut alpha_clipped_meshlet_instances
+                } else {
+                    &mut opaque_meshlet_instances
+                };
                 for &meshlet in &primitive.meshlet_data {
-                    draws.push(DrawIndirectCommand {
-                        instance_count: 1,
-                        first_instance: meshlet_instances.len() as _,
-                        first_vertex: 0,
-                        vertex_count: meshlet.triangle_count * 3,
-                    });
-                    meshlet_instances.push(MeshletInstance {
+                    buffer.push(MeshletInstance {
                         instance_index: instances.len() as _,
                         meshlet,
                     });
@@ -393,29 +393,36 @@ impl winit::application::ApplicationHandler for App {
             }
         }
 
-        //dbg!(&instances[..3]);
-        //dbg!(&draws[..3]);
-        //dbg!(&meshlet_instances[..3]);
+        let num_opaque = opaque_meshlet_instances.len();
+        let num_alpha_clipped = alpha_clipped_meshlet_instances.len();
+
+        let mut meshlet_instances = opaque_meshlet_instances;
+        meshlet_instances.extend_from_slice(&alpha_clipped_meshlet_instances);
 
         let instances = device.create_buffer_with_data(nbn::BufferInitDescriptor {
             name: "instances",
             data: &instances,
         });
-        let num_draws = draws.len() as u32;
-        let draws = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-            name: "draws",
-            data: &draws,
-        });
-        let meshlet_instances = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-            name: "meshlet_instances",
-            data: &meshlet_instances,
-        });
 
-        let swapchain = device.create_swapchain(&window);
-        let shader = device.load_reloadable_shader("shaders/compiled/gltf_raster.spv");
-        let pipeline = create_pipeline(&device, &shader, &swapchain);
+        let swapchain = device.create_swapchain(&window, vk::ImageUsageFlags::STORAGE, true);
+        let shader = device.load_reloadable_shader("shaders/compiled/resolve_visbuffer.spv");
+        let mesh_shader = device.load_reloadable_shader("shaders/compiled/mesh_shaders.spv");
 
         let size = window.inner_size();
+
+        let visbuffer = device.create_image(nbn::ImageDescriptor {
+            name: "visbuffer",
+            format: vk::Format::R32_UINT,
+            extent: vk::Extent3D {
+                width: size.width,
+                height: size.height,
+                depth: 1,
+            },
+            ty: vk::ImageViewType::TYPE_2D,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels: 1,
+        });
 
         self.window_state = Some(WindowState {
             per_frame_command_buffers: [
@@ -423,10 +430,22 @@ impl winit::application::ApplicationHandler for App {
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
             ],
+            swapchain_image_heap_indices: swapchain
+                .images
+                .iter()
+                .map(|image| device.register_image(*image.view, nbn::ImageType::Storage))
+                .collect(),
             sync_resources: device.create_sync_resources(),
             swapchain,
             window,
-            pipeline,
+            opaque_pipeline: create_pipeline(&device, &mesh_shader, c"opaque_fragment"),
+            alpha_clipped_pipeline: create_pipeline(
+                &device,
+                &mesh_shader,
+                c"alpha_clipped_fragment",
+            ),
+            mesh_shader,
+            blit_pipeline: device.create_compute_pipeline(&shader, c"main"),
             shader,
             depth_buffer: device.create_image(nbn::ImageDescriptor {
                 name: "depth_buffer",
@@ -441,11 +460,17 @@ impl winit::application::ApplicationHandler for App {
                 aspect_mask: vk::ImageAspectFlags::DEPTH,
                 mip_levels: 1,
             }),
+            visbuffer_heap_index: device.register_image(*visbuffer.view, nbn::ImageType::Storage),
+            visbuffer,
             _gltf: gltf,
             instances,
-            draws,
-            num_draws,
-            meshlet_instances,
+            num_opaque_meshlet_instances: num_opaque as _,
+            meshlet_instances: device.create_buffer_with_data(nbn::BufferInitDescriptor {
+                name: "meshlet_instances",
+                data: &meshlet_instances,
+            }),
+            num_alpha_clipped_meshlet_instances: num_alpha_clipped as _,
+
             time: 0.0,
         });
         self.device = Some(device);
@@ -483,14 +508,49 @@ impl winit::application::ApplicationHandler for App {
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     mip_levels: 1,
                 });
+                window_state.visbuffer = device.create_image(nbn::ImageDescriptor {
+                    name: "visbuffer",
+                    format: vk::Format::R32_UINT,
+                    extent: vk::Extent3D {
+                        width: new_size.width,
+                        height: new_size.height,
+                        depth: 1,
+                    },
+                    ty: vk::ImageViewType::TYPE_2D,
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                });
+                for index in window_state.swapchain_image_heap_indices.drain(..) {
+                    device.deregister_image(index, nbn::ImageType::Storage);
+                }
+                device.deregister_image(window_state.visbuffer_heap_index, nbn::ImageType::Storage);
+                window_state.visbuffer_heap_index =
+                    device.register_image(*window_state.visbuffer.view, nbn::ImageType::Storage);
+                window_state.swapchain_image_heap_indices.extend(
+                    window_state
+                        .swapchain
+                        .images
+                        .iter()
+                        .map(|image| device.register_image(*image.view, nbn::ImageType::Storage)),
+                );
+                dbg!(&window_state.swapchain_image_heap_indices);
             }
             winit::event::WindowEvent::RedrawRequested => {
                 let device = self.device.as_ref().unwrap();
 
                 if let Some(state) = self.window_state.as_mut() {
-                    if state.shader.try_reload(&device) {
+                    if state.shader.try_reload(device) {
                         unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
-                        state.pipeline = create_pipeline(&device, &state.shader, &state.swapchain);
+                        state.blit_pipeline =
+                            device.create_compute_pipeline(&state.shader, c"main");
+                    }
+                    if state.mesh_shader.try_reload(device) {
+                        unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
+                        state.opaque_pipeline =
+                            create_pipeline(device, &state.mesh_shader, c"opaque_fragment");
+                        state.alpha_clipped_pipeline =
+                            create_pipeline(device, &state.mesh_shader, c"alpha_clipped_fragment");
                     }
 
                     unsafe {
@@ -509,7 +569,7 @@ impl winit::application::ApplicationHandler for App {
                             .unwrap();
                         let image = &state.swapchain.images[next_image as usize];
 
-                        device.reset_command_buffer(&command_buffer);
+                        device.reset_command_buffer(command_buffer);
                         device
                             .begin_command_buffer(
                                 **command_buffer,
@@ -517,25 +577,11 @@ impl winit::application::ApplicationHandler for App {
                             )
                             .unwrap();
                         vk_sync::cmd::pipeline_barrier(
-                            &device,
+                            device,
                             **command_buffer,
                             None,
                             &[],
                             &[
-                                vk_sync::ImageBarrier {
-                                    previous_accesses: &[vk_sync::AccessType::Present],
-                                    next_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
-                                    previous_layout: vk_sync::ImageLayout::Optimal,
-                                    next_layout: vk_sync::ImageLayout::Optimal,
-                                    discard_contents: true,
-                                    src_queue_family_index: device.graphics_queue.index,
-                                    dst_queue_family_index: device.graphics_queue.index,
-                                    image: image.image,
-                                    range: vk::ImageSubresourceRange::default()
-                                        .layer_count(1)
-                                        .level_count(1)
-                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
-                                },
                                 vk_sync::ImageBarrier {
                                     previous_accesses: &[],
                                     next_accesses: &[
@@ -552,20 +598,36 @@ impl winit::application::ApplicationHandler for App {
                                         .level_count(1)
                                         .aspect_mask(vk::ImageAspectFlags::DEPTH),
                                 },
+                                vk_sync::ImageBarrier {
+                                    previous_accesses: &[],
+                                    next_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
+                                    previous_layout: vk_sync::ImageLayout::Optimal,
+                                    next_layout: vk_sync::ImageLayout::Optimal,
+                                    discard_contents: true,
+                                    src_queue_family_index: device.graphics_queue.index,
+                                    dst_queue_family_index: device.graphics_queue.index,
+                                    image: **state.visbuffer,
+                                    range: vk::ImageSubresourceRange::default()
+                                        .layer_count(1)
+                                        .level_count(1)
+                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
+                                },
                             ],
                         );
 
                         let extent = state.swapchain.create_info.image_extent;
 
                         device.begin_rendering(
-                            &command_buffer,
+                            command_buffer,
                             extent.width,
                             extent.height,
                             &[vk::RenderingAttachmentInfo::default()
-                                .image_view(*image.view)
+                                .image_view(*state.visbuffer.view)
                                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                                 .clear_value(vk::ClearValue {
-                                    color: vk::ClearColorValue { float32: [1.0; 4] },
+                                    color: vk::ClearColorValue {
+                                        uint32: [u32::MAX; 4],
+                                    },
                                 })
                                 .load_op(vk::AttachmentLoadOp::CLEAR)
                                 .store_op(vk::AttachmentStoreOp::STORE)],
@@ -583,15 +645,13 @@ impl winit::application::ApplicationHandler for App {
                                     }),
                             ),
                         );
-                        device.cmd_bind_pipeline(
-                            **command_buffer,
+                        device.bind_internal_descriptor_sets(
+                            command_buffer,
                             vk::PipelineBindPoint::GRAPHICS,
-                            *state.pipeline,
                         );
-                        device.bind_internal_descriptor_sets(&command_buffer);
                         let scale = 10000.0;
                         let mat = glam::Mat4::perspective_infinite_reverse_rh(
-                            54.0_f32.to_radians(),
+                            24.0_f32.to_radians(),
                             extent.width as f32 / extent.height as f32,
                             0.0001,
                         ) * glam::Mat4::look_at_rh(
@@ -604,27 +664,112 @@ impl winit::application::ApplicationHandler for App {
                             -glam::Vec3::Y,
                         );
 
+                        device.cmd_bind_pipeline(
+                            **command_buffer,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            *state.opaque_pipeline,
+                        );
                         device.push_constants(
-                            &command_buffer,
-                            (mat, *state.instances, *state.meshlet_instances),
+                            command_buffer,
+                            (mat, *state.instances, *state.meshlet_instances, 0_u32),
+                        );
+                        device.mesh_shader_loader.cmd_draw_mesh_tasks(
+                            **command_buffer,
+                            state.num_opaque_meshlet_instances,
+                            1,
+                            1,
+                        );
+                        device.cmd_bind_pipeline(
+                            **command_buffer,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            *state.alpha_clipped_pipeline,
+                        );
+                        device.push_constants(
+                            command_buffer,
+                            (
+                                mat,
+                                *state.instances,
+                                *state.meshlet_instances,
+                                state.num_opaque_meshlet_instances,
+                            ),
+                        );
+                        device.mesh_shader_loader.cmd_draw_mesh_tasks(
+                            **command_buffer,
+                            state.num_alpha_clipped_meshlet_instances,
+                            1,
+                            1,
                         );
                         state.time += 0.005;
-                        device.cmd_draw_indirect(
-                            **command_buffer,
-                            *state.draws.buffer,
-                            0,
-                            state.num_draws,
-                            std::mem::size_of::<vk::DrawIndirectCommand>() as _,
-                        );
-
                         device.cmd_end_rendering(**command_buffer);
                         vk_sync::cmd::pipeline_barrier(
-                            &device,
+                            device,
+                            **command_buffer,
+                            None,
+                            &[],
+                            &[
+                                vk_sync::ImageBarrier {
+                                    previous_accesses: &[vk_sync::AccessType::Present],
+                                    next_accesses: &[vk_sync::AccessType::ComputeShaderWrite],
+                                    previous_layout: vk_sync::ImageLayout::Optimal,
+                                    next_layout: vk_sync::ImageLayout::Optimal,
+                                    discard_contents: true,
+                                    src_queue_family_index: device.graphics_queue.index,
+                                    dst_queue_family_index: device.graphics_queue.index,
+                                    image: image.image,
+                                    range: vk::ImageSubresourceRange::default()
+                                        .layer_count(1)
+                                        .level_count(1)
+                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
+                                },
+                                vk_sync::ImageBarrier {
+                                    previous_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
+                                    next_accesses: &[vk_sync::AccessType::ComputeShaderReadOther],
+                                    previous_layout: vk_sync::ImageLayout::Optimal,
+                                    next_layout: vk_sync::ImageLayout::Optimal,
+                                    discard_contents: false,
+                                    src_queue_family_index: device.graphics_queue.index,
+                                    dst_queue_family_index: device.graphics_queue.index,
+                                    image: *state.visbuffer.image,
+                                    range: vk::ImageSubresourceRange::default()
+                                        .layer_count(1)
+                                        .level_count(1)
+                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
+                                },
+                            ],
+                        );
+                        device.cmd_bind_pipeline(
+                            **command_buffer,
+                            vk::PipelineBindPoint::COMPUTE,
+                            *state.blit_pipeline,
+                        );
+                        device.bind_internal_descriptor_sets(
+                            command_buffer,
+                            vk::PipelineBindPoint::COMPUTE,
+                        );
+                        device.push_constants(
+                            command_buffer,
+                            (
+                                mat,
+                                (extent.width, extent.height),
+                                *state.instances,
+                                *state.meshlet_instances,
+                                state.visbuffer_heap_index,
+                                state.swapchain_image_heap_indices[next_image as usize],
+                            ),
+                        );
+                        device.cmd_dispatch(
+                            **command_buffer,
+                            extent.width.div_ceil(8),
+                            extent.height.div_ceil(8),
+                            1,
+                        );
+                        vk_sync::cmd::pipeline_barrier(
+                            device,
                             **command_buffer,
                             None,
                             &[],
                             &[vk_sync::ImageBarrier {
-                                previous_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
+                                previous_accesses: &[vk_sync::AccessType::ComputeShaderWrite],
                                 next_accesses: &[vk_sync::AccessType::Present],
                                 previous_layout: vk_sync::ImageLayout::Optimal,
                                 next_layout: vk_sync::ImageLayout::Optimal,
@@ -641,7 +786,7 @@ impl winit::application::ApplicationHandler for App {
                         device.end_command_buffer(**command_buffer).unwrap();
 
                         frame.submit(
-                            &device,
+                            device,
                             &[vk::CommandBufferSubmitInfo::default()
                                 .command_buffer(**command_buffer)],
                         );

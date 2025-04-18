@@ -1,9 +1,7 @@
 rule slang
     command = slangc $in -o $out -O3 -warnings-as-errors all 
 build shaders/compiled/cube.spv: slang shaders/cube.slang
-build shaders/compiled/common.slang-module: slang shaders/common.slang | shaders/compiled/gltf.slang-module shaders/compiled/models.slang-module
-build shaders/compiled/gltf.slang-module: slang shaders/gltf.slang | shaders/compiled/models.slang-module
-build shaders/compiled/models.slang-module: slang shaders/models.slang
-build shaders/compiled/gltf_raster.spv: slang shaders/gltf_raster.slang | shaders/compiled/common.slang-module shaders/compiled/gltf.slang-module shaders/compiled/models.slang-module
+build shaders/compiled/mesh_shaders.spv: slang shaders/mesh_shaders.slang | shaders/models.slang shaders/common.slang
+build shaders/compiled/resolve_visbuffer.spv: slang shaders/resolve_visbuffer.slang | shaders/common.slang shaders/gltf.slang shaders/models.slang shaders/visbuffer.slang
 build shaders/compiled/triangle.spv: slang shaders/triangle.slang
-build shaders/compiled/voxelize.spv: slang shaders/voxelize.slang | shaders/compiled/gltf.slang-module shaders/compiled/common.slang-module
+build shaders/compiled/voxelize.spv: slang shaders/voxelize.slang | shaders/gltf.slang shaders/common.slang

@@ -1,18 +1,11 @@
-use ash::prelude::VkResult;
-use ash::vk::DebugUtilsMessengerEXT;
-use ash::{
-    ext::debug_utils,
-    khr::{surface, swapchain},
-    vk,
-};
+use ash::{prelude::VkResult, vk};
 use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::c_char;
 use std::ffi::{self, CStr};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub use vk_sync::{AccessType, BufferBarrier, GlobalBarrier, ImageBarrier, ImageLayout};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -59,6 +52,28 @@ unsafe extern "system" fn vulkan_debug_callback(
     }
 
     vk::FALSE
+}
+
+#[derive(Clone, Copy)]
+pub enum ImageType {
+    Sampled = 0,
+    Storage = 1,
+}
+
+impl ImageType {
+    fn layout(&self) -> vk::ImageLayout {
+        match self {
+            Self::Sampled => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            Self::Storage => vk::ImageLayout::GENERAL,
+        }
+    }
+
+    fn descriptor_type(&self) -> vk::DescriptorType {
+        match self {
+            Self::Sampled => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            Self::Storage => vk::DescriptorType::STORAGE_IMAGE,
+        }
+    }
 }
 
 pub struct ReloadableShader {
@@ -133,20 +148,43 @@ impl Allocator {
     }
 }
 
+#[derive(Default)]
+struct CountTracker {
+    next: u32,
+    unused: Vec<u32>,
+}
+
+impl CountTracker {
+    fn add(&mut self) -> u32 {
+        if let Some(index) = self.unused.pop() {
+            return index;
+        }
+
+        let index = self.next;
+        self.next += 1;
+        index
+    }
+
+    fn remove(&mut self, index: u32) {
+        self.unused.push(index);
+    }
+}
+
 pub struct Descriptors {
     _pool: DescriptorPool,
     layout: DescriptorSetLayout,
     pub set: vk::DescriptorSet,
-    index: AtomicU32,
+    sampled_image_count: parking_lot::Mutex<CountTracker>,
+    storage_image_count: parking_lot::Mutex<CountTracker>,
     linear_sampler: Sampler,
 }
 
 pub struct Device {
     entry: ash::Entry,
     instance: ash::Instance,
-    debug_callback: DebugUtilsMessengerEXT,
-    debug_utils_loader: debug_utils::Instance,
-    surface_loader: surface::Instance,
+    debug_callback: vk::DebugUtilsMessengerEXT,
+    debug_utils_loader: ash::ext::debug_utils::Instance,
+    surface_loader: ash::khr::surface::Instance,
     pub device: ash::Device,
     pub physical_device: vk::PhysicalDevice,
     pub descriptors: std::mem::ManuallyDrop<Descriptors>,
@@ -158,6 +196,7 @@ pub struct Device {
     pub debug_utils_device_loader: ash::ext::debug_utils::Device,
     pub pipeline_layout: std::mem::ManuallyDrop<PipelineLayout>,
     pub properties: vk::PhysicalDeviceProperties,
+    pub mesh_shader_loader: ash::ext::mesh_shader::Device,
 }
 
 pub enum BufferType {
@@ -221,8 +260,8 @@ impl Device {
                 .unwrap(),
             );
         }
-        required_instance_extensions.push(debug_utils::NAME.as_ptr());
-        required_instance_extensions.push(surface::NAME.as_ptr());
+        required_instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
+        required_instance_extensions.push(ash::khr::surface::NAME.as_ptr());
         // Needed in order to direct debug printf statements to
         // `vulkan_debug_callback`. Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
         //required_instance_extensions.push(ash::ext::layer_settings::NAME.as_ptr());
@@ -274,7 +313,7 @@ impl Device {
             )
             .pfn_user_callback(Some(vulkan_debug_callback));
 
-        let debug_utils_loader = debug_utils::Instance::new(&entry, &instance);
+        let debug_utils_loader = ash::ext::debug_utils::Instance::new(&entry, &instance);
         let debug_callback = unsafe {
             debug_utils_loader
                 .create_debug_utils_messenger(&debug_info, None)
@@ -339,29 +378,35 @@ impl Device {
         let mut enabled_vulkan_1_1_features = vk::PhysicalDeviceVulkan11Features::default();
         let mut enabled_vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default();
         let mut enabled_vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default();
+        let mut enabled_mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesEXT::default();
 
         let mut enabled_features = vk::PhysicalDeviceFeatures2::default()
             .push_next(&mut enabled_vulkan_1_1_features)
             .push_next(&mut enabled_vulkan_1_2_features)
-            .push_next(&mut enabled_vulkan_1_3_features);
+            .push_next(&mut enabled_vulkan_1_3_features)
+            .push_next(&mut enabled_mesh_shader_features);
 
         unsafe { instance.get_physical_device_features2(pdevice, &mut enabled_features) };
         assert!(enabled_features.features.shader_int16 > 0);
         assert!(enabled_features.features.shader_int64 > 0);
+        assert!(enabled_features.features.geometry_shader > 0);
         assert!(enabled_features.features.multi_draw_indirect > 0);
         assert!(enabled_features.features.sampler_anisotropy > 0);
         assert!(enabled_vulkan_1_1_features.shader_draw_parameters > 0);
         assert!(enabled_vulkan_1_2_features.buffer_device_address > 0);
         assert!(enabled_vulkan_1_2_features.shader_int8 > 0);
         assert!(enabled_vulkan_1_2_features.descriptor_binding_sampled_image_update_after_bind > 0);
+        assert!(enabled_vulkan_1_2_features.descriptor_binding_storage_image_update_after_bind > 0);
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
         assert!(enabled_vulkan_1_2_features.timeline_semaphore > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
+        assert!(enabled_mesh_shader_features.mesh_shader > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
             .shader_int16(true)
             .shader_int64(true)
+            .geometry_shader(true)
             .sampler_anisotropy(true)
             .multi_draw_indirect(true)
             // needed for debug printf
@@ -377,12 +422,16 @@ impl Device {
             .buffer_device_address(true)
             .shader_int8(true)
             .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_storage_image_update_after_bind(true)
             .runtime_descriptor_array(true)
             .timeline_semaphore(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
             .synchronization2(true);
+
+        let mut mesh_shader_features =
+            vk::PhysicalDeviceMeshShaderFeaturesEXT::default().mesh_shader(true);
 
         let mut queue_infos = vec![vk::DeviceQueueCreateInfo::default()
             .queue_family_index(graphics_queue_family_index)
@@ -411,19 +460,24 @@ impl Device {
                     &vk::DeviceCreateInfo::default()
                         .queue_create_infos(&queue_infos)
                         .enabled_extension_names(&[
-                            swapchain::NAME.as_ptr(),
+                            ash::khr::swapchain::NAME.as_ptr(),
                             ash::ext::conservative_rasterization::NAME.as_ptr(),
                             // Needed for debug printf.
                             ash::khr::shader_non_semantic_info::NAME.as_ptr(),
+                            // ;)
+                            ash::ext::mesh_shader::NAME.as_ptr(),
                         ])
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_1_features)
                         .push_next(&mut vulkan_1_2_features)
-                        .push_next(&mut vulkan_1_3_features),
+                        .push_next(&mut vulkan_1_3_features)
+                        .push_next(&mut mesh_shader_features),
                     None,
                 )
                 .unwrap()
         };
+
+        let counts_of_each_descriptor_type = 1024;
 
         let descriptor_pool = DescriptorPool::from_raw(
             unsafe {
@@ -431,9 +485,14 @@ impl Device {
                     &vk::DescriptorPoolCreateInfo::default()
                         .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
                         .max_sets(1)
-                        .pool_sizes(&[vk::DescriptorPoolSize::default()
-                            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1024)]),
+                        .pool_sizes(&[
+                            vk::DescriptorPoolSize::default()
+                                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(counts_of_each_descriptor_type),
+                            vk::DescriptorPoolSize::default()
+                                .ty(vk::DescriptorType::STORAGE_IMAGE)
+                                .descriptor_count(counts_of_each_descriptor_type),
+                        ]),
                     None,
                 )
             }
@@ -443,19 +502,24 @@ impl Device {
 
         let descriptor_set_layout = DescriptorSetLayout::from_raw(
             unsafe {
+                let binding = |index, ty| {
+                    vk::DescriptorSetLayoutBinding::default()
+                        .binding(index)
+                        .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
+                        .descriptor_type(ty)
+                        .descriptor_count(counts_of_each_descriptor_type)
+                };
+
                 let mut flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
-                    .binding_flags(&[vk::DescriptorBindingFlags::UPDATE_AFTER_BIND]);
+                    .binding_flags(&[vk::DescriptorBindingFlags::UPDATE_AFTER_BIND; 2]);
 
                 device.create_descriptor_set_layout(
                     &vk::DescriptorSetLayoutCreateInfo::default()
                         .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-                        .bindings(&[vk::DescriptorSetLayoutBinding::default()
-                            .binding(0)
-                            .stage_flags(
-                                vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT,
-                            )
-                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1024)])
+                        .bindings(&[
+                            binding(0, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+                            binding(1, vk::DescriptorType::STORAGE_IMAGE),
+                        ])
                         .push_next(&mut flags),
                     None,
                 )
@@ -488,7 +552,8 @@ impl Device {
             _pool: descriptor_pool,
             set: descriptor_set,
             layout: descriptor_set_layout,
-            index: AtomicU32::new(0),
+            sampled_image_count: Default::default(),
+            storage_image_count: Default::default(),
             linear_sampler: Sampler::from_raw(
                 unsafe {
                     device.create_sampler(
@@ -519,7 +584,8 @@ impl Device {
                         .stage_flags(
                             vk::ShaderStageFlags::COMPUTE
                                 | vk::ShaderStageFlags::VERTEX
-                                | vk::ShaderStageFlags::FRAGMENT,
+                                | vk::ShaderStageFlags::FRAGMENT
+                                | vk::ShaderStageFlags::MESH_EXT,
                         )
                         .offset(0)
                         .size(properties.limits.max_push_constants_size)]),
@@ -532,6 +598,7 @@ impl Device {
             physical_device: pdevice,
             swapchain_loader: ash::khr::swapchain::Device::new(&instance, &device),
             debug_utils_device_loader: ash::ext::debug_utils::Device::new(&instance, &device),
+            mesh_shader_loader: ash::ext::mesh_shader::Device::new(&instance, &device),
             instance,
             entry,
             debug_callback,
@@ -565,9 +632,9 @@ impl Device {
         budget
     }
 
-    pub fn get_remaining_memory(&self) -> arrayvec::ArrayVec<i64, { vk::MAX_MEMORY_HEAPS }> {
+    pub fn get_remaining_memory(&self) -> Vec<i64> {
         let budget = self.get_memory_budget();
-        let mut vec = arrayvec::ArrayVec::new();
+        let mut vec = Vec::with_capacity(vk::MAX_MEMORY_HEAPS);
         for i in 0..vk::MAX_MEMORY_HEAPS {
             if budget.heap_budget[i] != 0 {
                 vec.push(budget.heap_budget[i] as i64 - budget.heap_usage[i] as i64);
@@ -577,10 +644,15 @@ impl Device {
         vec
     }
 
-    pub fn create_swapchain(&self, window: &Window) -> Swapchain {
+    pub fn create_swapchain(
+        &self,
+        window: &Window,
+        image_usage: vk::ImageUsageFlags,
+        require_non_srgb: bool,
+    ) -> Swapchain {
         let surface = self.create_surface(window);
         let size = window.inner_size();
-        let surface_format = self.select_surface_format(*surface);
+        let surface_format = self.select_surface_format(*surface, require_non_srgb);
 
         let surface_caps = unsafe {
             self.surface_loader
@@ -589,7 +661,7 @@ impl Device {
         .unwrap();
 
         let create_info = vk::SwapchainCreateInfoKHR::default()
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(image_usage)
             .image_array_layers(1)
             .min_image_count((FRAMES_IN_FLIGHT as u32).max(surface_caps.min_image_count))
             .present_mode(vk::PresentModeKHR::FIFO)
@@ -719,7 +791,11 @@ impl Device {
         }
     }
 
-    pub fn select_surface_format(&self, surface: vk::SurfaceKHR) -> vk::SurfaceFormatKHR {
+    pub fn select_surface_format(
+        &self,
+        surface: vk::SurfaceKHR,
+        require_non_srgb: bool,
+    ) -> vk::SurfaceFormatKHR {
         let formats = unsafe {
             self.surface_loader
                 .get_physical_device_surface_formats(self.physical_device, surface)
@@ -729,7 +805,14 @@ impl Device {
         formats
             .into_iter()
             .max_by_key(|format| match format.format {
-                vk::Format::B8G8R8A8_SRGB => 2,
+                vk::Format::B8G8R8A8_SRGB => {
+                    if require_non_srgb {
+                        0
+                    } else {
+                        2
+                    }
+                }
+
                 vk::Format::B8G8R8A8_UNORM => 1,
                 _ => 0,
             })
@@ -822,21 +905,39 @@ impl Device {
         }
     }
 
-    pub fn register_image(&self, image: &Image) -> u32 {
-        let index = self.descriptors.index.fetch_add(1, Ordering::Relaxed);
+    pub fn deregister_image(&self, index: u32, ty: ImageType) {
+        let tracker = match ty {
+            ImageType::Sampled => &self.descriptors.sampled_image_count,
+            ImageType::Storage => &self.descriptors.storage_image_count,
+        };
+
+        tracker.lock().remove(index);
+    }
+
+    pub fn register_image(&self, view: vk::ImageView, ty: ImageType) -> u32 {
+        let mut image_info = vk::DescriptorImageInfo::default()
+            .image_layout(ty.layout())
+            .image_view(view);
+
+        let tracker = match ty {
+            ImageType::Sampled => {
+                image_info = image_info.sampler(*self.descriptors.linear_sampler);
+                &self.descriptors.sampled_image_count
+            }
+            ImageType::Storage => &self.descriptors.storage_image_count,
+        };
+
+        let index = tracker.lock().add();
 
         unsafe {
             self.device.update_descriptor_sets(
                 &[vk::WriteDescriptorSet::default()
                     .dst_set(self.descriptors.set)
-                    .dst_binding(0)
+                    .dst_binding(ty as u32)
                     .dst_array_element(index)
-                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .descriptor_type(ty.descriptor_type())
                     .descriptor_count(1)
-                    .image_info(&[vk::DescriptorImageInfo::default()
-                        .sampler(*self.descriptors.linear_sampler)
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .image_view(*image.view)])],
+                    .image_info(&[image_info])],
                 &[],
             );
         }
@@ -937,7 +1038,7 @@ impl Device {
             self.end_command_buffer(*command_buffer).unwrap();
         }
 
-        let index = self.register_image(&image);
+        let index = self.register_image(*image.view, ImageType::Sampled);
 
         PendingImageUpload {
             image: SampledImage { image, index },
@@ -962,11 +1063,15 @@ impl Device {
         );
     }
 
-    pub fn bind_internal_descriptor_sets(&self, command_buffer: &CommandBuffer) {
+    pub fn bind_internal_descriptor_sets(
+        &self,
+        command_buffer: &CommandBuffer,
+        bind_point: vk::PipelineBindPoint,
+    ) {
         unsafe {
             self.cmd_bind_descriptor_sets(
                 **command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
+                bind_point,
                 **self.pipeline_layout,
                 0,
                 &[self.descriptors.set],
@@ -982,7 +1087,8 @@ impl Device {
                 **self.pipeline_layout,
                 vk::ShaderStageFlags::COMPUTE
                     | vk::ShaderStageFlags::VERTEX
-                    | vk::ShaderStageFlags::FRAGMENT,
+                    | vk::ShaderStageFlags::FRAGMENT
+                    | vk::ShaderStageFlags::MESH_EXT,
                 0,
                 cast_slice(&[data]),
             );
@@ -1058,8 +1164,8 @@ impl Device {
             })
             .unwrap();
 
-        self.set_object_name(unsafe { allocation.memory() }, &desc.name);
-        self.set_object_name(buffer, &desc.name);
+        self.set_object_name(unsafe { allocation.memory() }, desc.name);
+        self.set_object_name(buffer, desc.name);
 
         unsafe {
             self.device
@@ -1112,14 +1218,13 @@ impl Device {
             {
                 let dirty = dirty.clone();
                 move |res| {
-                    match res {
-                        Ok(notify::Event {
-                            kind: notify::EventKind::Access(_),
-                            ..
-                        }) => return,
-                        _ => {}
-                    };
-                    dirty.store(true, Ordering::Relaxed);
+                    if let Ok(notify::Event {
+                        kind: notify::EventKind::Modify(..),
+                        ..
+                    }) = res
+                    {
+                        dirty.store(true, Ordering::Relaxed);
+                    }
                 }
             },
             Default::default(),
@@ -1139,6 +1244,7 @@ impl Device {
     }
 
     pub fn load_shader<P: AsRef<Path>>(&self, path: P) -> ShaderModule {
+        let path = path.as_ref();
         let bytes = std::fs::read(path).unwrap();
         let spirv_slice =
             unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u32, bytes.len() / 4) };
@@ -1150,6 +1256,8 @@ impl Device {
             )
         }
         .unwrap();
+
+        self.set_object_name(shader_module, path.to_str().unwrap());
 
         ShaderModule::from_raw(shader_module, &self.device)
     }
@@ -1180,7 +1288,11 @@ impl Device {
                 &[vk::GraphicsPipelineCreateInfo::default()
                     .stages(&[
                         vk::PipelineShaderStageCreateInfo::default()
-                            .stage(vk::ShaderStageFlags::VERTEX)
+                            .stage(if desc.mesh_shader {
+                                vk::ShaderStageFlags::MESH_EXT
+                            } else {
+                                vk::ShaderStageFlags::VERTEX
+                            })
                             .name(desc.vertex.entry_point)
                             .module(**desc.vertex.module),
                         vk::PipelineShaderStageCreateInfo::default()
@@ -1503,6 +1615,7 @@ pub struct GraphicsPipelineDesc<'a> {
     pub conservative_rasterization: bool,
     pub cull_mode: vk::CullModeFlags,
     pub depth: GraphicsPipelineDepthDesc,
+    pub mesh_shader: bool,
 }
 
 #[derive(Default)]
@@ -1716,7 +1829,7 @@ impl FrameResources {
 
 pub struct Surface {
     surface: vk::SurfaceKHR,
-    loader: surface::Instance,
+    loader: ash::khr::surface::Instance,
 }
 impl Drop for Surface {
     fn drop(&mut self) {
@@ -1736,7 +1849,7 @@ impl std::ops::Deref for Surface {
 
 pub struct WrappedSwapchain {
     swapchain: vk::SwapchainKHR,
-    loader: swapchain::Device,
+    loader: ash::khr::swapchain::Device,
 }
 impl Drop for WrappedSwapchain {
     fn drop(&mut self) {
