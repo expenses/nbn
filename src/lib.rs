@@ -32,13 +32,17 @@ unsafe extern "system" fn vulkan_debug_callback(
         ffi::CStr::from_ptr(callback_data.p_message).to_string_lossy()
     };
 
-    let level = match message_severity {
+    let mut level = match message_severity {
         vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => log::Level::Error,
         vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => log::Level::Warn,
         vk::DebugUtilsMessageSeverityFlagsEXT::INFO => log::Level::Info,
         vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => log::Level::Debug,
         _ => panic!(),
     };
+
+    if message_id_name == "Loader Message" {
+        level = log::Level::Debug;
+    }
 
     if message_id_name == "VVL-DEBUG-PRINTF" {
         let (_, message) = message.rsplit_once('|').unwrap();
@@ -100,6 +104,40 @@ impl std::ops::Deref for ReloadableShader {
 
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+pub struct ReloadablePipeline<T> {
+    shader: ReloadableShader,
+    pipeline: T,
+    create_fn: Box<dyn Fn(&Device, &ShaderModule) -> T>,
+}
+
+impl<T> ReloadablePipeline<T> {
+    pub fn new(
+        device: &Device,
+        shader: ReloadableShader,
+        create_fn: &'static dyn Fn(&Device, &ShaderModule) -> T,
+    ) -> Self {
+        Self {
+            pipeline: (create_fn)(device, &shader),
+            create_fn: Box::new(create_fn),
+            shader,
+        }
+    }
+
+    pub fn refresh(&mut self, device: &Device) {
+        if self.shader.try_reload(device) {
+            self.pipeline = (self.create_fn)(device, &self.shader);
+        }
+    }
+}
+
+impl<T> std::ops::Deref for ReloadablePipeline<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.pipeline
     }
 }
 
@@ -233,7 +271,7 @@ pub struct BufferInitDescriptor<'a, T> {
 }
 
 impl Device {
-    pub fn new(window: Option<&Window>) -> Self {
+    pub fn new(window: Option<&Window>, enable_debug_printf: bool) -> Self {
         let entry = ash::Entry::linked();
 
         let app_name = c"nbn";
@@ -262,9 +300,11 @@ impl Device {
         }
         required_instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
         required_instance_extensions.push(ash::khr::surface::NAME.as_ptr());
-        // Needed in order to direct debug printf statements to
-        // `vulkan_debug_callback`. Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
-        //required_instance_extensions.push(ash::ext::layer_settings::NAME.as_ptr());
+        if enable_debug_printf {
+            // Needed in order to direct debug printf statements to
+            // `vulkan_debug_callback`. Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
+            required_instance_extensions.push(ash::ext::layer_settings::NAME.as_ptr());
+        }
 
         let available_instance_extensions =
             unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap();
@@ -276,8 +316,10 @@ impl Device {
         let create_flags = vk::InstanceCreateFlags::default();
 
         let mut validation_features = vk::ValidationFeaturesEXT::default();
-        // Needed for debug printf.
-        //.enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF]);
+        if enable_debug_printf {
+            validation_features = validation_features
+                .enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF]);
+        }
 
         let create_info = vk::InstanceCreateInfo::default()
             .application_info(&appinfo)
@@ -399,6 +441,7 @@ impl Device {
         assert!(enabled_vulkan_1_2_features.descriptor_binding_storage_image_update_after_bind > 0);
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
         assert!(enabled_vulkan_1_2_features.timeline_semaphore > 0);
+        assert!(enabled_vulkan_1_2_features.shader_buffer_int64_atomics > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_mesh_shader_features.mesh_shader > 0);
@@ -424,7 +467,11 @@ impl Device {
             .descriptor_binding_sampled_image_update_after_bind(true)
             .descriptor_binding_storage_image_update_after_bind(true)
             .runtime_descriptor_array(true)
-            .timeline_semaphore(true);
+            .timeline_semaphore(true)
+            .shader_buffer_int64_atomics(true)
+            // Needed for debug printf.
+            .vulkan_memory_model(true)
+            .vulkan_memory_model_device_scope(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
@@ -1041,7 +1088,7 @@ impl Device {
         let index = self.register_image(*image.view, ImageType::Sampled);
 
         PendingImageUpload {
-            image: SampledImage { image, index },
+            image: IndexedImage { image, index },
             _upload_buffer: buffer,
             command_buffer,
         }
@@ -1078,6 +1125,11 @@ impl Device {
                 &[],
             );
         }
+    }
+
+    pub fn bind_internal_descriptor_sets_to_all(&self, command_buffer: &CommandBuffer) {
+        self.bind_internal_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS);
+        self.bind_internal_descriptor_sets(command_buffer, vk::PipelineBindPoint::COMPUTE);
     }
 
     pub fn push_constants<T: Copy>(&self, command_buffer: &CommandBuffer, data: T) {
@@ -1128,6 +1180,24 @@ impl Device {
             );
             self.cmd_set_scissor(**command_buffer, 0, &[render_area]);
         }
+    }
+
+    pub fn insert_global_barrier(
+        &self,
+        command_buffer: &CommandBuffer,
+        previous_accesses: &[vk_sync::AccessType],
+        next_accesses: &[vk_sync::AccessType],
+    ) {
+        vk_sync::cmd::pipeline_barrier(
+            &self,
+            **command_buffer,
+            Some(vk_sync::GlobalBarrier {
+                previous_accesses,
+                next_accesses,
+            }),
+            &[],
+            &[],
+        );
     }
 
     pub fn create_buffer(&self, desc: BufferDescriptor) -> VkResult<Buffer> {
@@ -1671,12 +1741,12 @@ impl Drop for Buffer {
     }
 }
 
-pub struct SampledImage {
+pub struct IndexedImage {
     pub image: Image,
     pub index: u32,
 }
 
-impl std::ops::Deref for SampledImage {
+impl std::ops::Deref for IndexedImage {
     type Target = u32;
 
     fn deref(&self) -> &Self::Target {
@@ -1712,11 +1782,11 @@ impl Drop for Image {
 pub struct PendingImageUpload {
     _upload_buffer: Buffer,
     pub command_buffer: CommandBuffer,
-    pub image: SampledImage,
+    pub image: IndexedImage,
 }
 
 impl PendingImageUpload {
-    pub fn into_inner(self) -> SampledImage {
+    pub fn into_inner(self) -> IndexedImage {
         self.image
     }
 }
