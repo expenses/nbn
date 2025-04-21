@@ -3,6 +3,19 @@ use std::{
     path::Path,
 };
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Meshlet {
+    center: [f32; 3],
+    radius: f32,
+    cone_axis: [i8; 3],
+    cone_cutoff: i8,
+    vertex_offset: u32,
+    triangle_offset: u32,
+    vertex_count: u8,
+    triangle_count: u8,
+}
+
 fn main() {
     let path = std::env::args().nth(1).unwrap();
     let path = Path::new(&path);
@@ -26,7 +39,7 @@ fn main() {
     output.write_all(b"MESHLETS").unwrap();
 
     let write_val = |output: &mut BufWriter<std::fs::File>, val: u32| {
-        dbg!(val);
+        //dbg!(val);
         output.write_all(&val.to_le_bytes()).unwrap();
     };
 
@@ -66,27 +79,37 @@ fn main() {
                 0.0,
             );
 
-            let culling_info: Vec<[f32; 4]> = meshlets
+            write_val(&mut output, meshlets.meshlets.len() as _);
+
+            write_val(&mut output, data.len() as _);
+            data.extend_from_slice(cast_slice(&meshlets.vertices));
+
+            write_val(&mut output, data.len() as _);
+            data.extend_from_slice(cast_slice(&meshlets.triangles));
+
+            let meshlets: Vec<Meshlet> = meshlets
                 .iter()
-                .map(|meshlet| {
-                    let bounds = meshopt::clusterize::compute_meshlet_bounds(meshlet, &adapter);
-                    assert_ne!(bounds.radius, 0.0);
-                    [
-                        bounds.center[0],
-                        bounds.center[1],
-                        bounds.center[2],
-                        bounds.radius,
-                    ]
+                .zip(&meshlets.meshlets)
+                .map(|(meshlet_data, meshlet)| {
+                    let bounds =
+                        meshopt::clusterize::compute_meshlet_bounds(meshlet_data, &adapter);
+                    Meshlet {
+                        center: bounds.center,
+                        radius: bounds.radius,
+                        cone_axis: bounds.cone_axis_s8,
+                        cone_cutoff: bounds.cone_cutoff_s8,
+                        vertex_offset: meshlet.vertex_offset,
+                        triangle_offset: meshlet.triangle_offset,
+                        triangle_count: meshlet.triangle_count as _,
+                        vertex_count: meshlet.vertex_count as _,
+                    }
                 })
                 .collect();
 
-            write_val(&mut output, meshlets.meshlets.len() as _);
+            //dbg!(std::mem::size_of::<Meshlet>());
+
             write_val(&mut output, data.len() as _);
-            data.extend_from_slice(cast_slice(&meshlets.meshlets));
-            write_val(&mut output, data.len() as _);
-            data.extend_from_slice(cast_slice(&meshlets.vertices));
-            write_val(&mut output, data.len() as _);
-            data.extend_from_slice(cast_slice(&meshlets.triangles));
+            data.extend_from_slice(cast_slice(&meshlets));
         }
     }
 

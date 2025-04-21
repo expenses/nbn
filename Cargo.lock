@@ -634,6 +634,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dolly"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1057c2875c640d0d6c961e0bfe5c31d03010d0e72ea96f6c40fffe6b7aebf235"
+dependencies = [
+ "glam 0.28.0",
+ "mint",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -851,6 +861,15 @@ checksum = "3fb2d69b19215e18bb912fa30f7ce15846e301408695e44e0ef719f1da9e19f2"
 dependencies = [
  "color_quant",
  "weezl",
+]
+
+[[package]]
+name = "glam"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "779ae4bf7e8421cf91c0b3b64e7e8b40b862fba4d393f59150042de7c4965a94"
+dependencies = [
+ "mint",
 ]
 
 [[package]]
@@ -1382,6 +1401,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "meshlet-renderer"
+version = "0.1.0"
+dependencies = [
+ "ddsfile",
+ "dolly",
+ "env_logger",
+ "glam 0.29.3",
+ "goth-gltf",
+ "ktx2",
+ "nbn",
+ "slang_struct 0.0.2",
+ "winit",
+ "zstd",
+]
+
+[[package]]
 name = "meshopt"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1408,6 +1443,12 @@ dependencies = [
  "adler2",
  "simd-adler32",
 ]
+
+[[package]]
+name = "mint"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
 
 [[package]]
 name = "mio"
@@ -1446,7 +1487,7 @@ dependencies = [
  "ddsfile",
  "env_logger",
  "fnv",
- "glam",
+ "glam 0.29.3",
  "goth-gltf",
  "gpu-allocator",
  "image 0.25.6",
@@ -1458,7 +1499,7 @@ dependencies = [
  "presser",
  "radsort",
  "rayon",
- "slang_struct",
+ "slang_struct 0.0.2 (git+https://github.com/expenses/slang-struct-rs?branch=logos)",
  "tree64",
  "vk-sync-fork",
  "winit",
@@ -2397,6 +2438,17 @@ dependencies = [
 [[package]]
 name = "slang_struct"
 version = "0.0.2"
+dependencies = [
+ "logos",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "slang_struct"
+version = "0.0.2"
 source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#4ee1d5ac1f3c936cd713605e4baf39228d021e7e"
 dependencies = [
  "logos",
@@ -2666,7 +2718,7 @@ dependencies = [
  "arrayvec",
  "bytemuck",
  "fnv",
- "glam",
+ "glam 0.29.3",
  "hashbrown",
 ]
 

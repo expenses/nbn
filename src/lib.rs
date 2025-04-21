@@ -1,4 +1,5 @@
-use ash::{prelude::VkResult, vk};
+use ash::prelude::VkResult;
+pub use ash::vk;
 use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -7,7 +8,9 @@ use std::ffi::{self, CStr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-pub use vk_sync::{AccessType, BufferBarrier, GlobalBarrier, ImageBarrier, ImageLayout};
+pub use vk_sync::{
+    cmd::pipeline_barrier, AccessType, BufferBarrier, GlobalBarrier, ImageBarrier, ImageLayout,
+};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 

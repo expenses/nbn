@@ -18,6 +18,7 @@ fn create_pipeline(
         conservative_rasterization: false,
         depth: Default::default(),
         cull_mode: Default::default(),
+        mesh_shader: false,
     })
 }
 
@@ -40,9 +41,10 @@ impl winit::application::ApplicationHandler for App {
         let window = event_loop
             .create_window(winit::window::WindowAttributes::default().with_resizable(true))
             .unwrap();
-        let device = nbn::Device::new(Some(&window));
+        let device = nbn::Device::new(Some(&window), false);
 
-        let swapchain = device.create_swapchain(&window);
+        let swapchain =
+            device.create_swapchain(&window, vk::ImageUsageFlags::COLOR_ATTACHMENT, false);
         let shader = device.load_reloadable_shader("shaders/compiled/triangle.spv");
         let pipeline = create_pipeline(&device, &shader, &swapchain);
 

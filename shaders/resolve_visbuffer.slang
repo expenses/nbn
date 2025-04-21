@@ -38,8 +38,8 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
     let triangle_index = val & 0b1111111;
     let meshlet_instance = uniforms.meshlet_instances[meshlet_instance_index];
     let meshlet = meshlet_instance.meshlet;
-    let instance = uniforms.instances[meshlet_instance.instance_index];
-    let model = instance.model;
+    let instance = meshlet_instance.instance;
+    let model = uniforms.models[instance.model_index];
     let material = model.material;
 
     let indices = uint3(

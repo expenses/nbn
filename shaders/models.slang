@@ -12,10 +12,26 @@ public struct Material {
 }
 
 public struct Meshlet {
+    public float3 center;
+    public float radius;
+    public int8_t3 _cone_axis;
+    public int8_t _cone_cutoff;
     public uint vertex_offset;
     public uint triangle_offset;
-    public uint vertex_count;
-    public uint triangle_count;
+    public uint8_t vertex_count;
+    public uint8_t triangle_count;
+
+    public property float3 cone_axis {
+        get {
+            return float3(_cone_axis) / 127.0;
+        }
+    };
+
+    public property float cone_cutoff {
+        get {
+            return float(_cone_cutoff) / 127.0;
+        }
+    };
 };
 
 [Flags]
@@ -49,16 +65,11 @@ public struct Model {
 };
 
 public struct Instance {
-    // todo: use index
-    public Model model;
-    public uint2 _padding;
+    public uint model_index;
     public float4 position;
-    //uint model_index;
 };
 
 public struct MeshletInstance {
-    // todo: embed instance.
     public Meshlet meshlet;
-    //public uint meshlet_index;
-    public uint instance_index;
+    public Instance instance;
 }

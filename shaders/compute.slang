@@ -35,7 +35,7 @@ void generate_meshlet_prefix_sums(uniform PC constants, uint thread: SV_Dispatch
     }
 
     let instance = uniforms.instances[thread];
-    let model = instance.model;
+    let model = uniforms.models[instance.model_index];
     let material = model.material;
 
     uint dispatch_index = uint(material.flags & MaterialFlags::AlphaClipped);
@@ -74,7 +74,7 @@ void write_meshlet_instances(uniform PC2 constants, uint thread: SV_DispatchThre
     let val = prefix_sum_binary_search(prefix_sum_buffer, thread);
 
     let instance = uniforms.instances[val.index];
-    let model = instance.model;
+    let model = uniforms.models[instance.model_index];
 
     uint32_t local_meshlet_index =
         thread - (val.sum - model.num_meshlets);

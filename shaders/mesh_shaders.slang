@@ -21,6 +21,12 @@ struct PerPrimitive {
     uint32_t visbuffer_value : SV_PrimitiveID;
 };
 
+bool coneCull(float3 center, float radius, float3 cone_axis, float cone_cutoff, float3 camera_position)
+{
+	return dot(normalize(center - camera_position), cone_axis) > cone_cutoff + radius / length(center - camera_position);
+}
+
+
 [shader("mesh")]
 [outputtopology("triangle")]
 [numthreads(128, 1, 1)]
@@ -40,23 +46,24 @@ uniform PushConstants push_constants,
 
     let meshlet_instance = uniforms.meshlet_instances[meshlet_instance_index];
     let meshlet = meshlet_instance.meshlet;
-    let instance = uniforms.instances[meshlet_instance.instance_index];
-    let model = instance.model;
 
-    CullingInfo culling_info;
-    culling_info.view = uniforms.view;
-    culling_info.perspective = uniforms.perspective;
-    culling_info.near_plane = uniforms.near_plane;
+    let view_center = mul(uniforms.view, float4(meshlet.center, 1.0)).xyz;
 
-    uint first_index = model.vertices[meshlet.vertex_offset];
-    let first_position = model.positions[first_index];
+    var visible = !coneCull(meshlet.center, meshlet.radius, meshlet.cone_axis, meshlet.cone_cutoff, uniforms.camera_position);
+    // near plane
+    visible &= view_center.z - meshlet.radius < uniforms.near_plane;
+	// left and right planes
+	visible &= view_center.z * uniforms.frustum[1] - abs(view_center.x) * uniforms.frustum[0] > -meshlet.radius;
+	// top and bottom planes
+	visible &= view_center.z * uniforms.frustum[3] - abs(view_center.y) * uniforms.frustum[2] > -meshlet.radius;
 
-    let cull = cull_bounding_sphere(culling_info, float4(first_position, 100));
-
-    if (false) {
+    if (!visible) {
         SetMeshOutputCounts(0,0);
         return;
     }
+
+    let instance = meshlet_instance.instance;
+    let model = uniforms.models[instance.model_index];
 
     SetMeshOutputCounts(meshlet.vertex_count, meshlet.triangle_count);
 
@@ -93,8 +100,8 @@ Interp in, uint visbuffer_value: SV_PrimitiveID) {
 
     let meshlet_instance_index = visbuffer_value >> 7;
     let meshlet_instance = uniforms.meshlet_instances[meshlet_instance_index];
-    let instance = uniforms.instances[meshlet_instance.instance_index];
-    let model = instance.model;
+    let instance = meshlet_instance.instance;
+    let model = uniforms.models[instance.model_index];
     let material = model.material;
 
     if (material.base_colour_image != max_value) {
