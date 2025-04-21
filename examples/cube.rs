@@ -2,10 +2,6 @@ use std::{ffi::CStr, io::Read};
 
 use ash::vk;
 
-type MaterialFlags = u32;
-type ModelFlags = u32;
-type uint2 = [u32; 2];
-
 slang_struct::slang_include!("shaders/models.slang");
 slang_struct::slang_include!("shaders/culling.slang");
 slang_struct::slang_include!("shaders/uniforms.slang");
@@ -574,8 +570,8 @@ impl winit::application::ApplicationHandler for App {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 });
-                window_state.visbuffer.index = device
-                    .register_image(*window_state.visbuffer.image.view, true);
+                window_state.visbuffer.index =
+                    device.register_image(*window_state.visbuffer.image.view, true);
 
                 for index in window_state.swapchain_image_heap_indices.drain(..) {
                     device.deregister_image(index, true);

@@ -11,113 +11,13 @@ pub use vk_sync::{AccessType, BufferBarrier, GlobalBarrier, ImageBarrier, ImageL
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
-unsafe extern "system" fn vulkan_debug_callback(
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
-    _user_data: *mut std::os::raw::c_void,
-) -> vk::Bool32 {
-    let callback_data = *p_callback_data;
-    let message_id_number = callback_data.message_id_number;
+mod hot_reloading;
+mod surface;
+mod util;
 
-    let message_id_name = if callback_data.p_message_id_name.is_null() {
-        Cow::from("")
-    } else {
-        ffi::CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy()
-    };
-
-    let message = if callback_data.p_message.is_null() {
-        Cow::from("")
-    } else {
-        ffi::CStr::from_ptr(callback_data.p_message).to_string_lossy()
-    };
-
-    let mut level = match message_severity {
-        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => log::Level::Error,
-        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => log::Level::Warn,
-        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => log::Level::Info,
-        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => log::Level::Debug,
-        _ => panic!(),
-    };
-
-    if message_id_name == "Loader Message" {
-        level = log::Level::Debug;
-    }
-
-    if message_id_name == "VVL-DEBUG-PRINTF" {
-        let (_, message) = message.rsplit_once('|').unwrap();
-        log::log!(target: "shader", log::Level::Warn, "{message}");
-    } else {
-        log::log!(
-            target: "vulkan",
-            level,
-            "{message_type:?} [{message_id_name} ({message_id_number})] : {message}"
-        );
-    }
-
-    vk::FALSE
-}
-
-pub struct ReloadableShader {
-    inner: ShaderModule,
-    dirty: Arc<AtomicBool>,
-    path: PathBuf,
-    _watcher: notify::RecommendedWatcher,
-}
-
-impl ReloadableShader {
-    pub fn try_reload(&mut self, device: &Device) -> bool {
-        let dirty = self.dirty.swap(false, Ordering::Relaxed);
-
-        if dirty {
-            self.inner = device.load_shader(&self.path);
-        }
-
-        dirty
-    }
-}
-
-impl std::ops::Deref for ReloadableShader {
-    type Target = ShaderModule;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-pub struct ReloadablePipeline<T: 'static> {
-    shader: ReloadableShader,
-    pipeline: T,
-    create_fn: &'static dyn Fn(&Device, &ShaderModule) -> T,
-}
-
-impl<T> ReloadablePipeline<T> {
-    pub fn new(
-        device: &Device,
-        shader: ReloadableShader,
-        create_fn: &'static dyn Fn(&Device, &ShaderModule) -> T,
-    ) -> Self {
-        Self {
-            pipeline: (create_fn)(device, &shader),
-            create_fn,
-            shader,
-        }
-    }
-
-    pub fn refresh(&mut self, device: &Device) {
-        if self.shader.try_reload(device) {
-            self.pipeline = (self.create_fn)(device, &self.shader);
-        }
-    }
-}
-
-impl<T> std::ops::Deref for ReloadablePipeline<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.pipeline
-    }
-}
+pub use hot_reloading::*;
+pub use surface::*;
+pub use util::*;
 
 pub enum QueueType {
     Graphics,
@@ -164,28 +64,6 @@ impl Allocator {
     }
 }
 
-#[derive(Default)]
-struct CountTracker {
-    next: u32,
-    unused: Vec<u32>,
-}
-
-impl CountTracker {
-    fn add(&mut self) -> u32 {
-        if let Some(index) = self.unused.pop() {
-            return index;
-        }
-
-        let index = self.next;
-        self.next += 1;
-        index
-    }
-
-    fn remove(&mut self, index: u32) {
-        self.unused.push(index);
-    }
-}
-
 pub struct Descriptors {
     _pool: DescriptorPool,
     layout: DescriptorSetLayout,
@@ -193,26 +71,6 @@ pub struct Descriptors {
     sampled_image_count: parking_lot::Mutex<CountTracker>,
     storage_image_count: parking_lot::Mutex<CountTracker>,
     linear_sampler: Sampler,
-}
-
-pub struct Device {
-    entry: ash::Entry,
-    instance: ash::Instance,
-    debug_callback: vk::DebugUtilsMessengerEXT,
-    debug_utils_loader: ash::ext::debug_utils::Instance,
-    surface_loader: ash::khr::surface::Instance,
-    pub device: ash::Device,
-    pub physical_device: vk::PhysicalDevice,
-    pub descriptors: std::mem::ManuallyDrop<Descriptors>,
-    pub allocator: std::mem::ManuallyDrop<Arc<Allocator>>,
-    pub graphics_queue: Queue,
-    pub compute_queue: Queue,
-    pub transfer_queue: Queue,
-    pub swapchain_loader: ash::khr::swapchain::Device,
-    pub debug_utils_device_loader: ash::ext::debug_utils::Device,
-    pub pipeline_layout: std::mem::ManuallyDrop<PipelineLayout>,
-    pub properties: vk::PhysicalDeviceProperties,
-    pub mesh_shader_loader: ash::ext::mesh_shader::Device,
 }
 
 pub use gpu_allocator::MemoryLocation;
@@ -242,6 +100,26 @@ pub struct ImageDescriptor<'a> {
 pub struct BufferInitDescriptor<'a, T> {
     pub name: &'a str,
     pub data: &'a [T],
+}
+
+pub struct Device {
+    entry: ash::Entry,
+    instance: ash::Instance,
+    debug_callback: vk::DebugUtilsMessengerEXT,
+    debug_utils_loader: ash::ext::debug_utils::Instance,
+    surface_loader: ash::khr::surface::Instance,
+    pub device: ash::Device,
+    pub physical_device: vk::PhysicalDevice,
+    pub descriptors: std::mem::ManuallyDrop<Descriptors>,
+    pub allocator: std::mem::ManuallyDrop<Arc<Allocator>>,
+    pub graphics_queue: Queue,
+    pub compute_queue: Queue,
+    pub transfer_queue: Queue,
+    pub swapchain_loader: ash::khr::swapchain::Device,
+    pub debug_utils_device_loader: ash::ext::debug_utils::Device,
+    pub pipeline_layout: std::mem::ManuallyDrop<PipelineLayout>,
+    pub properties: vk::PhysicalDeviceProperties,
+    pub mesh_shader_loader: ash::ext::mesh_shader::Device,
 }
 
 impl Device {
@@ -1399,9 +1277,7 @@ impl Device {
         }
         .unwrap();
 
-        Pipeline {
-            pipeline: WrappedPipeline::from_raw(pipelines[0], &self.device),
-        }
+        Pipeline::from_raw(pipelines[0], &self.device)
     }
 
     pub fn create_compute_pipeline(&self, module: &ShaderModule, entry_point: &CStr) -> Pipeline {
@@ -1420,9 +1296,7 @@ impl Device {
         }
         .unwrap();
 
-        Pipeline {
-            pipeline: WrappedPipeline::from_raw(pipelines[0], &self.device),
-        }
+        Pipeline::from_raw(pipelines[0], &self.device)
     }
 
     fn get_queue(&self, ty: QueueType) -> &Queue {
@@ -1608,7 +1482,7 @@ wrap_raii_struct!(
     vk::ShaderModule,
     ash::Device::destroy_shader_module
 );
-wrap_raii_struct!(WrappedPipeline, vk::Pipeline, ash::Device::destroy_pipeline);
+wrap_raii_struct!(Pipeline, vk::Pipeline, ash::Device::destroy_pipeline);
 wrap_raii_struct!(WrappedBuffer, vk::Buffer, ash::Device::destroy_buffer);
 wrap_raii_struct!(WrappedImage, vk::Image, ash::Device::destroy_image);
 wrap_raii_struct!(ImageView, vk::ImageView, ash::Device::destroy_image_view);
@@ -1679,18 +1553,6 @@ pub struct GraphicsPipelineDepthDesc {
     pub test_enable: bool,
     pub compare_op: vk::CompareOp,
     pub format: vk::Format,
-}
-
-pub struct Pipeline {
-    pub pipeline: WrappedPipeline,
-}
-
-impl std::ops::Deref for Pipeline {
-    type Target = vk::Pipeline;
-
-    fn deref(&self) -> &Self::Target {
-        &self.pipeline
-    }
 }
 
 pub struct Buffer {
@@ -1774,179 +1636,4 @@ impl PendingImageUpload {
     pub fn into_inner(self) -> IndexedImage {
         self.image
     }
-}
-
-pub fn cast_slice<I: Copy, O: Copy>(slice: &[I]) -> &[O] {
-    unsafe {
-        std::slice::from_raw_parts(
-            slice.as_ptr() as *const O,
-            std::mem::size_of_val(slice) / std::mem::size_of::<O>(),
-        )
-    }
-}
-
-pub fn cast_slice_mut<I: Copy, O: Copy>(slice: &mut [I]) -> &mut [O] {
-    unsafe {
-        std::slice::from_raw_parts_mut(
-            slice.as_mut_ptr() as *mut O,
-            std::mem::size_of_val(slice) / std::mem::size_of::<O>(),
-        )
-    }
-}
-
-pub const FRAMES_IN_FLIGHT: usize = 3;
-
-pub struct CurrentFrame<'a> {
-    frame: &'a mut FrameResources,
-    timeline_semaphore: &'a Semaphore,
-}
-
-impl std::ops::Deref for CurrentFrame<'_> {
-    type Target = FrameResources;
-
-    fn deref(&self) -> &Self::Target {
-        self.frame
-    }
-}
-
-impl CurrentFrame<'_> {
-    pub fn submit(&mut self, device: &Device, command_buffers: &[vk::CommandBufferSubmitInfo]) {
-        self.frame.number += FRAMES_IN_FLIGHT as u64;
-        unsafe {
-            device.queue_submit2(
-                *device.graphics_queue,
-                &[vk::SubmitInfo2::default()
-                    .command_buffer_infos(command_buffers)
-                    .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(*self.frame.image_available_semaphore)
-                        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
-                    .signal_semaphore_infos(&[
-                        vk::SemaphoreSubmitInfo::default()
-                            .semaphore(*self.frame.render_finished_semaphore)
-                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
-                        vk::SemaphoreSubmitInfo::default()
-                            .value(self.frame.number)
-                            .semaphore(**self.timeline_semaphore)
-                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
-                    ])],
-                vk::Fence::null(),
-            )
-        }
-        .unwrap();
-    }
-}
-
-pub struct SyncResources {
-    frames: [FrameResources; FRAMES_IN_FLIGHT],
-    timeline_semaphore: Semaphore,
-    pub current_frame: usize,
-}
-
-impl SyncResources {
-    pub fn wait_for_frame(&mut self, device: &Device) -> CurrentFrame {
-        let frame = &mut self.frames[self.current_frame];
-
-        unsafe {
-            device
-                .wait_semaphores(
-                    &vk::SemaphoreWaitInfo::default()
-                        .semaphores(&[*self.timeline_semaphore])
-                        .values(&[frame.number]),
-                    !0,
-                )
-                .unwrap();
-        }
-
-        self.current_frame = (self.current_frame + 1) % FRAMES_IN_FLIGHT;
-
-        CurrentFrame {
-            frame,
-            timeline_semaphore: &self.timeline_semaphore,
-        }
-    }
-}
-
-pub struct FrameResources {
-    pub image_available_semaphore: Semaphore,
-    pub render_finished_semaphore: Semaphore,
-    number: u64,
-}
-
-impl FrameResources {
-    fn new(device: &Device, number: u64) -> Self {
-        Self {
-            number,
-            image_available_semaphore: device.create_semaphore(),
-            render_finished_semaphore: device.create_semaphore(),
-        }
-    }
-}
-
-pub struct Surface {
-    surface: vk::SurfaceKHR,
-    loader: ash::khr::surface::Instance,
-}
-impl Drop for Surface {
-    fn drop(&mut self) {
-        unsafe {
-            self.loader.destroy_surface(self.surface, None);
-        }
-    }
-}
-
-impl std::ops::Deref for Surface {
-    type Target = vk::SurfaceKHR;
-
-    fn deref(&self) -> &Self::Target {
-        &self.surface
-    }
-}
-
-pub struct WrappedSwapchain {
-    swapchain: vk::SwapchainKHR,
-    loader: ash::khr::swapchain::Device,
-}
-impl Drop for WrappedSwapchain {
-    fn drop(&mut self) {
-        unsafe {
-            self.loader.destroy_swapchain(self.swapchain, None);
-        }
-    }
-}
-
-impl std::ops::Deref for WrappedSwapchain {
-    type Target = vk::SwapchainKHR;
-
-    fn deref(&self) -> &Self::Target {
-        &self.swapchain
-    }
-}
-
-pub struct Swapchain {
-    surface: std::mem::ManuallyDrop<Surface>,
-    swapchain: std::mem::ManuallyDrop<WrappedSwapchain>,
-    pub images: Vec<SwapchainImage>,
-    pub create_info: vk::SwapchainCreateInfoKHR<'static>,
-}
-
-impl std::ops::Deref for Swapchain {
-    type Target = vk::SwapchainKHR;
-
-    fn deref(&self) -> &Self::Target {
-        &self.swapchain
-    }
-}
-
-impl Drop for Swapchain {
-    fn drop(&mut self) {
-        unsafe {
-            std::mem::ManuallyDrop::drop(&mut self.swapchain);
-            std::mem::ManuallyDrop::drop(&mut self.surface);
-        }
-    }
-}
-
-pub struct SwapchainImage {
-    pub image: vk::Image,
-    pub view: ImageView,
 }
