@@ -58,28 +58,6 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-#[derive(Clone, Copy)]
-pub enum ImageType {
-    Sampled = 0,
-    Storage = 1,
-}
-
-impl ImageType {
-    fn layout(&self) -> vk::ImageLayout {
-        match self {
-            Self::Sampled => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            Self::Storage => vk::ImageLayout::GENERAL,
-        }
-    }
-
-    fn descriptor_type(&self) -> vk::DescriptorType {
-        match self {
-            Self::Sampled => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            Self::Storage => vk::DescriptorType::STORAGE_IMAGE,
-        }
-    }
-}
-
 pub struct ReloadableShader {
     inner: ShaderModule,
     dirty: Arc<AtomicBool>,
@@ -107,10 +85,10 @@ impl std::ops::Deref for ReloadableShader {
     }
 }
 
-pub struct ReloadablePipeline<T> {
+pub struct ReloadablePipeline<T: 'static> {
     shader: ReloadableShader,
     pipeline: T,
-    create_fn: Box<dyn Fn(&Device, &ShaderModule) -> T>,
+    create_fn: &'static dyn Fn(&Device, &ShaderModule) -> T,
 }
 
 impl<T> ReloadablePipeline<T> {
@@ -121,7 +99,7 @@ impl<T> ReloadablePipeline<T> {
     ) -> Self {
         Self {
             pipeline: (create_fn)(device, &shader),
-            create_fn: Box::new(create_fn),
+            create_fn,
             shader,
         }
     }
@@ -237,16 +215,12 @@ pub struct Device {
     pub mesh_shader_loader: ash::ext::mesh_shader::Device,
 }
 
-pub enum BufferType {
-    Gpu,
-    Upload,
-    Download,
-}
+pub use gpu_allocator::MemoryLocation;
 
 pub struct BufferDescriptor<'a> {
     pub name: &'a str,
     pub size: u64,
-    pub ty: BufferType,
+    pub ty: MemoryLocation,
 }
 
 pub struct SampledImageDescriptor<'a> {
@@ -952,41 +926,56 @@ impl Device {
         }
     }
 
-    pub fn deregister_image(&self, index: u32, ty: ImageType) {
-        let tracker = match ty {
-            ImageType::Sampled => &self.descriptors.sampled_image_count,
-            ImageType::Storage => &self.descriptors.storage_image_count,
-        };
-
-        tracker.lock().remove(index);
+    fn get_image_tracker(&self, is_storage: bool) -> &parking_lot::Mutex<CountTracker> {
+        if is_storage {
+            &self.descriptors.storage_image_count
+        } else {
+            &self.descriptors.sampled_image_count
+        }
     }
 
-    pub fn register_image(&self, view: vk::ImageView, ty: ImageType) -> u32 {
-        let mut image_info = vk::DescriptorImageInfo::default()
-            .image_layout(ty.layout())
-            .image_view(view);
+    pub fn deregister_image(&self, index: u32, is_storage: bool) {
+        self.get_image_tracker(is_storage).lock().remove(index);
+    }
 
-        let tracker = match ty {
-            ImageType::Sampled => {
-                image_info = image_info.sampler(*self.descriptors.linear_sampler);
-                &self.descriptors.sampled_image_count
+    pub fn register_image(&self, view: vk::ImageView, is_storage: bool) -> u32 {
+        let index = self.get_image_tracker(is_storage).lock().add();
+
+        if is_storage {
+            let image_info = vk::DescriptorImageInfo::default()
+                .image_layout(vk::ImageLayout::GENERAL)
+                .image_view(view);
+
+            unsafe {
+                self.device.update_descriptor_sets(
+                    &[vk::WriteDescriptorSet::default()
+                        .dst_set(self.descriptors.set)
+                        .dst_binding(1)
+                        .dst_array_element(index)
+                        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                        .descriptor_count(1)
+                        .image_info(&[image_info])],
+                    &[],
+                );
             }
-            ImageType::Storage => &self.descriptors.storage_image_count,
-        };
+        } else {
+            let image_info = vk::DescriptorImageInfo::default()
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_view(view)
+                .sampler(*self.descriptors.linear_sampler);
 
-        let index = tracker.lock().add();
-
-        unsafe {
-            self.device.update_descriptor_sets(
-                &[vk::WriteDescriptorSet::default()
-                    .dst_set(self.descriptors.set)
-                    .dst_binding(ty as u32)
-                    .dst_array_element(index)
-                    .descriptor_type(ty.descriptor_type())
-                    .descriptor_count(1)
-                    .image_info(&[image_info])],
-                &[],
-            );
+            unsafe {
+                self.device.update_descriptor_sets(
+                    &[vk::WriteDescriptorSet::default()
+                        .dst_set(self.descriptors.set)
+                        .dst_binding(0)
+                        .dst_array_element(index)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .descriptor_count(1)
+                        .image_info(&[image_info])],
+                    &[],
+                );
+            }
         }
 
         index
@@ -1085,7 +1074,7 @@ impl Device {
             self.end_command_buffer(*command_buffer).unwrap();
         }
 
-        let index = self.register_image(*image.view, ImageType::Sampled);
+        let index = self.register_image(*image.view, false);
 
         PendingImageUpload {
             image: IndexedImage { image, index },
@@ -1189,7 +1178,7 @@ impl Device {
         next_accesses: &[vk_sync::AccessType],
     ) {
         vk_sync::cmd::pipeline_barrier(
-            &self,
+            self,
             **command_buffer,
             Some(vk_sync::GlobalBarrier {
                 previous_accesses,
@@ -1225,11 +1214,7 @@ impl Device {
                 name: desc.name,
                 linear: true,
                 requirements: memory_requirements,
-                location: match desc.ty {
-                    BufferType::Upload => gpu_allocator::MemoryLocation::CpuToGpu,
-                    BufferType::Gpu => gpu_allocator::MemoryLocation::GpuOnly,
-                    BufferType::Download => gpu_allocator::MemoryLocation::GpuToCpu,
-                },
+                location: desc.ty,
                 allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
             })
             .unwrap();
@@ -1263,7 +1248,7 @@ impl Device {
                 size: std::mem::size_of_val(desc.data)
                     // Required min size for AMDVLK
                     .next_multiple_of(16) as u64,
-                ty: BufferType::Upload,
+                ty: MemoryLocation::CpuToGpu,
             })
             .unwrap();
 

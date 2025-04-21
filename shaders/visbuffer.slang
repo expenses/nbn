@@ -1,3 +1,5 @@
+import common;
+
 // Copied from http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/.
 //
 // by way of https://github.com/expenses/lighthugger/blob/main/src/shaders/common/vbuffer.glsl
@@ -74,12 +76,6 @@ InterpolateWithDeriv(BarycentricDeriv deriv, float v0, float v1, float v2) {
 
 
 // Helper structs.
-
-struct WithDerivatives<T> {
-    T val;
-    T dx;
-    T dy;
-};
 
 WithDerivatives<float2>
 interpolate(BarycentricDeriv deriv, float2 v0, float2 v1, float2 v2) {

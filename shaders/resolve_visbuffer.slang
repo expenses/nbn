@@ -2,56 +2,14 @@
 [vk::binding(1,0)] __DynamicResource storage_images[];
 
 import common;
-import gltf;
 import models;
 import visbuffer;
-
-func gen_derivatives<T, let N: int>(vector<T, N> val) -> WithDerivatives<vector<T, N>>
-where T: __BuiltinFloatingPointType
-{
-    WithDerivatives<vector<T, N>> out;
-    out.val = val;
-    out.dx = ddx(val);
-    out.dy = ddy(val);
-    return out;
-}
-
-float length_squared(float3 v) {
-    return v.x * v.x + v.y * v.y + v.z * v.z;
-}
-
-// Adapted from http://www.thetenthplanet.de/archives/1180
-float3x3 compute_cotangent_frame(
-    float3 normal,
-    WithDerivatives<float3> position,
-    WithDerivatives<float2> uv
-) {
-    float3 delta_pos_y_perp = cross(position.dy, normal);
-    float3 delta_pos_x_perp = cross(normal, position.dx);
-
-    float3 t = delta_pos_y_perp * uv.dx.x + delta_pos_x_perp * uv.dy.x;
-    float3 b = delta_pos_y_perp * uv.dx.y + delta_pos_x_perp * uv.dy.y;
-
-    float invmax = 1.0 / sqrt(max(length_squared(t), length_squared(b)));
-    return float3x3(t * invmax, b * invmax, normal);
-}
+import uniforms;
 
 struct BlitPC {
-float4x4 mat;
-    uint2 extent;
-    Instance* instances;
-    MeshletInstance* meshlet_instances;
-    uint input_image;
+    UniformBuffer* uniforms;
     uint output_image;
 };
-
-float3 linear_to_srgb_transfer_function(float3 value) {
-    return select(
-        value <= 0.003130,
-        value * 12.92,
-        1.055 * pow(value, 1.0 / 2.4) - 0.055
-    );
-}
 
 float4 sample(uint index, WithDerivatives<float2> uv) {
     return sampled_images[NonUniformResourceIndex(index)].SampleGrad(uv.val, uv.dx, uv.dy);
@@ -60,10 +18,12 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
 [shader("compute")]
 [NumThreads(8, 8, 1)]
 void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constants) {
-    Texture2D<uint> input_image = storage_images[constants.input_image];
+    let uniforms = constants.uniforms;
+
+    Texture2D<uint> input_image = storage_images[uniforms.visbuffer];
     RWTexture2D<float3> output_image = storage_images[constants.output_image];
 
-    if (any(thread > constants.extent)) {
+    if (any(thread > uniforms.extent)) {
         return;
     }
 
@@ -76,9 +36,9 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
 
     let meshlet_instance_index = val >> 7;
     let triangle_index = val & 0b1111111;
-    let meshlet_instance = constants.meshlet_instances[meshlet_instance_index];
+    let meshlet_instance = uniforms.meshlet_instances[meshlet_instance_index];
     let meshlet = meshlet_instance.meshlet;
-    let instance = constants.instances[meshlet_instance.instance_index];
+    let instance = uniforms.instances[meshlet_instance.instance_index];
     let model = instance.model;
     let material = model.material;
 
@@ -88,20 +48,20 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
         model.vertices[meshlet.vertex_offset + model.triangles[meshlet.triangle_offset + triangle_index * 3 + 2]],
     );
 
-    let pos_a = model.positions[indices.x];
-    let pos_b = model.positions[indices.y];
-    let pos_c = model.positions[indices.z];
+    let pos_a = model.positions[indices.x] + instance.position.xyz;
+    let pos_b = model.positions[indices.y] + instance.position.xyz;
+    let pos_c = model.positions[indices.z] + instance.position.xyz;
 
     let ndc =
-        float2(thread) / float2(constants.extent) * 2.0
+        float2(thread) / float2(uniforms.extent) * 2.0
         - 1.0;
 
     let bary = CalcFullBary(
-        mul(constants.mat, float4(pos_a, 1.0)),
-        mul(constants.mat, float4(pos_b, 1.0)),
-        mul(constants.mat, float4(pos_c, 1.0)),
+        mul(uniforms.mat, float4(pos_a, 1.0)),
+        mul(uniforms.mat, float4(pos_b, 1.0)),
+        mul(uniforms.mat, float4(pos_c, 1.0)),
         ndc,
-        constants.extent
+        uniforms.extent
     );
 
     let pos = interpolate(bary, pos_a, pos_b, pos_c);
