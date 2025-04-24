@@ -29,7 +29,7 @@ pub enum QueueType {
 }
 
 pub struct Queue {
-    inner: vk::Queue,
+    pub inner: vk::Queue,
     pub index: u32,
 }
 
@@ -51,7 +51,7 @@ impl std::ops::Deref for Queue {
 }
 
 pub struct Allocator {
-    inner: Mutex<gpu_allocator::vulkan::Allocator>,
+    pub inner: Mutex<gpu_allocator::vulkan::Allocator>,
     deallocation_mutex: parking_lot::Mutex<()>,
     deallocation_notifier: parking_lot::Condvar,
 }

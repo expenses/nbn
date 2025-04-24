@@ -33,6 +33,9 @@ ddsfile = "0.5.2"
 indicatif = "0.17.11"
 ktx2 = "0.4.0"
 zstd = "0.13.3"
+egui-winit-ash-integration = {git = "https://github.com/expenses/egui-winit-ash-integration", branch = "updates"}
+egui = "0.31.1"
+anyhow = "1.0.98"
 
 [workspace]
 members = [".", "gltf-compress", "gltf-meshlets", "meshlet-renderer"]

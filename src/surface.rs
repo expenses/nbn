@@ -135,6 +135,15 @@ pub struct Swapchain {
     pub create_info: vk::SwapchainCreateInfoKHR<'static>,
 }
 
+impl Swapchain {
+    pub fn surface_format(&self) -> vk::SurfaceFormatKHR {
+        vk::SurfaceFormatKHR {
+            format: self.create_info.image_format,
+            color_space: self.create_info.image_color_space,
+        }
+    }
+}
+
 impl std::ops::Deref for Swapchain {
     type Target = vk::SwapchainKHR;
 

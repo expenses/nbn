@@ -1,0 +1,18 @@
+[package]
+name = "meshlet-renderer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nbn = {path = ".."}
+goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
+    "primitive_reader",
+] }
+env_logger = "0.11.6"
+glam = "0.29.2"
+slang_struct = { path = "../experiments/slang-struct-rs" }
+ddsfile = "0.5.2"
+ktx2 = "0.4.0"
+zstd = "0.13.3"
+winit = "0.30.8"
+dolly = "0.6.0"
