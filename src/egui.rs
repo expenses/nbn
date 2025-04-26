@@ -9,6 +9,7 @@ pub struct Renderer {
     buffer: nbn::Buffer,
     temporary_buffers: [Vec<nbn::Buffer>; nbn::FRAMES_IN_FLIGHT],
     temporary_textures: [Vec<nbn::Image>; nbn::FRAMES_IN_FLIGHT],
+    buffer_section_size: u64,
 }
 
 impl Renderer {
@@ -26,6 +27,7 @@ impl Renderer {
         };
 
         Self {
+            buffer_section_size: initial_buffer_size,
             temporary_buffers: Default::default(),
             temporary_textures: Default::default(),
             textures: Default::default(),
@@ -77,7 +79,7 @@ impl Renderer {
             buffer: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "egui buffer",
-                    size: initial_buffer_size,
+                    size: initial_buffer_size * nbn::FRAMES_IN_FLIGHT as u64,
                     ty: nbn::MemoryLocation::CpuToGpu,
                 })
                 .unwrap(),
@@ -169,10 +171,13 @@ impl Renderer {
         clipped_primitives: &[egui::ClippedPrimitive],
         scale_factor: f32,
         extent: [u32; 2],
+        frame_index: usize,
     ) {
-        let mut offset = 0;
-        let buffer_ptr = *self.buffer;
+        let buffer_ptr = *self.buffer + self.buffer_section_size * frame_index as u64;
         let slice: &mut [u8] = self.buffer.try_as_slice_mut().unwrap();
+        let slice = &mut slice[self.buffer_section_size as usize * frame_index
+            ..self.buffer_section_size as usize * (frame_index + 1)];
+        let mut offset = 0;
 
         device.bind_internal_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS);
         device.cmd_bind_pipeline(

@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::c_char;
 use std::ffi::{self, CStr};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -1156,6 +1157,25 @@ impl Device {
         })
     }
 
+    pub fn create_buffer_from_reader<R: Read>(
+        &self,
+        size: u64,
+        name: &str,
+        mut reader: R,
+    ) -> Buffer {
+        let mut buffer = self
+            .create_buffer(BufferDescriptor {
+                name,
+                size,
+                ty: MemoryLocation::CpuToGpu,
+            })
+            .unwrap();
+
+        let slice = buffer.try_as_slice_mut().unwrap();
+        reader.read_exact(&mut slice[..size as usize]).unwrap();
+        buffer
+    }
+
     pub fn create_buffer_with_data<T: Copy>(&self, desc: BufferInitDescriptor<T>) -> Buffer {
         let mut buffer = self
             .create_buffer(BufferDescriptor {
@@ -1329,7 +1349,7 @@ impl Device {
         Pipeline::from_raw(pipelines[0], &self.device)
     }
 
-    fn get_queue(&self, ty: QueueType) -> &Queue {
+    pub fn get_queue(&self, ty: QueueType) -> &Queue {
         match ty {
             QueueType::Graphics => &self.graphics_queue,
             QueueType::Compute => &self.compute_queue,
@@ -1544,7 +1564,7 @@ pub struct CommandBuffer {
     pub command_buffer: vk::CommandBuffer,
     pub pool: CommandPool,
     device: ash::Device,
-    queue_family_index: u32,
+    pub queue_family_index: u32,
 }
 
 impl std::ops::Deref for CommandBuffer {

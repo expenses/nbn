@@ -1,7 +1,7 @@
 use std::{ffi::CStr, io::Read};
 
 use dolly::prelude::YawPitch;
-use nbn::vk;
+use nbn::{ImageDescriptor, SampledImageDescriptor, vk};
 use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
 slang_struct::slang_include!("shaders/models.slang");
@@ -10,11 +10,12 @@ slang_struct::slang_include!("shaders/uniforms.slang");
 
 fn create_image(
     device: &nbn::Device,
+    staging_buffer: &mut StagingBuffer,
     filename: &str,
     _format: vk::Format,
     transition_to: nbn::QueueType,
-) -> nbn::PendingImageUpload {
-    if filename.ends_with(".dds") {
+) -> nbn::IndexedImage {
+    let image = if filename.ends_with(".dds") {
         let dds = ddsfile::Dds::read(std::fs::File::open(filename).unwrap()).unwrap();
 
         let format = match dds.get_dxgi_format().unwrap() {
@@ -23,7 +24,8 @@ fn create_image(
             ddsfile::DxgiFormat::BC5_UNorm => vk::Format::BC5_UNORM_BLOCK,
             other => panic!("{:?}", other),
         };
-        device.create_sampled_image_with_data(
+        staging_buffer.create_sampled_image(
+            device,
             nbn::SampledImageDescriptor {
                 name: filename,
                 extent: vk::Extent3D {
@@ -55,7 +57,8 @@ fn create_image(
             );
         }
 
-        device.create_sampled_image_with_data(
+        staging_buffer.create_sampled_image(
+            device,
             nbn::SampledImageDescriptor {
                 name: filename,
                 extent: vk::Extent3D {
@@ -87,6 +90,11 @@ fn create_image(
             &[0],
         )*/
         panic!()
+    };
+
+    nbn::IndexedImage {
+        index: device.register_image(*image.view, false),
+        image,
     }
 }
 
@@ -177,11 +185,221 @@ struct GltfData {
 }
 
 struct Meshlets {
-    data: Vec<u8>,
+    buffer: nbn::Buffer,
     metadata: Vec<Vec<[u32; 4]>>,
 }
 
-fn read_meshlets_file(path: &std::path::Path) -> std::io::Result<Meshlets> {
+struct StagingBuffer {
+    offset: usize,
+    staging_buffer: nbn::Buffer,
+    command_buffer: nbn::CommandBuffer,
+}
+
+impl StagingBuffer {
+    const SIZE: usize = 64 * 1024 * 1024;
+
+    fn new(device: &nbn::Device) -> Self {
+        let command_buffer = device.create_command_buffer(nbn::QueueType::Transfer);
+        unsafe {
+            device
+                .begin_command_buffer(*command_buffer, &Default::default())
+                .unwrap()
+        };
+
+        Self {
+            offset: 0,
+            staging_buffer: device
+                .create_buffer(nbn::BufferDescriptor {
+                    size: Self::SIZE as _,
+                    name: "staging buffer",
+                    ty: nbn::MemoryLocation::CpuToGpu,
+                })
+                .unwrap(),
+            command_buffer,
+        }
+    }
+
+    fn flush(&mut self, device: &nbn::Device) {
+        dbg!("flushing");
+        let fence = device.create_fence();
+        unsafe {
+            device.end_command_buffer(*self.command_buffer).unwrap();
+            device
+                .queue_submit(
+                    *device.transfer_queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
+                    *fence,
+                )
+                .unwrap();
+
+            device.wait_for_fences(&[*fence], true, !0).unwrap();
+
+            device.reset_command_buffer(&self.command_buffer);
+            device
+                .begin_command_buffer(*self.command_buffer, &Default::default())
+                .unwrap()
+        }
+        self.offset = 0;
+    }
+
+    fn finish(self, device: &nbn::Device) {
+        dbg!("finishing");
+        let fence = device.create_fence();
+        unsafe {
+            device.end_command_buffer(*self.command_buffer).unwrap();
+            device
+                .queue_submit(
+                    *device.transfer_queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
+                    *fence,
+                )
+                .unwrap();
+
+            device.wait_for_fences(&[*fence], true, !0).unwrap();
+        }
+    }
+
+    fn allocate<R: Read>(&mut self, device: &nbn::Device, size: usize, mut reader: R) -> usize {
+        self.offset = self.offset.next_multiple_of(16);
+        if size > Self::SIZE {
+            panic!()
+        } else if size > Self::SIZE - self.offset {
+            self.flush(device);
+        }
+        reader
+            .read_exact(
+                &mut self.staging_buffer.try_as_slice_mut().unwrap()
+                    [self.offset..self.offset + size],
+            )
+            .unwrap();
+        let offset = self.offset;
+        self.offset += size as usize;
+        offset
+    }
+
+    fn create_buffer<R: Read>(
+        &mut self,
+        device: &nbn::Device,
+        name: &str,
+        size: usize,
+        reader: R,
+    ) -> nbn::Buffer {
+        let offset = self.allocate(device, size, reader);
+        let buffer = device
+            .create_buffer(nbn::BufferDescriptor {
+                name,
+                size: size as _,
+                ty: nbn::MemoryLocation::GpuOnly,
+            })
+            .unwrap();
+        unsafe {
+            device.cmd_copy_buffer(
+                *self.command_buffer,
+                *self.staging_buffer.buffer,
+                *buffer.buffer,
+                &[vk::BufferCopy {
+                    src_offset: offset as _,
+                    dst_offset: 0,
+                    size: size as _,
+                }],
+            );
+        }
+        buffer
+    }
+
+    fn create_sampled_image(
+        &mut self,
+        device: &nbn::Device,
+        desc: SampledImageDescriptor,
+        bytes: &[u8],
+        transition_to: nbn::QueueType,
+        lod_offsets: &[u64],
+    ) -> nbn::Image {
+        let offset = self.allocate(device, bytes.len() as _, std::io::Cursor::new(bytes));
+        let mip_levels = lod_offsets.len() as u32;
+        let image = device.create_image(ImageDescriptor {
+            name: desc.name,
+            format: desc.format,
+            extent: desc.extent,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            ty: vk::ImageViewType::TYPE_2D,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels,
+        });
+        unsafe {
+            device.insert_pipeline_barrier(
+                &self.command_buffer,
+                None,
+                &[],
+                &[nbn::ImageBarrier {
+                    previous_accesses: &[],
+                    next_accesses: &[nbn::AccessType::TransferWrite],
+                    previous_layout: nbn::ImageLayout::Optimal,
+                    next_layout: nbn::ImageLayout::Optimal,
+                    range: image.subresource_range,
+                    discard_contents: true,
+                    image: *image.image,
+                    src_queue_family_index: device.transfer_queue.index,
+                    dst_queue_family_index: device.transfer_queue.index,
+                }],
+            );
+
+            let copies: Vec<_> = lod_offsets
+                .iter()
+                .enumerate()
+                .map(|(i, &lod_offset)| {
+                    vk::BufferImageCopy::default()
+                        .buffer_offset(offset as u64 + lod_offset)
+                        .image_extent(vk::Extent3D {
+                            width: image.extent.width >> i,
+                            height: image.extent.height >> i,
+                            depth: image.extent.depth,
+                        })
+                        .image_subresource(
+                            vk::ImageSubresourceLayers::default()
+                                .layer_count(1)
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .mip_level(i as _),
+                        )
+                })
+                .collect();
+
+            device.cmd_copy_buffer_to_image(
+                *self.command_buffer,
+                *self.staging_buffer.buffer,
+                *image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &copies,
+            );
+
+            device.insert_pipeline_barrier(
+                &self.command_buffer,
+                None,
+                &[],
+                &[nbn::ImageBarrier {
+                    previous_accesses: &[nbn::AccessType::TransferWrite],
+                    next_accesses: &[
+                        nbn::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer,
+                    ],
+                    previous_layout: nbn::ImageLayout::Optimal,
+                    next_layout: nbn::ImageLayout::Optimal,
+                    range: image.subresource_range,
+                    discard_contents: false,
+                    image: *image.image,
+                    src_queue_family_index: device.transfer_queue.index,
+                    dst_queue_family_index: device.get_queue(transition_to).index,
+                }],
+            );
+        }
+        image
+    }
+}
+
+fn read_meshlets_file(
+    device: &nbn::Device,
+    staging_buffer: &mut StagingBuffer,
+    path: &std::path::Path,
+) -> std::io::Result<Meshlets> {
     let mut reader = std::fs::File::open(path)?;
     let mut header = [0; 8];
     reader.read_exact(&mut header)?;
@@ -203,11 +421,16 @@ fn read_meshlets_file(path: &std::path::Path) -> std::io::Result<Meshlets> {
     reader.read_exact(&mut val)?;
 
     let len_data = u32::from_le_bytes(val);
-    let mut data = vec![0; len_data as _];
-    reader.read_exact(&mut data)?;
+
+    let buffer = staging_buffer.create_buffer(
+        device,
+        &format!("{} staging buffer", path.display()),
+        len_data as _,
+        &mut reader,
+    );
 
     Ok(Meshlets {
-        data,
+        buffer,
         metadata: meshes,
     })
 }
@@ -232,19 +455,23 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
         }
     }
 
-    let meshlets = read_meshlets_file(&path.with_extension("meshlets")).unwrap();
+    let mut staging_buffer = StagingBuffer::new(device);
+    let meshlets = read_meshlets_file(
+        &device,
+        &mut staging_buffer,
+        &path.with_extension("meshlets"),
+    )
+    .unwrap();
+    let meshlets_buffer = meshlets.buffer;
 
-    let meshlets_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-        name: &format!("{} meshlets buffer", path.display()),
-        data: &meshlets.data,
-    });
-
-    let buffer = std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
-
-    let buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-        name: &format!("{} buffer", path.display()),
-        data: &buffer,
-    });
+    let buffer_file =
+        std::fs::File::open(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
+    let buffer = staging_buffer.create_buffer(
+        device,
+        &format!("{} buffer", path.display()),
+        buffer_file.metadata().unwrap().len() as _,
+        buffer_file,
+    );
 
     let images = gltf
         .images
@@ -253,6 +480,7 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
         .map(|(image, format)| {
             create_image(
                 device,
+                &mut staging_buffer,
                 path.with_file_name(image.uri.as_ref().unwrap())
                     .to_str()
                     .unwrap(),
@@ -261,6 +489,8 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
             )
         })
         .collect::<Vec<_>>();
+
+    staging_buffer.finish(device);
 
     dbg!(images.len());
 
@@ -272,23 +502,23 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
                 .pbr_metallic_roughness
                 .base_color_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
                 .unwrap_or(u32::MAX),
             metallic_roughness_image: material
                 .pbr_metallic_roughness
                 .metallic_roughness_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
                 .unwrap_or(u32::MAX),
             normal_image: material
                 .normal_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
                 .unwrap_or(u32::MAX),
             emissive_image: material
                 .emissive_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
                 .unwrap_or(u32::MAX),
             flags: !matches!(material.alpha_mode, goth_gltf::AlphaMode::Opaque) as u32,
         })
@@ -347,27 +577,6 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
     }
 
     dbg!(&materials.len());
-
-    let transfer_fence = device.create_fence();
-
-    let transfer_command_buffers: Vec<vk::CommandBuffer> =
-        images.iter().map(|image| *image.command_buffer).collect();
-
-    unsafe {
-        device
-            .queue_submit(
-                *device.transfer_queue,
-                &[vk::SubmitInfo::default().command_buffers(&transfer_command_buffers)],
-                *transfer_fence,
-            )
-            .unwrap();
-
-        device
-            .wait_for_fences(&[*transfer_fence], true, !0)
-            .unwrap();
-    }
-
-    let images: Vec<_> = images.into_iter().map(|image| image.into_inner()).collect();
 
     GltfData {
         _images: images,
@@ -463,7 +672,7 @@ impl winit::application::ApplicationHandler for App {
             egui_render: nbn::egui::Renderer::new(
                 &device,
                 swapchain.create_info.image_format,
-                16 * 1024 * 1024,
+                1024 * 1024,
             ),
             egui_winit: egui_winit::State::new(
                 egui::Context::default(),
@@ -579,7 +788,11 @@ impl winit::application::ApplicationHandler for App {
     ) {
         let state = self.window_state.as_mut().unwrap();
 
-        let _ = state.egui_winit.on_window_event(&state.window, &event);
+        let response = state.egui_winit.on_window_event(&state.window, &event);
+
+        if response.consumed {
+            return;
+        }
 
         match event {
             winit::event::WindowEvent::Resized(new_size) => {
@@ -710,7 +923,7 @@ impl winit::application::ApplicationHandler for App {
                 let egui_ctx = state.egui_winit.egui_ctx();
 
                 egui_ctx.begin_pass(raw_input);
-                {
+                if !state.cursor_grabbed {
                     let allocator = device.allocator.inner.read();
                     egui::Window::new("Memory Allocations").show(&egui_ctx, |ui| {
                         state.alloc_vis.render_breakdown_ui(ui, &allocator);
@@ -1014,6 +1227,7 @@ impl winit::application::ApplicationHandler for App {
                         &clipped_meshes,
                         state.window.scale_factor() as _,
                         [extent.width, extent.height],
+                        current_frame,
                     );
                     device.cmd_end_rendering(**command_buffer);
                     nbn::pipeline_barrier(
