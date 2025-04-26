@@ -8,14 +8,16 @@ fn create_pipeline(
 ) -> nbn::Pipeline {
     device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
         vertex: nbn::ShaderDesc {
-            module: &shader,
+            module: shader,
             entry_point: c"vertex",
         },
         fragment: nbn::ShaderDesc {
-            module: &shader,
+            module: shader,
             entry_point: c"fragment",
         },
         color_attachment_formats: &[swapchain.create_info.image_format],
+        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)],
         conservative_rasterization: false,
         depth: Default::default(),
         cull_mode: Default::default(),
@@ -30,7 +32,9 @@ struct WindowState {
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
     pipeline: nbn::Pipeline,
     shader: nbn::ReloadableShader,
-    integration: egui_winit_ash_integration::Integration<Allocator>,
+    egui_winit: egui_winit::State,
+    egui_render: nbn::egui::Renderer,
+    alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
 }
 
 struct App {
@@ -45,32 +49,21 @@ impl winit::application::ApplicationHandler for App {
             .unwrap();
         let device = Arc::new(nbn::Device::new(Some(&window), false));
 
-        let size = window.inner_size();
-
         let swapchain =
             device.create_swapchain(&window, vk::ImageUsageFlags::COLOR_ATTACHMENT, false);
-
-        let integration = egui_winit_ash_integration::Integration::new(
-            event_loop,
-            size.width,
-            size.height,
-            window.scale_factor(),
-            4096,
-            egui::FontDefinitions::default(),
-            egui::Style::default(),
-            (*device).clone(),
-            Allocator(device.clone()),
-            device.graphics_queue.index,
-            device.graphics_queue.inner,
-            device.swapchain_loader.clone(),
-            swapchain.clone(),
-            swapchain.surface_format(),
-        );
 
         let shader = device.load_reloadable_shader("shaders/compiled/triangle.spv");
         let pipeline = create_pipeline(&device, &shader, &swapchain);
 
+        let egui_ctx = egui::Context::default();
+
         self.window_state = Some(WindowState {
+            alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
+            egui_render: nbn::egui::Renderer::new(
+                &device,
+                swapchain.create_info.image_format,
+                16 * 1024 * 1024,
+            ),
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -78,10 +71,17 @@ impl winit::application::ApplicationHandler for App {
             ],
             sync_resources: device.create_sync_resources(),
             swapchain,
-            window,
             pipeline,
             shader,
-            integration,
+            egui_winit: egui_winit::State::new(
+                egui_ctx.clone(),
+                egui::ViewportId::ROOT,
+                event_loop,
+                Some(window.scale_factor() as _),
+                None,
+                None,
+            ),
+            window,
         });
         self.device = Some(device);
     }
@@ -94,7 +94,7 @@ impl winit::application::ApplicationHandler for App {
     ) {
         let state = self.window_state.as_mut().unwrap();
 
-        let _ = state.integration.handle_event(&state.window, &event);
+        let _ = state.egui_winit.on_window_event(&state.window, &event);
 
         match event {
             winit::event::WindowEvent::Resized(new_size) => {
@@ -105,34 +105,46 @@ impl winit::application::ApplicationHandler for App {
                 let device = self.device.as_ref().unwrap();
                 device.recreate_swapchain(&mut state.swapchain);
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
-                state.integration.update_swapchain(
-                    new_size.width,
-                    new_size.height,
-                    *state.swapchain,
-                    state.swapchain.surface_format(),
-                );
             }
             winit::event::WindowEvent::RedrawRequested => {
                 let device = self.device.as_ref().unwrap();
 
-                if state.shader.try_reload(&device) {
+                if state.shader.try_reload(device) {
                     unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
-                    state.pipeline = create_pipeline(&device, &state.shader, &state.swapchain);
+                    state.pipeline = create_pipeline(device, &state.shader, &state.swapchain);
                 }
 
-                state.integration.begin_frame(&state.window);
-                egui::Window::new("wow").show(&state.integration.context(), |ui| {
-                    ui.label("hello world");
-                });
-                let output = state.integration.end_frame(&mut state.window);
+                let raw_input = state.egui_winit.take_egui_input(&state.window);
+
+                let egui_ctx = state.egui_winit.egui_ctx();
+
+                egui_ctx.begin_pass(raw_input);
+                {
+                    let allocator = device.allocator.inner.read();
+                    egui::Window::new("Memory Allocations").show(egui_ctx, |ui| {
+                        state.alloc_vis.render_breakdown_ui(ui, &allocator);
+                    });
+                    egui::Window::new("Memory Blocks").show(egui_ctx, |ui| {
+                        state.alloc_vis.render_memory_block_ui(ui, &allocator);
+                    });
+                    state
+                        .alloc_vis
+                        .render_memory_block_visualization_windows(egui_ctx, &allocator);
+                }
+                let output = egui_ctx.end_pass();
+                state
+                    .egui_winit
+                    .handle_platform_output(&state.window, output.platform_output);
+
                 let clipped_meshes = state
-                    .integration
-                    .context()
+                    .egui_winit
+                    .egui_ctx()
                     .tessellate(output.shapes, output.pixels_per_point);
 
                 unsafe {
-                    let command_buffer =
-                        &state.per_frame_command_buffers[state.sync_resources.current_frame];
+                    let current_frame = state.sync_resources.current_frame;
+                    let command_buffer = &state.per_frame_command_buffers[current_frame];
+
                     let mut frame = state.sync_resources.wait_for_frame(device);
 
                     let (next_image, _suboptimal) = device
@@ -146,15 +158,23 @@ impl winit::application::ApplicationHandler for App {
                         .unwrap();
                     let image = &state.swapchain.images[next_image as usize];
 
-                    device.reset_command_buffer(&command_buffer);
+                    device.reset_command_buffer(command_buffer);
                     device
                         .begin_command_buffer(
                             **command_buffer,
                             &vk::CommandBufferBeginInfo::default(),
                         )
                         .unwrap();
+
+                    state.egui_render.update_textures(
+                        device,
+                        command_buffer,
+                        current_frame,
+                        &output.textures_delta,
+                    );
+
                     vk_sync::cmd::pipeline_barrier(
-                        &device,
+                        device,
                         **command_buffer,
                         None,
                         &[],
@@ -173,10 +193,11 @@ impl winit::application::ApplicationHandler for App {
                                 .aspect_mask(vk::ImageAspectFlags::COLOR),
                         }],
                     );
+                    let extent = state.swapchain.create_info.image_extent;
                     device.begin_rendering(
-                        &command_buffer,
-                        state.swapchain.create_info.image_extent.width,
-                        state.swapchain.create_info.image_extent.height,
+                        command_buffer,
+                        extent.width,
+                        extent.height,
                         &[vk::RenderingAttachmentInfo::default()
                             .image_view(*image.view)
                             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
@@ -194,17 +215,18 @@ impl winit::application::ApplicationHandler for App {
                     );
                     device.cmd_draw(**command_buffer, 3, 1, 0, 0);
 
-                    device.cmd_end_rendering(**command_buffer);
-
-                    state.integration.paint(
-                        **command_buffer,
-                        next_image as _,
-                        clipped_meshes,
-                        output.textures_delta,
+                    state.egui_render.paint(
+                        device,
+                        command_buffer,
+                        &clipped_meshes,
+                        state.window.scale_factor() as _,
+                        [extent.width, extent.height],
                     );
 
-                    /*vk_sync::cmd::pipeline_barrier(
-                        &device,
+                    device.cmd_end_rendering(**command_buffer);
+
+                    vk_sync::cmd::pipeline_barrier(
+                        device,
                         **command_buffer,
                         None,
                         &[],
@@ -222,11 +244,11 @@ impl winit::application::ApplicationHandler for App {
                                 .level_count(1)
                                 .aspect_mask(vk::ImageAspectFlags::COLOR),
                         }],
-                    );*/
+                    );
                     device.end_command_buffer(**command_buffer).unwrap();
 
                     frame.submit(
-                        &device,
+                        device,
                         &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
                     );
                     device
@@ -285,19 +307,4 @@ fn main() {
             window_state: None,
         })
         .unwrap();
-}
-
-struct Allocator(Arc<nbn::Device>);
-
-impl egui_winit_ash_integration::AllocatorTrait for Allocator {
-    type Allocation = gpu_allocator::vulkan::Allocation;
-    type AllocationCreateInfo = gpu_allocator::vulkan::AllocationCreateDesc<'static>;
-
-    fn allocate(&self, desc: Self::AllocationCreateInfo) -> anyhow::Result<Self::Allocation> {
-        Ok(self.0.allocator.inner.lock().allocate(&desc)?)
-    }
-
-    fn free(&self, allocation: Self::Allocation) -> anyhow::Result<()> {
-        Ok(self.0.allocator.inner.lock().free(allocation)?)
-    }
 }

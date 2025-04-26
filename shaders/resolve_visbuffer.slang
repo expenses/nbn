@@ -103,5 +103,5 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
     factor = max(factor, .1);
 
     let output = factor * base_colour;
-    output_image.Store(thread, linear_to_srgb_transfer_function(output));
+    output_image.Store(thread, srgb_lin2encoded(output));
 }

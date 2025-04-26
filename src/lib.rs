@@ -1,6 +1,6 @@
 use ash::prelude::VkResult;
 pub use ash::vk;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::c_char;
@@ -14,6 +14,7 @@ pub use vk_sync::{
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
+pub mod egui;
 mod hot_reloading;
 mod surface;
 mod util;
@@ -51,8 +52,8 @@ impl std::ops::Deref for Queue {
 }
 
 pub struct Allocator {
-    pub inner: Mutex<gpu_allocator::vulkan::Allocator>,
-    deallocation_mutex: parking_lot::Mutex<()>,
+    pub inner: RwLock<gpu_allocator::vulkan::Allocator>,
+    deallocation_mutex: Mutex<()>,
     deallocation_notifier: parking_lot::Condvar,
 }
 
@@ -63,7 +64,7 @@ impl Allocator {
     }
 
     pub fn generate_report(&self) -> gpu_allocator::AllocatorReport {
-        self.inner.lock().generate_report()
+        self.inner.read().generate_report()
     }
 }
 
@@ -516,7 +517,7 @@ impl Device {
             transfer_queue: Queue::new(&device, transfer_queue_family_index),
             device,
             allocator: std::mem::ManuallyDrop::new(Arc::new(Allocator {
-                inner: Mutex::new(allocator),
+                inner: RwLock::new(allocator),
                 deallocation_notifier: Default::default(),
                 deallocation_mutex: Default::default(),
             })),
@@ -759,7 +760,7 @@ impl Device {
 
         let allocation = allocator
             .inner
-            .lock()
+            .write()
             .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
                 name: desc.name,
                 linear: false,
@@ -819,7 +820,12 @@ impl Device {
         self.get_image_tracker(is_storage).lock().remove(index);
     }
 
-    pub fn register_image(&self, view: vk::ImageView, is_storage: bool) -> u32 {
+    pub fn register_image_with_sampler(
+        &self,
+        view: vk::ImageView,
+        sampler: &Sampler,
+        is_storage: bool,
+    ) -> u32 {
         let index = self.get_image_tracker(is_storage).lock().add();
 
         if is_storage {
@@ -843,7 +849,7 @@ impl Device {
             let image_info = vk::DescriptorImageInfo::default()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image_view(view)
-                .sampler(*self.descriptors.linear_sampler);
+                .sampler(**sampler);
 
             unsafe {
                 self.device.update_descriptor_sets(
@@ -862,13 +868,18 @@ impl Device {
         index
     }
 
-    pub fn create_sampled_image_with_data(
+    pub fn register_image(&self, view: vk::ImageView, is_storage: bool) -> u32 {
+        self.register_image_with_sampler(view, &self.descriptors.linear_sampler, is_storage)
+    }
+
+    pub fn create_image_with_data_in_command_buffer(
         &self,
         desc: SampledImageDescriptor,
         bytes: &[u8],
         transition_to: QueueType,
         lod_offsets: &[u64],
-    ) -> PendingImageUpload {
+        command_buffer: &CommandBuffer,
+    ) -> (Buffer, Image) {
         let mip_levels = lod_offsets.len() as u32;
 
         let buffer = self.create_buffer_with_data(BufferInitDescriptor {
@@ -884,14 +895,10 @@ impl Device {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });
-        let command_buffer = self.create_command_buffer(QueueType::Transfer);
 
         unsafe {
-            self.begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
-                .unwrap();
-
             self.insert_pipeline_barrier(
-                &command_buffer,
+                command_buffer,
                 None,
                 &[],
                 &[ImageBarrier {
@@ -902,8 +909,8 @@ impl Device {
                     range: image.subresource_range,
                     discard_contents: true,
                     image: *image.image,
-                    src_queue_family_index: self.transfer_queue.index,
-                    dst_queue_family_index: self.transfer_queue.index,
+                    src_queue_family_index: command_buffer.queue_family_index,
+                    dst_queue_family_index: command_buffer.queue_family_index,
                 }],
             );
 
@@ -928,7 +935,7 @@ impl Device {
                 .collect();
 
             self.cmd_copy_buffer_to_image(
-                *command_buffer,
+                **command_buffer,
                 *buffer.buffer,
                 *image.image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -936,7 +943,7 @@ impl Device {
             );
 
             self.insert_pipeline_barrier(
-                &command_buffer,
+                command_buffer,
                 None,
                 &[],
                 &[ImageBarrier {
@@ -947,11 +954,38 @@ impl Device {
                     range: image.subresource_range,
                     discard_contents: false,
                     image: *image.image,
-                    src_queue_family_index: self.transfer_queue.index,
+                    src_queue_family_index: command_buffer.queue_family_index,
                     dst_queue_family_index: self.get_queue(transition_to).index,
                 }],
             );
+        }
 
+        (buffer, image)
+    }
+
+    pub fn create_sampled_image_with_data(
+        &self,
+        desc: SampledImageDescriptor,
+        bytes: &[u8],
+        transition_to: QueueType,
+        lod_offsets: &[u64],
+    ) -> PendingImageUpload {
+        let command_buffer = self.create_command_buffer(QueueType::Transfer);
+
+        unsafe {
+            self.begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
+                .unwrap();
+        }
+
+        let (buffer, image) = self.create_image_with_data_in_command_buffer(
+            desc,
+            bytes,
+            transition_to,
+            lod_offsets,
+            &command_buffer,
+        );
+
+        unsafe {
             self.end_command_buffer(*command_buffer).unwrap();
         }
 
@@ -1090,7 +1124,7 @@ impl Device {
 
         let allocation = allocator
             .inner
-            .lock()
+            .write()
             .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
                 name: desc.name,
                 linear: true,
@@ -1211,13 +1245,6 @@ impl Device {
                     vk::ConservativeRasterizationModeEXT::DISABLED
                 });
 
-        let blend_attachments = if !desc.color_attachment_formats.is_empty() {
-            &[vk::PipelineColorBlendAttachmentState::default()
-                .color_write_mask(vk::ColorComponentFlags::RGBA)][..]
-        } else {
-            &[]
-        };
-
         let pipelines = unsafe {
             self.device.create_graphics_pipelines(
                 vk::PipelineCache::null(),
@@ -1265,7 +1292,7 @@ impl Device {
                     )
                     .color_blend_state(
                         &vk::PipelineColorBlendStateCreateInfo::default()
-                            .attachments(blend_attachments),
+                            .attachments(desc.blend_attachments),
                     )
                     .depth_stencil_state(
                         &vk::PipelineDepthStencilStateCreateInfo::default()
@@ -1338,6 +1365,7 @@ impl Device {
             command_buffer: command_buffers[0],
             device: self.device.clone(),
             pool,
+            queue_family_index,
         }
     }
 
@@ -1428,7 +1456,7 @@ impl Drop for Device {
     fn drop(&mut self) {
         self.allocator
             .inner
-            .lock()
+            .read()
             .report_memory_leaks(log::Level::Error);
 
         unsafe {
@@ -1516,6 +1544,7 @@ pub struct CommandBuffer {
     pub command_buffer: vk::CommandBuffer,
     pub pool: CommandPool,
     device: ash::Device,
+    queue_family_index: u32,
 }
 
 impl std::ops::Deref for CommandBuffer {
@@ -1544,6 +1573,7 @@ pub struct GraphicsPipelineDesc<'a> {
     pub vertex: ShaderDesc<'a>,
     pub fragment: ShaderDesc<'a>,
     pub color_attachment_formats: &'a [vk::Format],
+    pub blend_attachments: &'a [vk::PipelineColorBlendAttachmentState],
     pub conservative_rasterization: bool,
     pub cull_mode: vk::CullModeFlags,
     pub depth: GraphicsPipelineDepthDesc,
@@ -1586,7 +1616,7 @@ impl std::ops::Deref for Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         let allocation = std::mem::take(&mut self.allocation);
-        self.allocator.inner.lock().free(allocation).unwrap();
+        self.allocator.inner.write().free(allocation).unwrap();
         self.allocator.deallocation_notifier.notify_all();
     }
 }
@@ -1624,7 +1654,7 @@ impl std::ops::Deref for Image {
 impl Drop for Image {
     fn drop(&mut self) {
         let allocation = std::mem::take(&mut self.allocation);
-        self.allocator.inner.lock().free(allocation).unwrap();
+        self.allocator.inner.write().free(allocation).unwrap();
         self.allocator.deallocation_notifier.notify_all();
     }
 }

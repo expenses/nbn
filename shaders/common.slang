@@ -8,11 +8,19 @@ float3 colour_from_val(uint val) {
     );
 }
 
-float3 linear_to_srgb_transfer_function(float3 value) {
+float3 srgb_lin2encoded(float3 value) {
     return select(
         value <= 0.003130,
         value * 12.92,
         1.055 * pow(value, 1.0 / 2.4) - 0.055
+    );
+}
+
+float3 srgb_encoded2lin(float3 value) {
+    return select(
+        value <= 0.04045,
+        value / 12.92,
+        pow((value + 0.055) / 1.055, 2.4)
     );
 }
 

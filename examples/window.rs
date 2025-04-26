@@ -7,13 +7,15 @@ fn create_pipeline(
 ) -> nbn::Pipeline {
     device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
         vertex: nbn::ShaderDesc {
-            module: &shader,
+            module: shader,
             entry_point: c"vertex",
         },
         fragment: nbn::ShaderDesc {
-            module: &shader,
+            module: shader,
             entry_point: c"fragment",
         },
+        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)],
         color_attachment_formats: &[swapchain.create_info.image_format],
         conservative_rasterization: false,
         depth: Default::default(),
@@ -84,9 +86,9 @@ impl winit::application::ApplicationHandler for App {
                 let device = self.device.as_ref().unwrap();
 
                 if let Some(state) = self.window_state.as_mut() {
-                    if state.shader.try_reload(&device) {
+                    if state.shader.try_reload(device) {
                         unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
-                        state.pipeline = create_pipeline(&device, &state.shader, &state.swapchain);
+                        state.pipeline = create_pipeline(device, &state.shader, &state.swapchain);
                     }
 
                     unsafe {
@@ -105,7 +107,7 @@ impl winit::application::ApplicationHandler for App {
                             .unwrap();
                         let image = &state.swapchain.images[next_image as usize];
 
-                        device.reset_command_buffer(&command_buffer);
+                        device.reset_command_buffer(command_buffer);
                         device
                             .begin_command_buffer(
                                 **command_buffer,
@@ -113,7 +115,7 @@ impl winit::application::ApplicationHandler for App {
                             )
                             .unwrap();
                         vk_sync::cmd::pipeline_barrier(
-                            &device,
+                            device,
                             **command_buffer,
                             None,
                             &[],
@@ -133,7 +135,7 @@ impl winit::application::ApplicationHandler for App {
                             }],
                         );
                         device.begin_rendering(
-                            &command_buffer,
+                            command_buffer,
                             state.swapchain.create_info.image_extent.width,
                             state.swapchain.create_info.image_extent.height,
                             &[vk::RenderingAttachmentInfo::default()
@@ -155,7 +157,7 @@ impl winit::application::ApplicationHandler for App {
 
                         device.cmd_end_rendering(**command_buffer);
                         vk_sync::cmd::pipeline_barrier(
-                            &device,
+                            device,
                             **command_buffer,
                             None,
                             &[],
@@ -177,7 +179,7 @@ impl winit::application::ApplicationHandler for App {
                         device.end_command_buffer(**command_buffer).unwrap();
 
                         frame.submit(
-                            &device,
+                            device,
                             &[vk::CommandBufferSubmitInfo::default()
                                 .command_buffer(**command_buffer)],
                         );

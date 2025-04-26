@@ -2,11 +2,7 @@ use std::{ffi::CStr, io::Read};
 
 use dolly::prelude::YawPitch;
 use nbn::vk;
-use winit::{
-    event::{ElementState, KeyEvent},
-    keyboard::{KeyCode, PhysicalKey},
-    window::CursorGrabMode,
-};
+use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
 slang_struct::slang_include!("shaders/models.slang");
 slang_struct::slang_include!("shaders/culling.slang");
@@ -106,6 +102,8 @@ fn create_mesh_pipeline(device: &nbn::Device, shader: &nbn::ShaderModule) -> Mes
                 entry_point: fragment,
             },
             color_attachment_formats: &[vk::Format::R32_UINT],
+            blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+                .color_write_mask(vk::ColorComponentFlags::RGBA)],
             conservative_rasterization: false,
             depth: nbn::GraphicsPipelineDepthDesc {
                 write_enable: true,
@@ -166,6 +164,9 @@ struct WindowState {
     camera_rig: dolly::rig::CameraRig,
     keyboard: KeyboardState,
     cursor_grabbed: bool,
+    egui_winit: egui_winit::State,
+    egui_render: nbn::egui::Renderer,
+    alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
 }
 
 struct GltfData {
@@ -429,7 +430,11 @@ impl winit::application::ApplicationHandler for App {
             }
         }
 
-        let swapchain = device.create_swapchain(&window, vk::ImageUsageFlags::STORAGE, true);
+        let swapchain = device.create_swapchain(
+            &window,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            true,
+        );
 
         let size = window.inner_size();
 
@@ -454,6 +459,20 @@ impl winit::application::ApplicationHandler for App {
             .build();
 
         self.window_state = Some(WindowState {
+            alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
+            egui_render: nbn::egui::Renderer::new(
+                &device,
+                swapchain.create_info.image_format,
+                16 * 1024 * 1024,
+            ),
+            egui_winit: egui_winit::State::new(
+                egui::Context::default(),
+                egui::ViewportId::ROOT,
+                event_loop,
+                Some(window.scale_factor() as _),
+                None,
+                None,
+            ),
             camera_rig,
             cursor_grabbed: false,
             prefix_sum_values: device
@@ -558,20 +577,22 @@ impl winit::application::ApplicationHandler for App {
         _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
+        let state = self.window_state.as_mut().unwrap();
+
+        let _ = state.egui_winit.on_window_event(&state.window, &event);
+
         match event {
             winit::event::WindowEvent::Resized(new_size) => {
-                let window_state = self.window_state.as_mut().unwrap();
-
-                window_state.swapchain.create_info.image_extent = vk::Extent2D {
+                state.swapchain.create_info.image_extent = vk::Extent2D {
                     width: new_size.width,
                     height: new_size.height,
                 };
 
                 let device = self.device.as_ref().unwrap();
 
-                device.recreate_swapchain(&mut window_state.swapchain);
+                device.recreate_swapchain(&mut state.swapchain);
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
-                window_state.depth_buffer = device.create_image(nbn::ImageDescriptor {
+                state.depth_buffer = device.create_image(nbn::ImageDescriptor {
                     name: "depth_buffer",
                     format: vk::Format::D32_SFLOAT,
                     extent: vk::Extent3D {
@@ -584,8 +605,8 @@ impl winit::application::ApplicationHandler for App {
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     mip_levels: 1,
                 });
-                device.deregister_image(window_state.visbuffer.index, true);
-                window_state.visbuffer.image = device.create_image(nbn::ImageDescriptor {
+                device.deregister_image(state.visbuffer.index, true);
+                state.visbuffer.image = device.create_image(nbn::ImageDescriptor {
                     name: "visbuffer",
                     format: vk::Format::R32_UINT,
                     extent: vk::Extent3D {
@@ -599,14 +620,13 @@ impl winit::application::ApplicationHandler for App {
                     mip_levels: 1,
                 });
 
-                window_state.visbuffer.index =
-                    device.register_image(*window_state.visbuffer.image.view, true);
+                state.visbuffer.index = device.register_image(*state.visbuffer.image.view, true);
 
-                for index in window_state.swapchain_image_heap_indices.drain(..) {
+                for index in state.swapchain_image_heap_indices.drain(..) {
                     device.deregister_image(index, true);
                 }
-                window_state.swapchain_image_heap_indices.extend(
-                    window_state
+                state.swapchain_image_heap_indices.extend(
+                    state
                         .swapchain
                         .images
                         .iter()
@@ -616,329 +636,305 @@ impl winit::application::ApplicationHandler for App {
             winit::event::WindowEvent::RedrawRequested => {
                 let device = self.device.as_ref().unwrap();
 
-                if let Some(state) = self.window_state.as_mut() {
-                    state.blit_pipeline.refresh(device);
-                    state.mesh_pipelines.refresh(device);
-                    state.compute_pipelines.refresh(device);
+                state.blit_pipeline.refresh(device);
+                state.mesh_pipelines.refresh(device);
+                state.compute_pipelines.refresh(device);
 
-                    let forward = state.keyboard.forwards as i32 - state.keyboard.backwards as i32;
-                    let right = state.keyboard.right as i32 - state.keyboard.left as i32;
+                let forward = state.keyboard.forwards as i32 - state.keyboard.backwards as i32;
+                let right = state.keyboard.right as i32 - state.keyboard.left as i32;
 
-                    let prev_transform = state.camera_rig.final_transform;
+                let prev_transform = state.camera_rig.final_transform;
 
+                state
+                    .camera_rig
+                    .driver_mut::<dolly::drivers::Position>()
+                    .translate(
+                        ((glam::Vec3::from_array(prev_transform.forward()) * forward as f32
+                            + glam::Vec3::from_array(prev_transform.right()) * right as f32)
+                            * 100.0)
+                            .to_array(),
+                    );
+
+                let transform = state.camera_rig.update(1.0 / 60.0);
+                let camera_position = glam::Vec3::from_array(transform.position.into());
+
+                let extent = state.swapchain.create_info.image_extent;
+
+                let scale = 500.0;
+                let projection = perspective_reversed_infinite_z_vk(
+                    45.0_f32.to_radians(),
+                    extent.width as f32 / extent.height as f32,
+                    0.0001,
+                );
+                let start_camera_pos = glam::Vec3::new(scale, scale, 0.0);
+                let camera_pos = glam::Vec3::from_array(transform.position.into());
+                let view = glam::Mat4::look_to_rh(
+                    camera_pos,
+                    glam::Vec3::from_array(transform.forward()),
+                    glam::Vec3::Y,
+                );
+                let mat = projection * view;
+
+                let uniforms = state
+                    .combined_uniform_buffer
+                    .try_as_slice_mut::<UniformBuffer>()
+                    .unwrap();
+
+                let frustum_x =
+                    (projection.row(3).truncate() + projection.row(0).truncate()).normalize();
+                let frustum_y =
+                    (projection.row(3).truncate() + projection.row(1).truncate()).normalize();
+
+                uniforms[state.sync_resources.current_frame] = UniformBuffer {
+                    mat: mat.to_cols_array(),
+                    view: view.to_cols_array(),
+                    perspective: projection.to_cols_array(),
+                    near_plane: 0.0001,
+                    instances: *state.instances,
+                    meshlet_instances: *state.meshlet_instances,
+                    extent: [extent.width, extent.height],
+                    num_instances: state.num_instances,
+                    visbuffer: state.visbuffer.index,
+                    dispatches: *state.dispatches,
+                    models: *state.models,
+                    camera_position: camera_pos.into(),
+                    frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
+                };
+
+                let uniforms_ptr = *state.combined_uniform_buffer
+                    + (std::mem::size_of::<UniformBuffer>() * state.sync_resources.current_frame)
+                        as u64;
+
+                let raw_input = state.egui_winit.take_egui_input(&state.window);
+
+                let egui_ctx = state.egui_winit.egui_ctx();
+
+                egui_ctx.begin_pass(raw_input);
+                {
+                    let allocator = device.allocator.inner.read();
+                    egui::Window::new("Memory Allocations").show(&egui_ctx, |ui| {
+                        state.alloc_vis.render_breakdown_ui(ui, &allocator);
+                    });
+                    egui::Window::new("Memory Blocks").show(&egui_ctx, |ui| {
+                        state.alloc_vis.render_memory_block_ui(ui, &allocator);
+                    });
                     state
-                        .camera_rig
-                        .driver_mut::<dolly::drivers::Position>()
-                        .translate(
-                            ((glam::Vec3::from_array(prev_transform.forward()) * forward as f32
-                                + glam::Vec3::from_array(prev_transform.right()) * right as f32)
-                                * 100.0)
-                                .to_array(),
-                        );
+                        .alloc_vis
+                        .render_memory_block_visualization_windows(&egui_ctx, &allocator);
+                }
+                let output = egui_ctx.end_pass();
+                state
+                    .egui_winit
+                    .handle_platform_output(&state.window, output.platform_output);
 
-                    let transform = state.camera_rig.update(1.0 / 60.0);
-                    let camera_position = glam::Vec3::from_array(transform.position.into());
+                let clipped_meshes = state
+                    .egui_winit
+                    .egui_ctx()
+                    .tessellate(output.shapes, output.pixels_per_point);
 
-                    let extent = state.swapchain.create_info.image_extent;
+                let current_frame = state.sync_resources.current_frame;
 
-                    let scale = 500.0;
-                    let projection = perspective_reversed_infinite_z_vk(
-                        45.0_f32.to_radians(),
-                        extent.width as f32 / extent.height as f32,
-                        0.0001,
-                    );
-                    let start_camera_pos = glam::Vec3::new(scale, scale, 0.0);
-                    let camera_pos = glam::Vec3::from_array(transform.position.into());
-                    let view = glam::Mat4::look_to_rh(
-                        camera_pos,
-                        glam::Vec3::from_array(transform.forward()),
-                        glam::Vec3::Y,
-                    );
-                    let mat = projection * view;
+                unsafe {
+                    let command_buffer = &state.per_frame_command_buffers[current_frame];
+                    let mut frame = state.sync_resources.wait_for_frame(device);
 
-                    let uniforms = state
-                        .combined_uniform_buffer
-                        .try_as_slice_mut::<UniformBuffer>()
+                    let (next_image, _suboptimal) = device
+                        .swapchain_loader
+                        .acquire_next_image(
+                            *state.swapchain,
+                            !0,
+                            *frame.image_available_semaphore,
+                            vk::Fence::null(),
+                        )
+                        .unwrap();
+                    let image = &state.swapchain.images[next_image as usize];
+
+                    device.reset_command_buffer(command_buffer);
+                    device
+                        .begin_command_buffer(
+                            **command_buffer,
+                            &vk::CommandBufferBeginInfo::default(),
+                        )
                         .unwrap();
 
-                    let frustum_x =
-                        (projection.row(3).truncate() + projection.row(0).truncate()).normalize();
-                    let frustum_y =
-                        (projection.row(3).truncate() + projection.row(1).truncate()).normalize();
+                    state.egui_render.update_textures(
+                        device,
+                        command_buffer,
+                        current_frame,
+                        &output.textures_delta,
+                    );
 
-                    uniforms[state.sync_resources.current_frame] = UniformBuffer {
-                        mat: mat.to_cols_array(),
-                        view: view.to_cols_array(),
-                        perspective: projection.to_cols_array(),
-                        near_plane: 0.0001,
-                        instances: *state.instances,
-                        meshlet_instances: *state.meshlet_instances,
-                        extent: [extent.width, extent.height],
-                        num_instances: state.num_instances,
-                        visbuffer: state.visbuffer.index,
-                        dispatches: *state.dispatches,
-                        models: *state.models,
-                        camera_position: camera_pos.into(),
-                        frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
-                    };
+                    device.bind_internal_descriptor_sets_to_all(command_buffer);
 
-                    let uniforms_ptr = *state.combined_uniform_buffer
-                        + (std::mem::size_of::<UniformBuffer>()
-                            * state.sync_resources.current_frame) as u64;
+                    device.cmd_bind_pipeline(
+                        **command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *state.compute_pipelines.reset_buffers,
+                    );
+                    device.push_constants(command_buffer, *state.dispatches);
+                    device.cmd_dispatch(**command_buffer, 1, 1, 1);
 
-                    unsafe {
-                        let command_buffer =
-                            &state.per_frame_command_buffers[state.sync_resources.current_frame];
-                        let mut frame = state.sync_resources.wait_for_frame(device);
+                    device.insert_global_barrier(
+                        command_buffer,
+                        &[nbn::AccessType::ComputeShaderWrite],
+                        &[nbn::AccessType::ComputeShaderReadOther],
+                    );
 
-                        let (next_image, _suboptimal) = device
-                            .swapchain_loader
-                            .acquire_next_image(
-                                *state.swapchain,
-                                !0,
-                                *frame.image_available_semaphore,
-                                vk::Fence::null(),
-                            )
-                            .unwrap();
-                        let image = &state.swapchain.images[next_image as usize];
+                    device.cmd_bind_pipeline(
+                        **command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *state.compute_pipelines.generate_meshlet_prefix_sums,
+                    );
+                    device.push_constants(
+                        command_buffer,
+                        (
+                            uniforms_ptr,
+                            *state.prefix_sum_values,
+                            *state.prefix_sum_values + (8 * 5_000),
+                        ),
+                    );
+                    device.cmd_dispatch(**command_buffer, state.num_instances.div_ceil(64), 1, 1);
 
-                        device.reset_command_buffer(command_buffer);
-                        device
-                            .begin_command_buffer(
-                                **command_buffer,
-                                &vk::CommandBufferBeginInfo::default(),
-                            )
-                            .unwrap();
+                    device.insert_global_barrier(
+                        command_buffer,
+                        &[nbn::AccessType::ComputeShaderWrite],
+                        &[nbn::AccessType::ComputeShaderReadOther],
+                    );
 
-                        device.bind_internal_descriptor_sets_to_all(command_buffer);
+                    device.cmd_bind_pipeline(
+                        **command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *state.compute_pipelines.write_meshlet_instances,
+                    );
+                    device.push_constants(
+                        command_buffer,
+                        (uniforms_ptr, *state.prefix_sum_values, 0_u32),
+                    );
+                    device.cmd_dispatch_indirect(
+                        **command_buffer,
+                        *state.dispatches.buffer,
+                        4 * 3 * 2,
+                    );
+                    device.push_constants(
+                        command_buffer,
+                        (uniforms_ptr, *state.prefix_sum_values + (8 * 5_000), 1_u32),
+                    );
+                    device.cmd_dispatch_indirect(
+                        **command_buffer,
+                        *state.dispatches.buffer,
+                        4 * 3 * 3,
+                    );
 
-                        device.cmd_bind_pipeline(
-                            **command_buffer,
-                            vk::PipelineBindPoint::COMPUTE,
-                            *state.compute_pipelines.reset_buffers,
-                        );
-                        device.push_constants(command_buffer, *state.dispatches);
-                        device.cmd_dispatch(**command_buffer, 1, 1, 1);
-
-                        device.insert_global_barrier(
-                            command_buffer,
-                            &[nbn::AccessType::ComputeShaderWrite],
-                            &[nbn::AccessType::ComputeShaderReadOther],
-                        );
-
-                        device.cmd_bind_pipeline(
-                            **command_buffer,
-                            vk::PipelineBindPoint::COMPUTE,
-                            *state.compute_pipelines.generate_meshlet_prefix_sums,
-                        );
-                        device.push_constants(
-                            command_buffer,
-                            (
-                                uniforms_ptr,
-                                *state.prefix_sum_values,
-                                *state.prefix_sum_values + (8 * 5_000),
-                            ),
-                        );
-                        device.cmd_dispatch(
-                            **command_buffer,
-                            state.num_instances.div_ceil(64),
-                            1,
-                            1,
-                        );
-
-                        device.insert_global_barrier(
-                            command_buffer,
-                            &[nbn::AccessType::ComputeShaderWrite],
-                            &[nbn::AccessType::ComputeShaderReadOther],
-                        );
-
-                        device.cmd_bind_pipeline(
-                            **command_buffer,
-                            vk::PipelineBindPoint::COMPUTE,
-                            *state.compute_pipelines.write_meshlet_instances,
-                        );
-                        device.push_constants(
-                            command_buffer,
-                            (uniforms_ptr, *state.prefix_sum_values, 0_u32),
-                        );
-                        device.cmd_dispatch_indirect(
-                            **command_buffer,
-                            *state.dispatches.buffer,
-                            4 * 3 * 2,
-                        );
-                        device.push_constants(
-                            command_buffer,
-                            (uniforms_ptr, *state.prefix_sum_values + (8 * 5_000), 1_u32),
-                        );
-                        device.cmd_dispatch_indirect(
-                            **command_buffer,
-                            *state.dispatches.buffer,
-                            4 * 3 * 3,
-                        );
-
-                        nbn::pipeline_barrier(
-                            device,
-                            **command_buffer,
-                            Some(nbn::GlobalBarrier {
-                                previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
-                                next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
-                            }),
-                            &[],
-                            &[
-                                nbn::ImageBarrier {
-                                    previous_accesses: &[],
-                                    next_accesses: &[nbn::AccessType::DepthStencilAttachmentWrite],
-                                    previous_layout: nbn::ImageLayout::Optimal,
-                                    next_layout: nbn::ImageLayout::Optimal,
-                                    discard_contents: true,
-                                    src_queue_family_index: device.graphics_queue.index,
-                                    dst_queue_family_index: device.graphics_queue.index,
-                                    image: **state.depth_buffer,
-                                    range: vk::ImageSubresourceRange::default()
-                                        .layer_count(1)
-                                        .level_count(1)
-                                        .aspect_mask(vk::ImageAspectFlags::DEPTH),
-                                },
-                                nbn::ImageBarrier {
-                                    previous_accesses: &[],
-                                    next_accesses: &[nbn::AccessType::ColorAttachmentWrite],
-                                    previous_layout: nbn::ImageLayout::Optimal,
-                                    next_layout: nbn::ImageLayout::Optimal,
-                                    discard_contents: true,
-                                    src_queue_family_index: device.graphics_queue.index,
-                                    dst_queue_family_index: device.graphics_queue.index,
-                                    image: **state.visbuffer.image,
-                                    range: vk::ImageSubresourceRange::default()
-                                        .layer_count(1)
-                                        .level_count(1)
-                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
-                                },
-                            ],
-                        );
-
-                        device.begin_rendering(
-                            command_buffer,
-                            extent.width,
-                            extent.height,
-                            &[vk::RenderingAttachmentInfo::default()
-                                .image_view(*state.visbuffer.image.view)
-                                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                                .clear_value(vk::ClearValue {
-                                    color: vk::ClearColorValue {
-                                        uint32: [u32::MAX; 4],
-                                    },
-                                })
-                                .load_op(vk::AttachmentLoadOp::CLEAR)
-                                .store_op(vk::AttachmentStoreOp::STORE)],
-                            Some(
-                                &vk::RenderingAttachmentInfo::default()
-                                    .image_view(*state.depth_buffer.view)
-                                    .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
-                                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                                    .store_op(vk::AttachmentStoreOp::STORE)
-                                    .clear_value(vk::ClearValue {
-                                        depth_stencil: vk::ClearDepthStencilValue {
-                                            depth: 0.0,
-                                            stencil: 0,
-                                        },
-                                    }),
-                            ),
-                        );
-
-                        device.cmd_bind_pipeline(
-                            **command_buffer,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            *state.mesh_pipelines.opaque,
-                        );
-                        device.push_constants(command_buffer, (uniforms_ptr, 0_u32));
-                        device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
-                            **command_buffer,
-                            *state.dispatches.buffer,
-                            0,
-                            1,
-                            std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
-                        );
-                        device.cmd_bind_pipeline(
-                            **command_buffer,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            *state.mesh_pipelines.alpha_clipped,
-                        );
-                        device.push_constants(command_buffer, (uniforms_ptr, 1_u32));
-                        device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
-                            **command_buffer,
-                            *state.dispatches.buffer,
-                            std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
-                            1,
-                            std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
-                        );
-
-                        state.time += 0.005;
-                        device.cmd_end_rendering(**command_buffer);
-                        nbn::pipeline_barrier(
-                            device,
-                            **command_buffer,
-                            None,
-                            &[],
-                            &[
-                                nbn::ImageBarrier {
-                                    previous_accesses: &[nbn::AccessType::Present],
-                                    next_accesses: &[nbn::AccessType::ComputeShaderWrite],
-                                    previous_layout: nbn::ImageLayout::Optimal,
-                                    next_layout: nbn::ImageLayout::Optimal,
-                                    discard_contents: true,
-                                    src_queue_family_index: device.graphics_queue.index,
-                                    dst_queue_family_index: device.graphics_queue.index,
-                                    image: image.image,
-                                    range: vk::ImageSubresourceRange::default()
-                                        .layer_count(1)
-                                        .level_count(1)
-                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
-                                },
-                                nbn::ImageBarrier {
-                                    previous_accesses: &[nbn::AccessType::ColorAttachmentWrite],
-                                    next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
-                                    previous_layout: nbn::ImageLayout::Optimal,
-                                    next_layout: nbn::ImageLayout::Optimal,
-                                    discard_contents: false,
-                                    src_queue_family_index: device.graphics_queue.index,
-                                    dst_queue_family_index: device.graphics_queue.index,
-                                    image: **state.visbuffer.image,
-                                    range: vk::ImageSubresourceRange::default()
-                                        .layer_count(1)
-                                        .level_count(1)
-                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
-                                },
-                            ],
-                        );
-                        device.cmd_bind_pipeline(
-                            **command_buffer,
-                            vk::PipelineBindPoint::COMPUTE,
-                            **state.blit_pipeline,
-                        );
-                        device.push_constants(
-                            command_buffer,
-                            (
-                                uniforms_ptr,
-                                state.swapchain_image_heap_indices[next_image as usize],
-                            ),
-                        );
-                        device.cmd_dispatch(
-                            **command_buffer,
-                            extent.width.div_ceil(8),
-                            extent.height.div_ceil(8),
-                            1,
-                        );
-                        nbn::pipeline_barrier(
-                            device,
-                            **command_buffer,
-                            None,
-                            &[],
-                            &[nbn::ImageBarrier {
-                                previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
-                                next_accesses: &[nbn::AccessType::Present],
+                    nbn::pipeline_barrier(
+                        device,
+                        **command_buffer,
+                        Some(nbn::GlobalBarrier {
+                            previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
+                            next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
+                        }),
+                        &[],
+                        &[
+                            nbn::ImageBarrier {
+                                previous_accesses: &[],
+                                next_accesses: &[nbn::AccessType::DepthStencilAttachmentWrite],
                                 previous_layout: nbn::ImageLayout::Optimal,
                                 next_layout: nbn::ImageLayout::Optimal,
-                                discard_contents: false,
+                                discard_contents: true,
+                                src_queue_family_index: device.graphics_queue.index,
+                                dst_queue_family_index: device.graphics_queue.index,
+                                image: **state.depth_buffer,
+                                range: vk::ImageSubresourceRange::default()
+                                    .layer_count(1)
+                                    .level_count(1)
+                                    .aspect_mask(vk::ImageAspectFlags::DEPTH),
+                            },
+                            nbn::ImageBarrier {
+                                previous_accesses: &[],
+                                next_accesses: &[nbn::AccessType::ColorAttachmentWrite],
+                                previous_layout: nbn::ImageLayout::Optimal,
+                                next_layout: nbn::ImageLayout::Optimal,
+                                discard_contents: true,
+                                src_queue_family_index: device.graphics_queue.index,
+                                dst_queue_family_index: device.graphics_queue.index,
+                                image: **state.visbuffer.image,
+                                range: vk::ImageSubresourceRange::default()
+                                    .layer_count(1)
+                                    .level_count(1)
+                                    .aspect_mask(vk::ImageAspectFlags::COLOR),
+                            },
+                        ],
+                    );
+
+                    device.begin_rendering(
+                        command_buffer,
+                        extent.width,
+                        extent.height,
+                        &[vk::RenderingAttachmentInfo::default()
+                            .image_view(*state.visbuffer.image.view)
+                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .clear_value(vk::ClearValue {
+                                color: vk::ClearColorValue {
+                                    uint32: [u32::MAX; 4],
+                                },
+                            })
+                            .load_op(vk::AttachmentLoadOp::CLEAR)
+                            .store_op(vk::AttachmentStoreOp::STORE)],
+                        Some(
+                            &vk::RenderingAttachmentInfo::default()
+                                .image_view(*state.depth_buffer.view)
+                                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                                .load_op(vk::AttachmentLoadOp::CLEAR)
+                                .store_op(vk::AttachmentStoreOp::STORE)
+                                .clear_value(vk::ClearValue {
+                                    depth_stencil: vk::ClearDepthStencilValue {
+                                        depth: 0.0,
+                                        stencil: 0,
+                                    },
+                                }),
+                        ),
+                    );
+
+                    device.cmd_bind_pipeline(
+                        **command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        *state.mesh_pipelines.opaque,
+                    );
+                    device.push_constants(command_buffer, (uniforms_ptr, 0_u32));
+                    device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
+                        **command_buffer,
+                        *state.dispatches.buffer,
+                        0,
+                        1,
+                        std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
+                    );
+                    device.cmd_bind_pipeline(
+                        **command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        *state.mesh_pipelines.alpha_clipped,
+                    );
+                    device.push_constants(command_buffer, (uniforms_ptr, 1_u32));
+                    device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
+                        **command_buffer,
+                        *state.dispatches.buffer,
+                        std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
+                        1,
+                        std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
+                    );
+
+                    state.time += 0.005;
+                    device.cmd_end_rendering(**command_buffer);
+                    nbn::pipeline_barrier(
+                        device,
+                        **command_buffer,
+                        None,
+                        &[],
+                        &[
+                            nbn::ImageBarrier {
+                                previous_accesses: &[nbn::AccessType::Present],
+                                next_accesses: &[nbn::AccessType::ComputeShaderWrite],
+                                previous_layout: nbn::ImageLayout::Optimal,
+                                next_layout: nbn::ImageLayout::Optimal,
+                                discard_contents: true,
                                 src_queue_family_index: device.graphics_queue.index,
                                 dst_queue_family_index: device.graphics_queue.index,
                                 image: image.image,
@@ -946,62 +942,150 @@ impl winit::application::ApplicationHandler for App {
                                     .layer_count(1)
                                     .level_count(1)
                                     .aspect_mask(vk::ImageAspectFlags::COLOR),
-                            }],
-                        );
-                        device.end_command_buffer(**command_buffer).unwrap();
+                            },
+                            nbn::ImageBarrier {
+                                previous_accesses: &[nbn::AccessType::ColorAttachmentWrite],
+                                next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
+                                previous_layout: nbn::ImageLayout::Optimal,
+                                next_layout: nbn::ImageLayout::Optimal,
+                                discard_contents: false,
+                                src_queue_family_index: device.graphics_queue.index,
+                                dst_queue_family_index: device.graphics_queue.index,
+                                image: **state.visbuffer.image,
+                                range: vk::ImageSubresourceRange::default()
+                                    .layer_count(1)
+                                    .level_count(1)
+                                    .aspect_mask(vk::ImageAspectFlags::COLOR),
+                            },
+                        ],
+                    );
+                    device.cmd_bind_pipeline(
+                        **command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        **state.blit_pipeline,
+                    );
+                    device.push_constants(
+                        command_buffer,
+                        (
+                            uniforms_ptr,
+                            state.swapchain_image_heap_indices[next_image as usize],
+                        ),
+                    );
+                    device.cmd_dispatch(
+                        **command_buffer,
+                        extent.width.div_ceil(8),
+                        extent.height.div_ceil(8),
+                        1,
+                    );
+                    nbn::pipeline_barrier(
+                        device,
+                        **command_buffer,
+                        None,
+                        &[],
+                        &[nbn::ImageBarrier {
+                            previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
+                            next_accesses: &[nbn::AccessType::ColorAttachmentReadWrite],
+                            previous_layout: nbn::ImageLayout::Optimal,
+                            next_layout: nbn::ImageLayout::Optimal,
+                            discard_contents: false,
+                            src_queue_family_index: device.graphics_queue.index,
+                            dst_queue_family_index: device.graphics_queue.index,
+                            image: image.image,
+                            range: vk::ImageSubresourceRange::default()
+                                .layer_count(1)
+                                .level_count(1)
+                                .aspect_mask(vk::ImageAspectFlags::COLOR),
+                        }],
+                    );
+                    device.begin_rendering(
+                        command_buffer,
+                        extent.width,
+                        extent.height,
+                        &[vk::RenderingAttachmentInfo::default()
+                            .image_view(*image.view)
+                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .load_op(vk::AttachmentLoadOp::LOAD)
+                            .store_op(vk::AttachmentStoreOp::STORE)],
+                        None,
+                    );
+                    state.egui_render.paint(
+                        device,
+                        command_buffer,
+                        &clipped_meshes,
+                        state.window.scale_factor() as _,
+                        [extent.width, extent.height],
+                    );
+                    device.cmd_end_rendering(**command_buffer);
+                    nbn::pipeline_barrier(
+                        device,
+                        **command_buffer,
+                        None,
+                        &[],
+                        &[nbn::ImageBarrier {
+                            previous_accesses: &[nbn::AccessType::ColorAttachmentReadWrite],
+                            next_accesses: &[nbn::AccessType::Present],
+                            previous_layout: nbn::ImageLayout::Optimal,
+                            next_layout: nbn::ImageLayout::Optimal,
+                            discard_contents: false,
+                            src_queue_family_index: device.graphics_queue.index,
+                            dst_queue_family_index: device.graphics_queue.index,
+                            image: image.image,
+                            range: vk::ImageSubresourceRange::default()
+                                .layer_count(1)
+                                .level_count(1)
+                                .aspect_mask(vk::ImageAspectFlags::COLOR),
+                        }],
+                    );
+                    device.end_command_buffer(**command_buffer).unwrap();
 
-                        frame.submit(
-                            device,
-                            &[vk::CommandBufferSubmitInfo::default()
-                                .command_buffer(**command_buffer)],
-                        );
-                        device
-                            .swapchain_loader
-                            .queue_present(
-                                *device.graphics_queue,
-                                &vk::PresentInfoKHR::default()
-                                    .wait_semaphores(&[*frame.render_finished_semaphore])
-                                    .swapchains(&[*state.swapchain])
-                                    .image_indices(&[next_image]),
-                            )
-                            .unwrap();
-                    }
+                    frame.submit(
+                        device,
+                        &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
+                    );
+                    device
+                        .swapchain_loader
+                        .queue_present(
+                            *device.graphics_queue,
+                            &vk::PresentInfoKHR::default()
+                                .wait_semaphores(&[*frame.render_finished_semaphore])
+                                .swapchains(&[*state.swapchain])
+                                .image_indices(&[next_image]),
+                        )
+                        .unwrap();
                 }
             }
             winit::event::WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {
                         physical_key: winit::keyboard::PhysicalKey::Code(code),
-                        state,
+                        state: element_state,
                         ..
                     },
                 ..
             } => {
-                let pressed = state == ElementState::Pressed;
+                let pressed = element_state == ElementState::Pressed;
 
-                if let Some(state) = self.window_state.as_mut() {
-                    match code {
-                        KeyCode::KeyW => state.keyboard.forwards = pressed,
-                        KeyCode::KeyS => state.keyboard.backwards = pressed,
-                        KeyCode::KeyD => state.keyboard.right = pressed,
-                        KeyCode::KeyA => state.keyboard.left = pressed,
-                        KeyCode::KeyG if pressed => {
-                            state.cursor_grabbed = !state.cursor_grabbed;
-                            state
-                                .window
-                                .set_cursor_grab(if state.cursor_grabbed {
-                                    CursorGrabMode::Confined
-                                } else {
-                                    CursorGrabMode::None
-                                })
-                                .unwrap();
-                            state.window.set_cursor_visible(!state.cursor_grabbed);
-                        }
-                        KeyCode::Escape if pressed => {
-                            event_loop.exit();
-                        }
-                        _ => {}
+                match code {
+                    KeyCode::KeyW => state.keyboard.forwards = pressed,
+                    KeyCode::KeyS => state.keyboard.backwards = pressed,
+                    KeyCode::KeyD => state.keyboard.right = pressed,
+                    KeyCode::KeyA => state.keyboard.left = pressed,
+                    KeyCode::KeyG if pressed => {
+                        state.cursor_grabbed = !state.cursor_grabbed;
+                        state
+                            .window
+                            .set_cursor_grab(if state.cursor_grabbed {
+                                CursorGrabMode::Confined
+                            } else {
+                                CursorGrabMode::None
+                            })
+                            .unwrap();
+                        state.window.set_cursor_visible(!state.cursor_grabbed);
                     }
+                    KeyCode::Escape if pressed => {
+                        event_loop.exit();
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -1032,9 +1116,8 @@ impl winit::application::ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _: &winit::event_loop::ActiveEventLoop) {
-        let device = self.device.as_ref().unwrap();
-
         unsafe {
+            let device = self.device.as_ref().unwrap();
             device.device_wait_idle().unwrap();
         }
 
