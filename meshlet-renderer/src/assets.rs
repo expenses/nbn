@@ -1,0 +1,313 @@
+use crate::*;
+
+fn create_image(
+    device: &nbn::Device,
+    staging_buffer: &mut nbn::StagingBuffer,
+    filename: &str,
+    _format: vk::Format,
+    transition_to: nbn::QueueType,
+) -> nbn::IndexedImage {
+    let image = if filename.ends_with(".dds") {
+        let dds = ddsfile::Dds::read(std::fs::File::open(filename).unwrap()).unwrap();
+
+        let format = match dds.get_dxgi_format().unwrap() {
+            ddsfile::DxgiFormat::BC1_UNorm_sRGB => vk::Format::BC1_RGB_SRGB_BLOCK,
+            ddsfile::DxgiFormat::BC3_UNorm_sRGB => vk::Format::BC3_SRGB_BLOCK,
+            ddsfile::DxgiFormat::BC5_UNorm => vk::Format::BC5_UNORM_BLOCK,
+            other => panic!("{:?}", other),
+        };
+        staging_buffer.create_sampled_image(
+            device,
+            nbn::SampledImageDescriptor {
+                name: filename,
+                extent: vk::Extent3D {
+                    width: dds.get_width(),
+                    height: dds.get_height(),
+                    depth: 1,
+                },
+                format,
+            },
+            dds.get_data(0).unwrap(),
+            transition_to,
+            &[0],
+        )
+    } else if filename.ends_with(".ktx2") {
+        let ktx2 = ktx2::Reader::new(std::fs::read(filename).unwrap()).unwrap();
+        let header = ktx2.header();
+
+        let mut data = Vec::with_capacity(
+            ktx2.levels()
+                .map(|level| level.uncompressed_byte_length)
+                .sum::<u64>() as _,
+        );
+        let mut offsets = Vec::with_capacity(ktx2.levels().len());
+
+        for level in ktx2.levels() {
+            offsets.push(data.len() as _);
+            data.extend_from_slice(
+                &zstd::bulk::decompress(level.data, level.uncompressed_byte_length as _).unwrap(),
+            );
+        }
+
+        staging_buffer.create_sampled_image(
+            device,
+            nbn::SampledImageDescriptor {
+                name: filename,
+                extent: vk::Extent3D {
+                    width: header.pixel_width,
+                    height: header.pixel_height,
+                    depth: header.pixel_depth.max(1),
+                },
+                format: vk::Format::from_raw(header.format.unwrap().value() as _),
+            },
+            &data,
+            transition_to,
+            &offsets,
+        )
+    } else {
+        /*let image_data = image::open(filename).unwrap().to_rgba8();
+
+        device.create_sampled_image_with_data(
+            nbn::SampledImageDescriptor {
+                name: filename,
+                extent: vk::Extent3D {
+                    width: image_data.width(),
+                    height: image_data.height(),
+                    depth: 1,
+                },
+                format,
+            },
+            &image_data,
+            transition_to,
+            &[0],
+        )*/
+        panic!()
+    };
+
+    nbn::IndexedImage {
+        index: device.register_image(*image.view, false),
+        image,
+    }
+}
+
+pub struct GltfModel {
+    pub model: Model,
+    // for debugging
+    pub meshlets: Vec<Meshlet>,
+}
+
+pub struct GltfData {
+    _images: Vec<nbn::IndexedImage>,
+    pub(crate) _buffer: nbn::Buffer,
+    _meshlets_buffer: nbn::Buffer,
+    pub meshes: Vec<Vec<GltfModel>>,
+}
+
+struct Meshlets {
+    buffer: nbn::Buffer,
+    metadata: Vec<Vec<[u32; 4]>>,
+    // for debugging
+    data: Vec<u8>,
+}
+
+fn read_meshlets_file(
+    device: &nbn::Device,
+    staging_buffer: &mut nbn::StagingBuffer,
+    path: &std::path::Path,
+) -> std::io::Result<Meshlets> {
+    let mut reader = std::fs::File::open(path)?;
+    let mut header = [0; 8];
+    reader.read_exact(&mut header)?;
+    assert_eq!(b"MESHLETS", &header);
+    let mut val = [0; 4];
+    reader.read_exact(&mut val)?;
+
+    let num_meshes = u32::from_le_bytes(val);
+    let mut meshes = Vec::with_capacity(num_meshes as _);
+
+    for _ in 0..num_meshes {
+        reader.read_exact(&mut val)?;
+        let num_primitives = u32::from_le_bytes(val);
+        let mut primitives = vec![[0_u32; 4]; num_primitives as _];
+        reader.read_exact(nbn::cast_slice_mut(&mut primitives))?;
+        meshes.push(primitives);
+    }
+
+    reader.read_exact(&mut val)?;
+
+    let len_data = u32::from_le_bytes(val);
+
+    // for debugging
+    let mut data = vec![0; len_data as usize];
+    reader.read_exact(&mut data).unwrap();
+
+    let buffer = staging_buffer.create_buffer(
+        device,
+        &format!("{} staging buffer", path.display()),
+        len_data as _,
+        std::io::Cursor::new(&data),
+    );
+
+    Ok(Meshlets {
+        buffer,
+        metadata: meshes,
+        data,
+    })
+}
+
+pub fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
+    let bytes = std::fs::read(path).unwrap();
+    let (gltf, buffer): (
+        goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
+        _,
+    ) = goth_gltf::Gltf::from_bytes(&bytes).unwrap();
+    assert!(buffer.is_none());
+    dbg!(gltf.meshes.len(), gltf.meshes[0].primitives.len());
+
+    let mut image_formats = vec![vk::Format::R8G8B8A8_UNORM; gltf.images.len()];
+
+    for material in &gltf.materials {
+        if let Some(tex) = &material.emissive_texture {
+            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
+        }
+        if let Some(tex) = &material.pbr_metallic_roughness.base_color_texture {
+            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
+        }
+    }
+
+    let mut staging_buffer = nbn::StagingBuffer::new(device, 64 * 1024 * 1024);
+    let meshlets = read_meshlets_file(
+        &device,
+        &mut staging_buffer,
+        &path.with_extension("meshlets"),
+    )
+    .unwrap();
+    let meshlets_buffer = meshlets.buffer;
+
+    let buffer_file =
+        std::fs::File::open(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
+    let buffer = staging_buffer.create_buffer(
+        device,
+        &format!("{} buffer", path.display()),
+        buffer_file.metadata().unwrap().len() as _,
+        buffer_file,
+    );
+
+    let images = gltf
+        .images
+        .iter()
+        .zip(&image_formats)
+        .map(|(image, format)| {
+            create_image(
+                device,
+                &mut staging_buffer,
+                path.with_file_name(image.uri.as_ref().unwrap())
+                    .to_str()
+                    .unwrap(),
+                *format,
+                nbn::QueueType::Graphics,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    staging_buffer.finish(device);
+
+    dbg!(images.len());
+
+    let materials: Vec<Material> = gltf
+        .materials
+        .iter()
+        .map(|material| Material {
+            base_colour_image: material
+                .pbr_metallic_roughness
+                .base_color_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
+                .unwrap_or(u32::MAX),
+            metallic_roughness_image: material
+                .pbr_metallic_roughness
+                .metallic_roughness_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
+                .unwrap_or(u32::MAX),
+            normal_image: material
+                .normal_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
+                .unwrap_or(u32::MAX),
+            emissive_image: material
+                .emissive_texture
+                .as_ref()
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
+                .unwrap_or(u32::MAX),
+            flags: !matches!(material.alpha_mode, goth_gltf::AlphaMode::Opaque) as u32,
+        })
+        .collect();
+
+    let get_buffer_offset = |accessor: &goth_gltf::Accessor| {
+        let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
+        assert_eq!(bv.byte_stride, None);
+        (*buffer) + bv.byte_offset as u64 + accessor.byte_offset as u64
+    };
+
+    let mut meshes = Vec::new();
+
+    for (mesh, meshlets_mesh) in gltf.meshes.iter().zip(&meshlets.metadata) {
+        let mut primitives = Vec::new();
+
+        for (
+            primitive,
+            &[
+                num_meshlets,
+                vertices_offset,
+                triangles_offset,
+                meshlets_offset,
+            ],
+        ) in mesh.primitives.iter().zip(meshlets_mesh)
+        {
+            let material = materials[primitive.material.unwrap()];
+
+            let get = |accessor_index: Option<usize>| {
+                let accessor = &gltf.accessors[accessor_index.unwrap()];
+                assert_eq!(accessor.component_type, goth_gltf::ComponentType::Float);
+                get_buffer_offset(accessor)
+            };
+
+            let indices = &gltf.accessors[primitive.indices.unwrap()];
+            let is_32_bit = match indices.component_type {
+                goth_gltf::ComponentType::UnsignedShort => false,
+                goth_gltf::ComponentType::UnsignedInt => true,
+                other => unimplemented!("{:?}", other),
+            };
+            primitives.push(GltfModel {
+                model: Model {
+                    material,
+                    positions: get(primitive.attributes.position),
+                    uvs: get(primitive.attributes.texcoord_0),
+                    normals: get(primitive.attributes.normal),
+                    indices: get_buffer_offset(indices),
+                    meshlets: *meshlets_buffer + meshlets_offset as u64,
+                    triangles: *meshlets_buffer + triangles_offset as u64,
+                    vertices: *meshlets_buffer + vertices_offset as u64,
+                    flags: is_32_bit as u32,
+                    num_meshlets,
+                    num_indices: indices.count as u32,
+                },
+                meshlets: nbn::cast_slice::<_, Meshlet>(&meshlets.data[meshlets_offset as usize..])
+                    [..num_meshlets as usize]
+                    .to_vec(),
+            });
+        }
+
+        meshes.push(primitives);
+    }
+
+    dbg!(&materials.len());
+
+    GltfData {
+        _images: images,
+        _buffer: buffer,
+        _meshlets_buffer: meshlets_buffer,
+        meshes,
+    }
+}
