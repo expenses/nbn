@@ -26,6 +26,18 @@ bool coneCull(float3 center, float radius, float3 cone_axis, float cone_cutoff, 
 	return dot(normalize(center - camera_position), cone_axis) > cone_cutoff + radius / length(center - camera_position);
 }
 
+groupshared uint[64] payload;
+
+[shader("amplification")]
+[numthreads(64, 1, 1)]
+void task(
+uniform PushConstants push_constants,
+                 uint       gtid : SV_GroupThreadID,
+                 uint       dtid  : SV_DispatchThreadID,
+) {
+    payload[gtid] = dtid;
+    DispatchMesh(128, 1, 1, payload);
+}
 
 [shader("mesh")]
 [outputtopology("triangle")]

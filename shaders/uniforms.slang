@@ -6,6 +6,7 @@ struct UniformBuffer {
     float4x4 view;
     float4x4 perspective;
     float4 frustum;
+    float3 camera_position;
     float near_plane;
     uint2 extent;
     Model* models;
@@ -14,5 +15,4 @@ struct UniformBuffer {
     DispatchBuffer* dispatches;
     uint num_instances;
     uint visbuffer;
-    float3 camera_position;
 };

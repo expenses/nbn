@@ -1,6 +1,7 @@
 rule slang
     command = slangc $in -o $out -O3 -warnings-as-errors all 
 build shaders/compiled/compute.spv: slang shaders/compute.slang | shaders/models.slang shaders/uniforms.slang shaders/dispatches.slang shaders/prefix_sum.slang
+build shaders/compiled/debugging.spv: slang shaders/debugging.slang | shaders/uniforms.slang shaders/models.slang shaders/dispatches.slang shaders/common.slang
 build shaders/compiled/egui.spv: slang shaders/egui.slang | shaders/common.slang
 build shaders/compiled/mesh_shaders.spv: slang shaders/mesh_shaders.slang | shaders/models.slang shaders/common.slang shaders/culling.slang shaders/uniforms.slang shaders/dispatches.slang
 build shaders/compiled/resolve_visbuffer.spv: slang shaders/resolve_visbuffer.slang | shaders/common.slang shaders/models.slang shaders/visbuffer.slang shaders/uniforms.slang shaders/dispatches.slang

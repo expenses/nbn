@@ -1,7 +1,7 @@
 use std::{ffi::CStr, io::Read};
 
 use dolly::prelude::YawPitch;
-use nbn::{ImageDescriptor, SampledImageDescriptor, vk};
+use nbn::vk;
 use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
 slang_struct::slang_include!("shaders/models.slang");
@@ -10,7 +10,7 @@ slang_struct::slang_include!("shaders/uniforms.slang");
 
 fn create_image(
     device: &nbn::Device,
-    staging_buffer: &mut StagingBuffer,
+    staging_buffer: &mut nbn::StagingBuffer,
     filename: &str,
     _format: vk::Format,
     transition_to: nbn::QueueType,
@@ -175,229 +175,35 @@ struct WindowState {
     egui_winit: egui_winit::State,
     egui_render: nbn::egui::Renderer,
     alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
+    debugging_pipeline: nbn::Pipeline,
+    meshlet_debugging_pipeline: nbn::Pipeline,
+    num_debug_meshlet_instances: u32,
+    debug_meshlet_instances: nbn::Buffer,
 }
 
-struct GltfData {
+pub struct GltfModel {
+    pub model: Model,
+    // for debugging
+    pub meshlets: Vec<Meshlet>,
+}
+
+pub struct GltfData {
     _images: Vec<nbn::IndexedImage>,
-    _buffer: nbn::Buffer,
+    pub(crate) _buffer: nbn::Buffer,
     _meshlets_buffer: nbn::Buffer,
-    meshes: Vec<Vec<Model>>,
+    pub meshes: Vec<Vec<GltfModel>>,
 }
 
 struct Meshlets {
     buffer: nbn::Buffer,
     metadata: Vec<Vec<[u32; 4]>>,
-}
-
-struct StagingBuffer {
-    offset: usize,
-    staging_buffer: nbn::Buffer,
-    command_buffer: nbn::CommandBuffer,
-}
-
-impl StagingBuffer {
-    const SIZE: usize = 64 * 1024 * 1024;
-
-    fn new(device: &nbn::Device) -> Self {
-        let command_buffer = device.create_command_buffer(nbn::QueueType::Transfer);
-        unsafe {
-            device
-                .begin_command_buffer(*command_buffer, &Default::default())
-                .unwrap()
-        };
-
-        Self {
-            offset: 0,
-            staging_buffer: device
-                .create_buffer(nbn::BufferDescriptor {
-                    size: Self::SIZE as _,
-                    name: "staging buffer",
-                    ty: nbn::MemoryLocation::CpuToGpu,
-                })
-                .unwrap(),
-            command_buffer,
-        }
-    }
-
-    fn flush(&mut self, device: &nbn::Device) {
-        dbg!("flushing");
-        let fence = device.create_fence();
-        unsafe {
-            device.end_command_buffer(*self.command_buffer).unwrap();
-            device
-                .queue_submit(
-                    *device.transfer_queue,
-                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
-                    *fence,
-                )
-                .unwrap();
-
-            device.wait_for_fences(&[*fence], true, !0).unwrap();
-
-            device.reset_command_buffer(&self.command_buffer);
-            device
-                .begin_command_buffer(*self.command_buffer, &Default::default())
-                .unwrap()
-        }
-        self.offset = 0;
-    }
-
-    fn finish(self, device: &nbn::Device) {
-        dbg!("finishing");
-        let fence = device.create_fence();
-        unsafe {
-            device.end_command_buffer(*self.command_buffer).unwrap();
-            device
-                .queue_submit(
-                    *device.transfer_queue,
-                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
-                    *fence,
-                )
-                .unwrap();
-
-            device.wait_for_fences(&[*fence], true, !0).unwrap();
-        }
-    }
-
-    fn allocate<R: Read>(&mut self, device: &nbn::Device, size: usize, mut reader: R) -> usize {
-        self.offset = self.offset.next_multiple_of(16);
-        if size > Self::SIZE {
-            panic!()
-        } else if size > Self::SIZE - self.offset {
-            self.flush(device);
-        }
-        reader
-            .read_exact(
-                &mut self.staging_buffer.try_as_slice_mut().unwrap()
-                    [self.offset..self.offset + size],
-            )
-            .unwrap();
-        let offset = self.offset;
-        self.offset += size as usize;
-        offset
-    }
-
-    fn create_buffer<R: Read>(
-        &mut self,
-        device: &nbn::Device,
-        name: &str,
-        size: usize,
-        reader: R,
-    ) -> nbn::Buffer {
-        let offset = self.allocate(device, size, reader);
-        let buffer = device
-            .create_buffer(nbn::BufferDescriptor {
-                name,
-                size: size as _,
-                ty: nbn::MemoryLocation::GpuOnly,
-            })
-            .unwrap();
-        unsafe {
-            device.cmd_copy_buffer(
-                *self.command_buffer,
-                *self.staging_buffer.buffer,
-                *buffer.buffer,
-                &[vk::BufferCopy {
-                    src_offset: offset as _,
-                    dst_offset: 0,
-                    size: size as _,
-                }],
-            );
-        }
-        buffer
-    }
-
-    fn create_sampled_image(
-        &mut self,
-        device: &nbn::Device,
-        desc: SampledImageDescriptor,
-        bytes: &[u8],
-        transition_to: nbn::QueueType,
-        lod_offsets: &[u64],
-    ) -> nbn::Image {
-        let offset = self.allocate(device, bytes.len() as _, std::io::Cursor::new(bytes));
-        let mip_levels = lod_offsets.len() as u32;
-        let image = device.create_image(ImageDescriptor {
-            name: desc.name,
-            format: desc.format,
-            extent: desc.extent,
-            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            ty: vk::ImageViewType::TYPE_2D,
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_levels,
-        });
-        unsafe {
-            device.insert_pipeline_barrier(
-                &self.command_buffer,
-                None,
-                &[],
-                &[nbn::ImageBarrier {
-                    previous_accesses: &[],
-                    next_accesses: &[nbn::AccessType::TransferWrite],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
-                    range: image.subresource_range,
-                    discard_contents: true,
-                    image: *image.image,
-                    src_queue_family_index: device.transfer_queue.index,
-                    dst_queue_family_index: device.transfer_queue.index,
-                }],
-            );
-
-            let copies: Vec<_> = lod_offsets
-                .iter()
-                .enumerate()
-                .map(|(i, &lod_offset)| {
-                    vk::BufferImageCopy::default()
-                        .buffer_offset(offset as u64 + lod_offset)
-                        .image_extent(vk::Extent3D {
-                            width: image.extent.width >> i,
-                            height: image.extent.height >> i,
-                            depth: image.extent.depth,
-                        })
-                        .image_subresource(
-                            vk::ImageSubresourceLayers::default()
-                                .layer_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .mip_level(i as _),
-                        )
-                })
-                .collect();
-
-            device.cmd_copy_buffer_to_image(
-                *self.command_buffer,
-                *self.staging_buffer.buffer,
-                *image.image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &copies,
-            );
-
-            device.insert_pipeline_barrier(
-                &self.command_buffer,
-                None,
-                &[],
-                &[nbn::ImageBarrier {
-                    previous_accesses: &[nbn::AccessType::TransferWrite],
-                    next_accesses: &[
-                        nbn::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer,
-                    ],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
-                    range: image.subresource_range,
-                    discard_contents: false,
-                    image: *image.image,
-                    src_queue_family_index: device.transfer_queue.index,
-                    dst_queue_family_index: device.get_queue(transition_to).index,
-                }],
-            );
-        }
-        image
-    }
+    // for debugging
+    data: Vec<u8>,
 }
 
 fn read_meshlets_file(
     device: &nbn::Device,
-    staging_buffer: &mut StagingBuffer,
+    staging_buffer: &mut nbn::StagingBuffer,
     path: &std::path::Path,
 ) -> std::io::Result<Meshlets> {
     let mut reader = std::fs::File::open(path)?;
@@ -422,20 +228,25 @@ fn read_meshlets_file(
 
     let len_data = u32::from_le_bytes(val);
 
+    // for debugging
+    let mut data = vec![0; len_data as usize];
+    reader.read_exact(&mut data).unwrap();
+
     let buffer = staging_buffer.create_buffer(
         device,
         &format!("{} staging buffer", path.display()),
         len_data as _,
-        &mut reader,
+        std::io::Cursor::new(&data),
     );
 
     Ok(Meshlets {
         buffer,
         metadata: meshes,
+        data,
     })
 }
 
-fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
+pub fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
     let bytes = std::fs::read(path).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
@@ -455,7 +266,7 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
         }
     }
 
-    let mut staging_buffer = StagingBuffer::new(device);
+    let mut staging_buffer = nbn::StagingBuffer::new(device, 64 * 1024 * 1024);
     let meshlets = read_meshlets_file(
         &device,
         &mut staging_buffer,
@@ -559,17 +370,23 @@ fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
                 goth_gltf::ComponentType::UnsignedInt => true,
                 other => unimplemented!("{:?}", other),
             };
-            primitives.push(Model {
-                material,
-                positions: get(primitive.attributes.position),
-                uvs: get(primitive.attributes.texcoord_0),
-                normals: get(primitive.attributes.normal),
-                indices: get_buffer_offset(indices),
-                meshlets: *meshlets_buffer + meshlets_offset as u64,
-                triangles: *meshlets_buffer + triangles_offset as u64,
-                vertices: *meshlets_buffer + vertices_offset as u64,
-                flags: is_32_bit as u32,
-                num_meshlets,
+            primitives.push(GltfModel {
+                model: Model {
+                    material,
+                    positions: get(primitive.attributes.position),
+                    uvs: get(primitive.attributes.texcoord_0),
+                    normals: get(primitive.attributes.normal),
+                    indices: get_buffer_offset(indices),
+                    meshlets: *meshlets_buffer + meshlets_offset as u64,
+                    triangles: *meshlets_buffer + triangles_offset as u64,
+                    vertices: *meshlets_buffer + vertices_offset as u64,
+                    flags: is_32_bit as u32,
+                    num_meshlets,
+                    num_indices: indices.count as u32,
+                },
+                meshlets: nbn::cast_slice::<_, Meshlet>(&meshlets.data[meshlets_offset as usize..])
+                    [..num_meshlets as usize]
+                    .to_vec(),
             });
         }
 
@@ -622,6 +439,7 @@ impl winit::application::ApplicationHandler for App {
         let gltf = load_gltf(
             &device,
             std::path::Path::new("models/citadel/voxelization_ktx2.gltf"),
+            //std::path::Path::new("models/Bistro_v5_2/bistro_combined.gltf"),
         );
 
         dbg!(std::mem::size_of::<Meshlet>());
@@ -629,15 +447,33 @@ impl winit::application::ApplicationHandler for App {
         let mut models = Vec::new();
         let mut instances = Vec::new();
 
+        let mut debug_meshlet_instances = Vec::new();
+
         for mesh in &gltf.meshes {
-            for &model in mesh {
+            for model in mesh {
+                for &meshlet in &model.meshlets {
+                    debug_meshlet_instances.push(MeshletInstance {
+                        meshlet,
+                        instance: Instance {
+                            _model_index_and_padding: [models.len() as u32; 4],
+                            position: [0.0; 4],
+                        },
+                    });
+                }
+
                 instances.push(Instance {
-                    model_index: models.len() as u32,
+                    _model_index_and_padding: [models.len() as u32; 4],
                     position: [0.0; 4],
                 });
-                models.push(model);
+                models.push(model.model);
             }
         }
+
+        let num_debug_meshlet_instances = debug_meshlet_instances.len() as u32;
+        let debug_meshlet_instances = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+            name: "debug_meshlet_instances",
+            data: &debug_meshlet_instances,
+        });
 
         let swapchain = device.create_swapchain(
             &window,
@@ -667,7 +503,57 @@ impl winit::application::ApplicationHandler for App {
             .with(dolly::drivers::Smooth::new_position_rotation(1.0, 1.0))
             .build();
 
+        let debugging_module = device.load_shader("shaders/compiled/debugging.spv");
+
         self.window_state = Some(WindowState {
+            num_debug_meshlet_instances,
+            debug_meshlet_instances,
+            debugging_pipeline: device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+                vertex: nbn::ShaderDesc {
+                    module: &debugging_module,
+                    entry_point: c"model_debug_vertex",
+                },
+                fragment: nbn::ShaderDesc {
+                    module: &debugging_module,
+                    entry_point: c"model_debug_fragment",
+                },
+                conservative_rasterization: false,
+                cull_mode: vk::CullModeFlags::BACK,
+                blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+                    .color_write_mask(vk::ColorComponentFlags::RGBA)],
+                mesh_shader: false,
+                depth: nbn::GraphicsPipelineDepthDesc {
+                    write_enable: true,
+                    test_enable: true,
+                    compare_op: vk::CompareOp::GREATER,
+                    format: vk::Format::D32_SFLOAT,
+                },
+                color_attachment_formats: &[swapchain.create_info.image_format],
+            }),
+            meshlet_debugging_pipeline: device.create_graphics_pipeline(
+                nbn::GraphicsPipelineDesc {
+                    vertex: nbn::ShaderDesc {
+                        module: &debugging_module,
+                        entry_point: c"meshlet_debug_vertex",
+                    },
+                    fragment: nbn::ShaderDesc {
+                        module: &debugging_module,
+                        entry_point: c"model_debug_fragment",
+                    },
+                    conservative_rasterization: false,
+                    cull_mode: vk::CullModeFlags::BACK,
+                    blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+                        .color_write_mask(vk::ColorComponentFlags::RGBA)],
+                    mesh_shader: false,
+                    depth: nbn::GraphicsPipelineDepthDesc {
+                        write_enable: true,
+                        test_enable: true,
+                        compare_op: vk::CompareOp::GREATER,
+                        format: vk::Format::D32_SFLOAT,
+                    },
+                    color_attachment_formats: &[swapchain.create_info.image_format],
+                },
+            ),
             alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
             egui_render: nbn::egui::Renderer::new(
                 &device,
@@ -786,6 +672,7 @@ impl winit::application::ApplicationHandler for App {
         _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
+        let device = self.device.as_ref().unwrap();
         let state = self.window_state.as_mut().unwrap();
 
         let response = state.egui_winit.on_window_event(&state.window, &event);
@@ -800,8 +687,6 @@ impl winit::application::ApplicationHandler for App {
                     width: new_size.width,
                     height: new_size.height,
                 };
-
-                let device = self.device.as_ref().unwrap();
 
                 device.recreate_swapchain(&mut state.swapchain);
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
@@ -847,8 +732,6 @@ impl winit::application::ApplicationHandler for App {
                 );
             }
             winit::event::WindowEvent::RedrawRequested => {
-                let device = self.device.as_ref().unwrap();
-
                 state.blit_pipeline.refresh(device);
                 state.mesh_pipelines.refresh(device);
                 state.compute_pipelines.refresh(device);
@@ -1026,7 +909,7 @@ impl winit::application::ApplicationHandler for App {
                     device.cmd_dispatch_indirect(
                         **command_buffer,
                         *state.dispatches.buffer,
-                        4 * 3 * 2,
+                        4 * 4 * 2,
                     );
                     device.push_constants(
                         command_buffer,
@@ -1035,7 +918,7 @@ impl winit::application::ApplicationHandler for App {
                     device.cmd_dispatch_indirect(
                         **command_buffer,
                         *state.dispatches.buffer,
-                        4 * 3 * 3,
+                        4 * 4 * 3,
                     );
 
                     nbn::pipeline_barrier(
@@ -1118,7 +1001,7 @@ impl winit::application::ApplicationHandler for App {
                         *state.dispatches.buffer,
                         0,
                         1,
-                        std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
+                        4 * 4,
                     );
                     device.cmd_bind_pipeline(
                         **command_buffer,
@@ -1129,9 +1012,9 @@ impl winit::application::ApplicationHandler for App {
                     device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
                         **command_buffer,
                         *state.dispatches.buffer,
-                        std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
+                        4 * 4,
                         1,
-                        std::mem::size_of::<vk::DrawMeshTasksIndirectCommandEXT>() as _,
+                        4 * 4,
                     );
 
                     state.time += 0.005;
@@ -1210,6 +1093,93 @@ impl winit::application::ApplicationHandler for App {
                                 .aspect_mask(vk::ImageAspectFlags::COLOR),
                         }],
                     );
+                    /*nbn::pipeline_barrier(
+                        device,
+                        **command_buffer,
+                        None,
+                        &[],
+                        &[nbn::ImageBarrier {
+                            previous_accesses: &[nbn::AccessType::Present],
+                            next_accesses: &[nbn::AccessType::ColorAttachmentReadWrite],
+                            previous_layout: nbn::ImageLayout::Optimal,
+                            next_layout: nbn::ImageLayout::Optimal,
+                            discard_contents: true,
+                            src_queue_family_index: device.graphics_queue.index,
+                            dst_queue_family_index: device.graphics_queue.index,
+                            image: image.image,
+                            range: vk::ImageSubresourceRange::default()
+                                .layer_count(1)
+                                .level_count(1)
+                                .aspect_mask(vk::ImageAspectFlags::COLOR),
+                        }],
+                    );
+                    device.begin_rendering(
+                        command_buffer,
+                        extent.width,
+                        extent.height,
+                        &[vk::RenderingAttachmentInfo::default()
+                            .image_view(*image.view)
+                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .clear_value(vk::ClearValue {
+                                color: vk::ClearColorValue { float32: [0.5; 4] },
+                            })
+                            .load_op(vk::AttachmentLoadOp::CLEAR)
+                            .store_op(vk::AttachmentStoreOp::STORE)],
+                        Some(
+                            &vk::RenderingAttachmentInfo::default()
+                                .image_view(*state.depth_buffer.view)
+                                .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                                .load_op(vk::AttachmentLoadOp::CLEAR)
+                                .store_op(vk::AttachmentStoreOp::STORE)
+                                .clear_value(vk::ClearValue {
+                                    depth_stencil: vk::ClearDepthStencilValue {
+                                        depth: 0.0,
+                                        stencil: 0,
+                                    },
+                                }),
+                        ),
+                    );
+                    device.cmd_bind_pipeline(
+                        **command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        *state.meshlet_debugging_pipeline,
+                    );
+                    device.bind_internal_descriptor_sets_to_all(command_buffer);
+
+                    let ptr = *state.models;
+                    let mut i = 0;
+                    for models in state._gltf.meshes.iter().take(1) {
+                        for model in models.iter().take(1) {
+                            device.push_constants::<(u64, u64)>(
+                                &command_buffer,
+                                (
+                                    ptr + (i * std::mem::size_of::<Model>()) as u64,
+                                    uniforms_ptr,
+                                ),
+                            );
+                            for (meshlet_index, meshlet) in model.meshlets.iter().enumerate() {
+                                device.cmd_draw(
+                                    **command_buffer,
+                                    meshlet.triangle_count as u32 * 3,
+                                    1,
+                                    0,
+                                    meshlet_index as _,
+                                );
+                            }
+
+                            /*device.push_constants::<(u64, u64)>(
+                                &command_buffer,
+                                (
+                                    ptr + (i * std::mem::size_of::<Model>()) as u64,
+                                    uniforms_ptr,
+                                ),
+                            );*/
+                            //device.cmd_draw(**command_buffer, model.model.num_indices, 1, 0, 0);
+                            i += 1;
+                        }
+                    }
+                    device.cmd_end_rendering(**command_buffer);*/
+
                     device.begin_rendering(
                         command_buffer,
                         extent.width,

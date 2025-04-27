@@ -10,10 +10,10 @@ uint div_ceil(uint value, uint divisor) {
 [shader("compute")]
 [NumThreads(1, 1, 1)]
 void reset_buffers(uniform DispatchBuffer* buffer) {
-    buffer.dispatches[0] = {0,1,1};
-    buffer.dispatches[1] = {0,1,1};
-    buffer.dispatches[2] = {0,1,1};
-    buffer.dispatches[3] = {0,1,1};
+    buffer.dispatches[0] = {0,1,1,0};
+    buffer.dispatches[1] = {0,1,1,0};
+    buffer.dispatches[2] = {0,1,1,0};
+    buffer.dispatches[3] = {0,1,1,0};
     buffer.counts[0] = 0;
     buffer.counts[1] = 0;
 }

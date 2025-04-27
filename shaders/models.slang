@@ -53,6 +53,7 @@ public struct Model {
     public Material material;
 
     public uint num_meshlets;
+    public uint num_indices;
 
     public uint read_index(uint vertex_index) {
         if (flags & ModelFlags::Indices32Bit) {
@@ -65,8 +66,14 @@ public struct Model {
 };
 
 public struct Instance {
-    public uint model_index;
+    public uint4 _model_index_and_padding;
     public float4 position;
+
+    public property uint model_index {
+        get {
+            return _model_index_and_padding.x;
+        }
+    }
 };
 
 public struct MeshletInstance {

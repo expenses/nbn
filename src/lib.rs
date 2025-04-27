@@ -1123,17 +1123,20 @@ impl Device {
 
         let allocator = (*self.allocator).clone();
 
-        let allocation = allocator
-            .inner
-            .write()
-            .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                name: desc.name,
-                linear: true,
-                requirements: memory_requirements,
-                location: desc.ty,
-                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-            })
-            .unwrap();
+        let desc = &gpu_allocator::vulkan::AllocationCreateDesc {
+            name: desc.name,
+            linear: true,
+            requirements: memory_requirements,
+            location: desc.ty,
+            allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+        };
+
+        let allocation = match allocator.inner.write().allocate(desc) {
+            Ok(allocation) => allocation,
+            Err(error) => {
+                panic!("{}: {:?}", error, desc);
+            }
+        };
 
         self.set_object_name(unsafe { allocation.memory() }, desc.name);
         self.set_object_name(buffer, desc.name);
@@ -1688,5 +1691,217 @@ pub struct PendingImageUpload {
 impl PendingImageUpload {
     pub fn into_inner(self) -> IndexedImage {
         self.image
+    }
+}
+
+pub struct StagingBuffer {
+    offset: usize,
+    staging_buffer: Buffer,
+    command_buffer: CommandBuffer,
+    buffer_size: u64,
+}
+
+impl StagingBuffer {
+    pub fn new(device: &Device, buffer_size: u64) -> Self {
+        let command_buffer = device.create_command_buffer(QueueType::Transfer);
+        unsafe {
+            device
+                .begin_command_buffer(*command_buffer, &Default::default())
+                .unwrap()
+        };
+
+        Self {
+            offset: 0,
+            buffer_size,
+            staging_buffer: device
+                .create_buffer(BufferDescriptor {
+                    size: buffer_size,
+                    name: "staging buffer",
+                    ty: MemoryLocation::CpuToGpu,
+                })
+                .unwrap(),
+            command_buffer,
+        }
+    }
+
+    pub fn flush(&mut self, device: &Device) {
+        dbg!("flushing");
+        let fence = device.create_fence();
+        unsafe {
+            device.end_command_buffer(*self.command_buffer).unwrap();
+            device
+                .queue_submit(
+                    *device.transfer_queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
+                    *fence,
+                )
+                .unwrap();
+
+            device.wait_for_fences(&[*fence], true, !0).unwrap();
+
+            device.reset_command_buffer(&self.command_buffer);
+            device
+                .begin_command_buffer(*self.command_buffer, &Default::default())
+                .unwrap()
+        }
+        self.offset = 0;
+    }
+
+    pub fn finish(self, device: &Device) {
+        dbg!("finishing");
+        let fence = device.create_fence();
+        unsafe {
+            device.end_command_buffer(*self.command_buffer).unwrap();
+            device
+                .queue_submit(
+                    *device.transfer_queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
+                    *fence,
+                )
+                .unwrap();
+
+            device.wait_for_fences(&[*fence], true, !0).unwrap();
+        }
+    }
+
+    fn allocate<R: Read>(&mut self, device: &Device, size: usize, mut reader: R) -> usize {
+        self.offset = self.offset.next_multiple_of(16);
+        if size > self.buffer_size as usize {
+            self.flush(device);
+            self.buffer_size = (self.buffer_size * 2).max(size as u64);
+            self.staging_buffer = device
+                .create_buffer(BufferDescriptor {
+                    size: self.buffer_size,
+                    name: "staging buffer",
+                    ty: MemoryLocation::CpuToGpu,
+                })
+                .unwrap();
+        } else if size > (self.buffer_size as usize).saturating_sub(self.offset) {
+            self.flush(device);
+        }
+        reader
+            .read_exact(
+                &mut self.staging_buffer.try_as_slice_mut().unwrap()
+                    [self.offset..self.offset + size],
+            )
+            .unwrap();
+        let offset = self.offset;
+        self.offset += size as usize;
+        offset
+    }
+
+    pub fn create_buffer<R: Read>(
+        &mut self,
+        device: &Device,
+        name: &str,
+        size: usize,
+        reader: R,
+    ) -> Buffer {
+        let offset = self.allocate(device, size, reader);
+        let buffer = device
+            .create_buffer(BufferDescriptor {
+                name,
+                size: size as _,
+                ty: MemoryLocation::GpuOnly,
+            })
+            .unwrap();
+        unsafe {
+            device.cmd_copy_buffer(
+                *self.command_buffer,
+                *self.staging_buffer.buffer,
+                *buffer.buffer,
+                &[vk::BufferCopy {
+                    src_offset: offset as _,
+                    dst_offset: 0,
+                    size: size as _,
+                }],
+            );
+        }
+        buffer
+    }
+
+    pub fn create_sampled_image(
+        &mut self,
+        device: &Device,
+        desc: SampledImageDescriptor,
+        bytes: &[u8],
+        transition_to: QueueType,
+        lod_offsets: &[u64],
+    ) -> Image {
+        let offset = self.allocate(device, bytes.len() as _, std::io::Cursor::new(bytes));
+        let mip_levels = lod_offsets.len() as u32;
+        let image = device.create_image(ImageDescriptor {
+            name: desc.name,
+            format: desc.format,
+            extent: desc.extent,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            ty: vk::ImageViewType::TYPE_2D,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels,
+        });
+        unsafe {
+            device.insert_pipeline_barrier(
+                &self.command_buffer,
+                None,
+                &[],
+                &[ImageBarrier {
+                    previous_accesses: &[],
+                    next_accesses: &[AccessType::TransferWrite],
+                    previous_layout: ImageLayout::Optimal,
+                    next_layout: ImageLayout::Optimal,
+                    range: image.subresource_range,
+                    discard_contents: true,
+                    image: *image.image,
+                    src_queue_family_index: device.transfer_queue.index,
+                    dst_queue_family_index: device.transfer_queue.index,
+                }],
+            );
+
+            let copies: Vec<_> = lod_offsets
+                .iter()
+                .enumerate()
+                .map(|(i, &lod_offset)| {
+                    vk::BufferImageCopy::default()
+                        .buffer_offset(offset as u64 + lod_offset)
+                        .image_extent(vk::Extent3D {
+                            width: image.extent.width >> i,
+                            height: image.extent.height >> i,
+                            depth: image.extent.depth,
+                        })
+                        .image_subresource(
+                            vk::ImageSubresourceLayers::default()
+                                .layer_count(1)
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .mip_level(i as _),
+                        )
+                })
+                .collect();
+
+            device.cmd_copy_buffer_to_image(
+                *self.command_buffer,
+                *self.staging_buffer.buffer,
+                *image.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &copies,
+            );
+
+            device.insert_pipeline_barrier(
+                &self.command_buffer,
+                None,
+                &[],
+                &[ImageBarrier {
+                    previous_accesses: &[AccessType::TransferWrite],
+                    next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
+                    previous_layout: ImageLayout::Optimal,
+                    next_layout: ImageLayout::Optimal,
+                    range: image.subresource_range,
+                    discard_contents: false,
+                    image: *image.image,
+                    src_queue_family_index: device.transfer_queue.index,
+                    dst_queue_family_index: device.get_queue(transition_to).index,
+                }],
+            );
+        }
+        image
     }
 }

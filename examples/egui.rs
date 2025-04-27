@@ -221,6 +221,7 @@ impl winit::application::ApplicationHandler for App {
                         &clipped_meshes,
                         state.window.scale_factor() as _,
                         [extent.width, extent.height],
+                        current_frame,
                     );
 
                     device.cmd_end_rendering(**command_buffer);
