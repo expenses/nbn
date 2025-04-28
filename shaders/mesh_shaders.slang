@@ -32,15 +32,9 @@ bool coneCull(
         > cone_cutoff + radius / length(center - camera_position);
 }
 
-#define AS_GROUP_SIZE 64
+groupshared uint[64] gs_meshlet_instance_indices;
 
-struct Payload {
-    uint MeshletIndices[AS_GROUP_SIZE];
-};
-
-groupshared Payload sPayload;
-
-[shader("amplification")][numthreads(AS_GROUP_SIZE, 1, 1)] void task(
+[shader("amplification")][numthreads(64, 1, 1)] void task(
     uniform PushConstants push_constants,
     uint gtid : SV_GroupThreadID,
     uint meshlet_instance_index : SV_DispatchThreadID,
@@ -49,12 +43,15 @@ groupshared Payload sPayload;
 
     let is_alpha_clipped = push_constants.is_alpha_clipped_meshlets != 0;
 
+    // Check that we're in range for the number of meshlets being drawn.
+
     let num = is_alpha_clipped ? uniforms.num_alpha_clipped_meshlets()
                                : uniforms.num_opaque_meshlets();
 
     var visible = meshlet_instance_index < num;
 
     if (visible) {
+        // Binary search to find out what instance we're rasterizing meshlets for.
         let prefix_sum_buffer =
             uniforms.get_prefix_sum_buffer(is_alpha_clipped);
 
@@ -64,19 +61,13 @@ groupshared Payload sPayload;
         let instance = uniforms.instances[val.index];
         let model = uniforms.models[instance.model_index];
 
+        // Calculate the index of the meshlet inside the model.
         uint32_t local_meshlet_index =
             meshlet_instance_index - (val.sum - model.num_meshlets);
 
         Meshlet meshlet = model.meshlets[local_meshlet_index];
 
-        if (is_alpha_clipped) {
-            meshlet_instance_index += uniforms.num_opaque_meshlets();
-        }
-
-        uniforms.meshlet_instances[meshlet_instance_index] = {
-            meshlet,
-            val.index
-        };
+        // Attempt to cull the meshlet.
 
         let view_center = mul(uniforms.view, float4(meshlet.center, 1.0)).xyz;
 
@@ -99,14 +90,25 @@ groupshared Payload sPayload;
             > -meshlet.radius;
 
         if (visible) {
+            // Correctly calculate output index and write the meshlet instance.
+
+            if (is_alpha_clipped) {
+                meshlet_instance_index += uniforms.num_opaque_meshlets();
+            }
+
+            uniforms.meshlet_instances[meshlet_instance_index] = {
+                meshlet,
+                val.index
+            };
+
             let index = WavePrefixSum(visible);
-            sPayload.MeshletIndices[index] = meshlet_instance_index;
+            gs_meshlet_instance_indices[index] = meshlet_instance_index;
         }
     }
 
     let num_visible = WaveActiveCountBits(visible);
 
-    DispatchMesh(num_visible, 1, 1, sPayload);
+    DispatchMesh(num_visible, 1, 1, gs_meshlet_instance_indices);
 }
 
     [shader("mesh")][outputtopology("triangle")]
@@ -114,13 +116,13 @@ groupshared Payload sPayload;
         uniform PushConstants push_constants,
         uint gtid : SV_GroupThreadID,
         uint gid : SV_GroupID,
-        in payload Payload payload,
+        in payload uint[64] meshlet_instance_indices,
         out indices uint3 triangles[128],
         out vertices Interp vertices[64],
         out primitives PerPrimitive triangle_visbuffer_values[128],
     ) {
     let uniforms = push_constants.uniforms;
-    var meshlet_instance_index = payload.MeshletIndices[gid];
+    var meshlet_instance_index = meshlet_instance_indices[gid];
     let meshlet_instance = uniforms.meshlet_instances[meshlet_instance_index];
     let meshlet = meshlet_instance.meshlet;
 
