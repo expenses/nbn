@@ -62,6 +62,8 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
         models: *state.models,
         camera_position: camera_pos.into(),
         frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
+        opaque_prefix_sum_values: *state.prefix_sum_values,
+        alpha_clip_prefix_sum_values: *state.prefix_sum_values + (8 * 5_000),
     };
 
     let uniforms_ptr = *state.combined_uniform_buffer
@@ -135,8 +137,8 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
 
         device.insert_global_barrier(
             command_buffer,
-            &[nbn::AccessType::ComputeShaderWrite],
-            &[nbn::AccessType::ComputeShaderReadOther],
+            &[nbn::AccessType::ComputeShaderReadWrite],
+            &[nbn::AccessType::ComputeShaderReadWrite],
         );
 
         device.cmd_bind_pipeline(
@@ -144,44 +146,19 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             vk::PipelineBindPoint::COMPUTE,
             *state.compute_pipelines.generate_meshlet_prefix_sums,
         );
-        device.push_constants(
-            command_buffer,
-            (
-                uniforms_ptr,
-                *state.prefix_sum_values,
-                *state.prefix_sum_values + (8 * 5_000),
-            ),
-        );
+        device.push_constants(command_buffer, (uniforms_ptr,));
         device.cmd_dispatch(**command_buffer, state.num_instances.div_ceil(64), 1, 1);
-
-        device.insert_global_barrier(
-            command_buffer,
-            &[nbn::AccessType::ComputeShaderWrite],
-            &[nbn::AccessType::ComputeShaderReadOther],
-        );
-
-        device.cmd_bind_pipeline(
-            **command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            *state.compute_pipelines.write_meshlet_instances,
-        );
-        device.push_constants(
-            command_buffer,
-            (uniforms_ptr, *state.prefix_sum_values, 0_u32),
-        );
-        device.cmd_dispatch_indirect(**command_buffer, *state.dispatches.buffer, 4 * 4 * 2);
-        device.push_constants(
-            command_buffer,
-            (uniforms_ptr, *state.prefix_sum_values + (8 * 5_000), 1_u32),
-        );
-        device.cmd_dispatch_indirect(**command_buffer, *state.dispatches.buffer, 4 * 4 * 3);
 
         nbn::pipeline_barrier(
             device,
             **command_buffer,
             Some(nbn::GlobalBarrier {
-                previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
-                next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
+                previous_accesses: &[nbn::AccessType::ComputeShaderReadWrite],
+                next_accesses: &[
+                    nbn::AccessType::ComputeShaderReadWrite,
+                    nbn::AccessType::TaskShaderReadOther,
+                    nbn::AccessType::MeshShaderReadOther,
+                ],
             }),
             &[],
             &[

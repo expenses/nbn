@@ -1,5 +1,5 @@
-[vk::binding(0,0)] Sampler2D sampled_images[];
-[vk::binding(1,0)] __DynamicResource storage_images[];
+[vk::binding(0, 0)] Sampler2D sampled_images[];
+[vk::binding(1, 0)] __DynamicResource storage_images[];
 
 import common;
 import models;
@@ -12,16 +12,18 @@ struct BlitPC {
 };
 
 float4 sample(uint index, WithDerivatives<float2> uv) {
-    return sampled_images[NonUniformResourceIndex(index)].SampleGrad(uv.val, uv.dx, uv.dy);
+    return sampled_images[NonUniformResourceIndex(index)]
+        .SampleGrad(uv.val, uv.dx, uv.dy);
 }
 
-[shader("compute")]
-[NumThreads(8, 8, 1)]
-void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constants) {
+[shader("compute")][NumThreads(8, 8, 1)] void resolve_visbuffer(
+    uint2 thread : SV_DispatchThreadID,
+    uniform BlitPC constants
+) {
     let uniforms = constants.uniforms;
 
     Texture2D<uint> input_image = storage_images[uniforms.visbuffer];
-    RWTexture2D<float3> output_image = storage_images[constants.output_image];
+    RWTexture2D<float4> output_image = storage_images[constants.output_image];
 
     if (any(thread > uniforms.extent)) {
         return;
@@ -30,7 +32,7 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
     let val = input_image[thread];
 
     if (val == max_value) {
-        output_image.Store(thread, float3(1,1,0));
+        output_image.Store(thread, float4(0.2, 0.2, 0.6, 1));
         return;
     }
 
@@ -43,18 +45,25 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
     let material = model.material;
 
     let indices = uint3(
-        model.vertices[meshlet.vertex_offset + model.triangles[meshlet.triangle_offset + triangle_index * 3 + 0]],
-        model.vertices[meshlet.vertex_offset + model.triangles[meshlet.triangle_offset + triangle_index * 3 + 1]],
-        model.vertices[meshlet.vertex_offset + model.triangles[meshlet.triangle_offset + triangle_index * 3 + 2]],
+        model.vertices
+            [meshlet.vertex_offset
+             + model.triangles
+                   [meshlet.triangle_offset + triangle_index * 3 + 0]],
+        model.vertices
+            [meshlet.vertex_offset
+             + model.triangles
+                   [meshlet.triangle_offset + triangle_index * 3 + 1]],
+        model.vertices
+            [meshlet.vertex_offset
+             + model.triangles
+                   [meshlet.triangle_offset + triangle_index * 3 + 2]],
     );
 
     let pos_a = model.positions[indices.x] + instance.position.xyz;
     let pos_b = model.positions[indices.y] + instance.position.xyz;
     let pos_c = model.positions[indices.z] + instance.position.xyz;
 
-    let ndc =
-        float2(thread) / float2(uniforms.extent) * 2.0
-        - 1.0;
+    let ndc = float2(thread) / float2(uniforms.extent) * 2.0 - 1.0;
 
     let bary = CalcFullBary(
         mul(uniforms.mat, float4(pos_a, 1.0)),
@@ -66,9 +75,20 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
 
     let pos = interpolate(bary, pos_a, pos_b, pos_c);
 
-    let uv = interpolate(bary, model.uvs[indices.x], model.uvs[indices.y], model.uvs[indices.z]);
+    let uv = interpolate(
+        bary,
+        model.uvs[indices.x],
+        model.uvs[indices.y],
+        model.uvs[indices.z]
+    );
 
-    var normal = normalize(interpolate(bary, model.normals[indices.x], model.normals[indices.y], model.normals[indices.z]).val);
+    var normal = normalize(interpolate(
+                               bary,
+                               model.normals[indices.x],
+                               model.normals[indices.y],
+                               model.normals[indices.z]
+    )
+                               .val);
 
     var base_colour = float3(1);
     var roughness = 1.0;
@@ -79,14 +99,14 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
 
         if (all(sampled_normal != float3(0.0))) {
             let map_normal = sampled_normal * 255.0 / 127.0 - 128.0 / 127.0;
-             normal = normalize(
+            normal = normalize(
                 mul(compute_cotangent_frame(normal, pos, uv), map_normal)
             );
         }
     }
 
     if (material.metallic_roughness_image != max_value) {
-        let metal_roughness =sample(material.metallic_roughness_image, uv);
+        let metal_roughness = sample(material.metallic_roughness_image, uv);
         roughness = metal_roughness.g;
         is_metallic = metal_roughness.b;
     }
@@ -96,12 +116,12 @@ void resolve_visbuffer(uint2 thread: SV_DispatchThreadID, uniform BlitPC constan
         base_colour = sample.rgb;
     }
 
-    let sun = normalize(float3(1.0,2.0,0.75));
+    let sun = normalize(float3(1.0, 2.0, 0.75));
 
     var factor = dot(sun, normal);
 
     factor = max(factor, .1);
 
     let output = factor * base_colour;
-    output_image.Store(thread, srgb_lin2encoded(output));
+    output_image.Store(thread, float4(srgb_lin2encoded(output), 1.0));
 }

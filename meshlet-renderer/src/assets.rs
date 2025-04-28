@@ -10,26 +10,38 @@ fn create_image(
     let image = if filename.ends_with(".dds") {
         let dds = ddsfile::Dds::read(std::fs::File::open(filename).unwrap()).unwrap();
 
-        let format = match dds.get_dxgi_format().unwrap() {
-            ddsfile::DxgiFormat::BC1_UNorm_sRGB => vk::Format::BC1_RGB_SRGB_BLOCK,
-            ddsfile::DxgiFormat::BC3_UNorm_sRGB => vk::Format::BC3_SRGB_BLOCK,
-            ddsfile::DxgiFormat::BC5_UNorm => vk::Format::BC5_UNORM_BLOCK,
+        // See for bpp values.
+        // https://learn.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-block-compression
+        let (format, bits_per_pixel) = match dds.get_dxgi_format().unwrap() {
+            ddsfile::DxgiFormat::BC1_UNorm_sRGB => (vk::Format::BC1_RGB_SRGB_BLOCK, 4),
+            ddsfile::DxgiFormat::BC3_UNorm_sRGB => (vk::Format::BC3_SRGB_BLOCK, 8),
+            ddsfile::DxgiFormat::BC5_UNorm => (vk::Format::BC5_UNORM_BLOCK, 8),
             other => panic!("{:?}", other),
         };
+        let extent = vk::Extent3D {
+            width: dds.get_width(),
+            height: dds.get_height(),
+            depth: 1,
+        };
+        let mut offset = 0;
+        let mut offsets = Vec::new();
+        for i in (0..dds.get_num_mipmap_levels()) {
+            offsets.push(offset);
+            let level_width = (extent.width >> i).max(1).next_multiple_of(4) as u64;
+            let level_height = (extent.height >> i).max(1).next_multiple_of(4) as u64;
+            offset += (level_width * level_height) * bits_per_pixel / 8;
+        }
+
         staging_buffer.create_sampled_image(
             device,
             nbn::SampledImageDescriptor {
                 name: filename,
-                extent: vk::Extent3D {
-                    width: dds.get_width(),
-                    height: dds.get_height(),
-                    depth: 1,
-                },
+                extent,
                 format,
             },
             dds.get_data(0).unwrap(),
             transition_to,
-            &[0],
+            &offsets,
         )
     } else if filename.ends_with(".ktx2") {
         let ktx2 = ktx2::Reader::new(std::fs::read(filename).unwrap()).unwrap();

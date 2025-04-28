@@ -32,13 +32,15 @@ impl Renderer {
             temporary_textures: Default::default(),
             textures: Default::default(),
             pipeline: device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-                vertex: nbn::ShaderDesc {
-                    entry_point: c"vertex",
-                    module: &egui_shader,
-                },
-                fragment: nbn::ShaderDesc {
-                    entry_point: fragment_entry_point,
-                    module: &egui_shader,
+                shaders: nbn::GraphicsPipelineShaders::Legacy {
+                    vertex: nbn::ShaderDesc {
+                        entry_point: c"vertex",
+                        module: &egui_shader,
+                    },
+                    fragment: nbn::ShaderDesc {
+                        entry_point: fragment_entry_point,
+                        module: &egui_shader,
+                    },
                 },
                 color_attachment_formats: &[color_attachment_format],
                 blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
@@ -51,7 +53,6 @@ impl Renderer {
                     .src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
                     .dst_alpha_blend_factor(vk::BlendFactor::ONE)],
 
-                mesh_shader: false,
                 conservative_rasterization: false,
                 depth: nbn::GraphicsPipelineDepthDesc::default(),
                 cull_mode: vk::CullModeFlags::NONE,

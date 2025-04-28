@@ -16,13 +16,19 @@ slang_struct::slang_include!("shaders/uniforms.slang");
 fn create_mesh_pipeline(device: &nbn::Device, shader: &nbn::ShaderModule) -> MeshPipelines {
     let create_pipeline = |fragment: &CStr, cull_mode| {
         device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-            vertex: nbn::ShaderDesc {
-                module: shader,
-                entry_point: c"vertex",
-            },
-            fragment: nbn::ShaderDesc {
-                module: shader,
-                entry_point: fragment,
+            shaders: nbn::GraphicsPipelineShaders::Task {
+                task: nbn::ShaderDesc {
+                    module: shader,
+                    entry_point: c"task",
+                },
+                mesh: nbn::ShaderDesc {
+                    module: shader,
+                    entry_point: c"vertex",
+                },
+                fragment: nbn::ShaderDesc {
+                    module: shader,
+                    entry_point: fragment,
+                },
             },
             color_attachment_formats: &[vk::Format::R32_UINT],
             blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
@@ -35,7 +41,6 @@ fn create_mesh_pipeline(device: &nbn::Device, shader: &nbn::ShaderModule) -> Mes
                 format: vk::Format::D32_SFLOAT,
             },
             cull_mode,
-            mesh_shader: true,
         })
     };
 
@@ -53,7 +58,6 @@ struct MeshPipelines {
 struct ComputePipelines {
     reset_buffers: nbn::Pipeline,
     generate_meshlet_prefix_sums: nbn::Pipeline,
-    write_meshlet_instances: nbn::Pipeline,
 }
 
 #[derive(Default)]
@@ -202,19 +206,20 @@ impl winit::application::ApplicationHandler for App {
             num_debug_meshlet_instances,
             debug_meshlet_instances,
             debugging_pipeline: device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-                vertex: nbn::ShaderDesc {
-                    module: &debugging_module,
-                    entry_point: c"model_debug_vertex",
-                },
-                fragment: nbn::ShaderDesc {
-                    module: &debugging_module,
-                    entry_point: c"model_debug_fragment",
+                shaders: nbn::GraphicsPipelineShaders::Legacy {
+                    vertex: nbn::ShaderDesc {
+                        module: &debugging_module,
+                        entry_point: c"model_debug_vertex",
+                    },
+                    fragment: nbn::ShaderDesc {
+                        module: &debugging_module,
+                        entry_point: c"model_debug_fragment",
+                    },
                 },
                 conservative_rasterization: false,
                 cull_mode: vk::CullModeFlags::BACK,
                 blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
                     .color_write_mask(vk::ColorComponentFlags::RGBA)],
-                mesh_shader: false,
                 depth: nbn::GraphicsPipelineDepthDesc {
                     write_enable: true,
                     test_enable: true,
@@ -225,19 +230,20 @@ impl winit::application::ApplicationHandler for App {
             }),
             meshlet_debugging_pipeline: device.create_graphics_pipeline(
                 nbn::GraphicsPipelineDesc {
-                    vertex: nbn::ShaderDesc {
-                        module: &debugging_module,
-                        entry_point: c"meshlet_debug_vertex",
-                    },
-                    fragment: nbn::ShaderDesc {
-                        module: &debugging_module,
-                        entry_point: c"model_debug_fragment",
+                    shaders: nbn::GraphicsPipelineShaders::Legacy {
+                        vertex: nbn::ShaderDesc {
+                            module: &debugging_module,
+                            entry_point: c"meshlet_debug_vertex",
+                        },
+                        fragment: nbn::ShaderDesc {
+                            module: &debugging_module,
+                            entry_point: c"model_debug_fragment",
+                        },
                     },
                     conservative_rasterization: false,
                     cull_mode: vk::CullModeFlags::BACK,
                     blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
                         .color_write_mask(vk::ColorComponentFlags::RGBA)],
-                    mesh_shader: false,
                     depth: nbn::GraphicsPipelineDepthDesc {
                         write_enable: true,
                         test_enable: true,
@@ -273,8 +279,7 @@ impl winit::application::ApplicationHandler for App {
             dispatches: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "dispatches",
-                    size: (std::mem::size_of::<[vk::DrawMeshTasksIndirectCommandEXT; 4]>() + 8 * 2)
-                        as _,
+                    size: (4 * 4 * 4 + 8 * 2 + 4 * 2) as _,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
@@ -310,8 +315,6 @@ impl winit::application::ApplicationHandler for App {
                     reset_buffers: device.create_compute_pipeline(shader, c"reset_buffers"),
                     generate_meshlet_prefix_sums: device
                         .create_compute_pipeline(shader, c"generate_meshlet_prefix_sums"),
-                    write_meshlet_instances: device
-                        .create_compute_pipeline(shader, c"write_meshlet_instances"),
                 },
             ),
             blit_pipeline: nbn::ReloadablePipeline::new(

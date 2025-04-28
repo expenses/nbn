@@ -302,6 +302,7 @@ impl Device {
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_mesh_shader_features.mesh_shader > 0);
+        assert!(enabled_mesh_shader_features.task_shader > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
             .shader_int16(true)
@@ -334,8 +335,9 @@ impl Device {
             .dynamic_rendering(true)
             .synchronization2(true);
 
-        let mut mesh_shader_features =
-            vk::PhysicalDeviceMeshShaderFeaturesEXT::default().mesh_shader(true);
+        let mut mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesEXT::default()
+            .mesh_shader(true)
+            .task_shader(true);
 
         let mut queue_infos = vec![vk::DeviceQueueCreateInfo::default()
             .queue_family_index(graphics_queue_family_index)
@@ -489,7 +491,8 @@ impl Device {
                             vk::ShaderStageFlags::COMPUTE
                                 | vk::ShaderStageFlags::VERTEX
                                 | vk::ShaderStageFlags::FRAGMENT
-                                | vk::ShaderStageFlags::MESH_EXT,
+                                | vk::ShaderStageFlags::MESH_EXT
+                                | vk::ShaderStageFlags::TASK_EXT,
                         )
                         .offset(0)
                         .size(properties.limits.max_push_constants_size)]),
@@ -1045,7 +1048,8 @@ impl Device {
                 vk::ShaderStageFlags::COMPUTE
                     | vk::ShaderStageFlags::VERTEX
                     | vk::ShaderStageFlags::FRAGMENT
-                    | vk::ShaderStageFlags::MESH_EXT,
+                    | vk::ShaderStageFlags::MESH_EXT
+                    | vk::ShaderStageFlags::TASK_EXT,
                 0,
                 cast_slice(&[data]),
             );
@@ -1268,24 +1272,52 @@ impl Device {
                     vk::ConservativeRasterizationModeEXT::DISABLED
                 });
 
+        let stages: &[vk::PipelineShaderStageCreateInfo] = match desc.shaders {
+            GraphicsPipelineShaders::Legacy { vertex, fragment } => &[
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::VERTEX)
+                    .name(vertex.entry_point)
+                    .module(**vertex.module),
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::FRAGMENT)
+                    .name(fragment.entry_point)
+                    .module(**fragment.module),
+            ],
+            GraphicsPipelineShaders::Mesh { mesh, fragment } => &[
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::MESH_EXT)
+                    .name(mesh.entry_point)
+                    .module(**mesh.module),
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::FRAGMENT)
+                    .name(fragment.entry_point)
+                    .module(**fragment.module),
+            ],
+            GraphicsPipelineShaders::Task {
+                task,
+                mesh,
+                fragment,
+            } => &[
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::TASK_EXT)
+                    .name(task.entry_point)
+                    .module(**task.module),
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::MESH_EXT)
+                    .name(mesh.entry_point)
+                    .module(**mesh.module),
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::FRAGMENT)
+                    .name(fragment.entry_point)
+                    .module(**fragment.module),
+            ],
+        };
+
         let pipelines = unsafe {
             self.device.create_graphics_pipelines(
                 vk::PipelineCache::null(),
                 &[vk::GraphicsPipelineCreateInfo::default()
-                    .stages(&[
-                        vk::PipelineShaderStageCreateInfo::default()
-                            .stage(if desc.mesh_shader {
-                                vk::ShaderStageFlags::MESH_EXT
-                            } else {
-                                vk::ShaderStageFlags::VERTEX
-                            })
-                            .name(desc.vertex.entry_point)
-                            .module(**desc.vertex.module),
-                        vk::PipelineShaderStageCreateInfo::default()
-                            .stage(vk::ShaderStageFlags::FRAGMENT)
-                            .name(desc.fragment.entry_point)
-                            .module(**desc.fragment.module),
-                    ])
+                    .stages(stages)
                     .vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
                     .input_assembly_state(
                         &vk::PipelineInputAssemblyStateCreateInfo::default()
@@ -1593,14 +1625,28 @@ pub struct ShaderDesc<'a> {
 }
 
 pub struct GraphicsPipelineDesc<'a> {
-    pub vertex: ShaderDesc<'a>,
-    pub fragment: ShaderDesc<'a>,
+    pub shaders: GraphicsPipelineShaders<'a>,
     pub color_attachment_formats: &'a [vk::Format],
     pub blend_attachments: &'a [vk::PipelineColorBlendAttachmentState],
     pub conservative_rasterization: bool,
     pub cull_mode: vk::CullModeFlags,
     pub depth: GraphicsPipelineDepthDesc,
-    pub mesh_shader: bool,
+}
+
+pub enum GraphicsPipelineShaders<'a> {
+    Legacy {
+        vertex: ShaderDesc<'a>,
+        fragment: ShaderDesc<'a>,
+    },
+    Mesh {
+        mesh: ShaderDesc<'a>,
+        fragment: ShaderDesc<'a>,
+    },
+    Task {
+        task: ShaderDesc<'a>,
+        mesh: ShaderDesc<'a>,
+        fragment: ShaderDesc<'a>,
+    },
 }
 
 #[derive(Default)]

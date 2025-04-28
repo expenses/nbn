@@ -1,11 +1,7 @@
 static uint max_value = 4294967295;
 
 float3 colour_from_val(uint val) {
-    return float3(
-        float(val & 1),
-        float(val & 3) / 4,
-        float(val & 7) / 8
-    );
+    return float3(float(val & 1), float(val & 3) / 4, float(val & 7) / 8);
 }
 
 float3 srgb_lin2encoded(float3 value) {
@@ -30,17 +26,14 @@ struct WithDerivatives<T> {
     T dy;
 };
 
-
-func gen_derivatives<T, let N: int>(vector<T, N> val) -> WithDerivatives<vector<T, N>>
-where T: __BuiltinFloatingPointType
-{
+func gen_derivatives<T, let N : int>(vector<T, N> val)
+    -> WithDerivatives<vector<T, N>> where T: __BuiltinFloatingPointType {
     WithDerivatives<vector<T, N>> out;
     out.val = val;
     out.dx = ddx(val);
     out.dy = ddy(val);
     return out;
 }
-
 
 float length_squared(float3 v) {
     return v.x * v.x + v.y * v.y + v.z * v.z;
@@ -60,4 +53,8 @@ float3x3 compute_cotangent_frame(
 
     float invmax = 1.0 / sqrt(max(length_squared(t), length_squared(b)));
     return float3x3(t * invmax, b * invmax, normal);
+}
+
+uint div_ceil(uint value, uint divisor) {
+    return (value + divisor - 1) / divisor;
 }

@@ -1,5 +1,5 @@
 struct Interp {
-    float4 pos : SV_Position;
+    float4 pos: SV_Position;
     float3 col;
 };
 

@@ -1,8 +1,10 @@
 import common;
 
-// Copied from http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/.
+// Copied from
+// http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/.
 //
-// by way of https://github.com/expenses/lighthugger/blob/main/src/shaders/common/vbuffer.glsl
+// by way of
+// https://github.com/expenses/lighthugger/blob/main/src/shaders/common/vbuffer.glsl
 
 struct BarycentricDeriv {
     float3 m_lambda;
@@ -73,7 +75,6 @@ InterpolateWithDeriv(BarycentricDeriv deriv, float v0, float v1, float v2) {
     ret.z = dot(mergedV, deriv.m_ddy);
     return ret;
 }
-
 
 // Helper structs.
 
