@@ -63,7 +63,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
         camera_position: camera_pos.into(),
         frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
         opaque_prefix_sum_values: *state.prefix_sum_values,
-        alpha_clip_prefix_sum_values: *state.prefix_sum_values + (8 * 5_000),
+        alpha_clip_prefix_sum_values: *state.prefix_sum_values + (8 * TOTAL_NUM_INSTANCES_OF_TYPE),
     };
 
     let uniforms_ptr = *state.combined_uniform_buffer

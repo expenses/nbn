@@ -37,33 +37,32 @@ groupshared uint[64] gs_meshlet_instance_indices;
 [shader("amplification")][numthreads(64, 1, 1)] void task(
     uniform PushConstants push_constants,
     uint gtid : SV_GroupThreadID,
-    uint meshlet_instance_index : SV_DispatchThreadID,
+    uint thread : SV_DispatchThreadID,
 ) {
     let uniforms = push_constants.uniforms;
 
     let is_alpha_clipped = push_constants.is_alpha_clipped_meshlets != 0;
 
+    let prefix_sum_buffer =
+        uniforms.get_prefix_sum_buffer(is_alpha_clipped);
+
     // Check that we're in range for the number of meshlets being drawn.
 
-    let num = is_alpha_clipped ? uniforms.num_alpha_clipped_meshlets()
-                               : uniforms.num_opaque_meshlets();
-
-    var visible = meshlet_instance_index < num;
+    var visible = thread < prefix_sum_total(prefix_sum_buffer);
 
     if (visible) {
         // Binary search to find out what instance we're rasterizing meshlets for.
-        let prefix_sum_buffer =
-            uniforms.get_prefix_sum_buffer(is_alpha_clipped);
 
         let val =
-            prefix_sum_binary_search(prefix_sum_buffer, meshlet_instance_index);
+            prefix_sum_binary_search(prefix_sum_buffer, thread);
 
         let instance = uniforms.instances[val.index];
         let model = uniforms.models[instance.model_index];
 
         // Calculate the index of the meshlet inside the model.
-        uint32_t local_meshlet_index =
-            meshlet_instance_index - (val.sum - model.num_meshlets);
+        let num_meshlets_before_this_instance = val.sum - model.num_meshlets;
+        let local_meshlet_index =
+            thread - num_meshlets_before_this_instance;
 
         Meshlet meshlet = model.meshlets[local_meshlet_index];
 
@@ -92,9 +91,7 @@ groupshared uint[64] gs_meshlet_instance_indices;
         if (visible) {
             // Correctly calculate output index and write the meshlet instance.
 
-            if (is_alpha_clipped) {
-                meshlet_instance_index += uniforms.num_opaque_meshlets();
-            }
+            let meshlet_instance_index = uniforms.dispatches.visible_meshlets.add(1);
 
             uniforms.meshlet_instances[meshlet_instance_index] = {
                 meshlet,

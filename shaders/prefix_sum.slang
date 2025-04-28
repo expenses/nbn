@@ -15,7 +15,7 @@ struct PrefixSumBuffer {
 // See also
 // https://research.nvidia.com/sites/default/files/pubs/2016-03_Single-pass-Parallel-Prefix/nvr-2016-002.pdf
 // apparently.
-void prefix_sum_inclusive_append(
+PrefixSumValue prefix_sum_inclusive_append(
     PrefixSumBuffer buf,
     uint32_t index,
     uint32_t value
@@ -25,9 +25,11 @@ void prefix_sum_inclusive_append(
         buf.counter.add(uint64_t(value) | upper_bits_one);
     uint32_t buffer_index = uint32_t(sum_and_counter >> 32);
 
-    buf.values[buffer_index].index = index;
     // Add the current value to make in inclusive rather than exclusive.
-    buf.values[buffer_index].sum = uint32_t(sum_and_counter) + value;
+    PrefixSumValue prefix_sum_value = {index, uint32_t(sum_and_counter) + value};
+
+    buf.values[buffer_index] = prefix_sum_value;
+    return prefix_sum_value;
 }
 
 // See https://en.cppreference.com/w/cpp/algorithm/upper_bound.

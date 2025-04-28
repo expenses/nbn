@@ -10,12 +10,11 @@ reset_buffers(uniform DispatchBuffer* buffer) {
     buffer.dispatches[1] = {0, 1, 1, 0};
     buffer.counts[0] = 0;
     buffer.counts[1] = 0;
-    buffer.total_meshlets = uint2(0);
+    buffer.visible_meshlets = 0;
 }
 
 struct PC {
     UniformBuffer* uniforms;
-
 }
 
     [shader("compute")][NumThreads(64, 1, 1)] void
@@ -35,23 +34,13 @@ struct PC {
 
     let is_alpha_clipped = model.material.flags & MaterialFlags::AlphaClipped;
 
-    uint dispatch_index = uint(is_alpha_clipped);
-
-    uint offset;
-    InterlockedAdd(
-        dispatches.total_meshlets[dispatch_index],
-        model.num_meshlets,
-        offset
-    );
-
-    uint num_meshlets_so_far = offset + model.num_meshlets;
-    InterlockedMax(
-        dispatches.dispatches[dispatch_index].x,
-        div_ceil(num_meshlets_so_far, 64)
-    );
-
     PrefixSumBuffer prefix_sum_buffer =
         uniforms.get_prefix_sum_buffer(is_alpha_clipped);
 
-    prefix_sum_inclusive_append(prefix_sum_buffer, thread, model.num_meshlets);
+    let value = prefix_sum_inclusive_append(prefix_sum_buffer, thread, model.num_meshlets);
+
+    InterlockedMax(
+        dispatches.dispatches[uint(is_alpha_clipped)].x,
+        div_ceil(value.sum, 64)
+    );
 }

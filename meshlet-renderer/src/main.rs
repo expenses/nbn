@@ -13,6 +13,9 @@ slang_struct::slang_include!("shaders/models.slang");
 slang_struct::slang_include!("shaders/culling.slang");
 slang_struct::slang_include!("shaders/uniforms.slang");
 
+const TOTAL_NUM_INSTANCES_OF_TYPE: u64 = 10_000;
+const TOTAL_NUM_VISIBLE_MESHLETS: usize = 1_000_000;
+
 fn create_mesh_pipeline(device: &nbn::Device, shader: &nbn::ShaderModule) -> MeshPipelines {
     let create_pipeline = |fragment: &CStr, cull_mode| {
         device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
@@ -135,8 +138,8 @@ impl winit::application::ApplicationHandler for App {
 
         let gltf = load_gltf(
             &device,
-            std::path::Path::new("models/citadel/voxelization_ktx2.gltf"),
-            //std::path::Path::new("models/Bistro_v5_2/bistro_combined.gltf"),
+            //std::path::Path::new("models/citadel/voxelization_ktx2.gltf"),
+            std::path::Path::new("models/Bistro_v5_2/bistro_combined.gltf"),
         );
 
         dbg!(std::mem::size_of::<Meshlet>());
@@ -272,14 +275,14 @@ impl winit::application::ApplicationHandler for App {
             prefix_sum_values: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "prefix_sum_values",
-                    size: 8 * 10_000,
+                    size: 8 * TOTAL_NUM_INSTANCES_OF_TYPE * 2,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
             dispatches: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "dispatches",
-                    size: (4 * 4 * 4 + 8 * 2 + 4 * 2) as _,
+                    size: (4 * 4 * 2 + 8 * 2 + 4),
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
@@ -351,7 +354,8 @@ impl winit::application::ApplicationHandler for App {
             meshlet_instances: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "meshlet_instances",
-                    size: (std::mem::size_of::<MeshletInstance>() * 100_000) as _,
+                    size: (std::mem::size_of::<MeshletInstance>() * TOTAL_NUM_VISIBLE_MESHLETS)
+                        as _,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),

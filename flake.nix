@@ -63,7 +63,7 @@
               clang-tools
               ninja
               (writeShellScriptBin "format-shaders" ''
-                ${clang-tools}/bin/clang-format -i shaders/*.slang --style '{IndentWidth: 4}'
+                ${clang-tools}/bin/clang-format -i shaders/*.slang
               '')
             ];
             buildInputs = [vulkan-loader];
