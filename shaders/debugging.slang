@@ -1,6 +1,8 @@
 import uniforms;
 import models;
-import common;
+import shared.constants;
+import shared.util;
+import shared.colour;
 
 struct PC {
     Model* model;
@@ -42,7 +44,7 @@ model_debug_vertex(uniform PC constants, uint vertex_index : SV_VertexID) {
 
     let material = constants.model.material;
 
-    if (material.base_colour_image != max_value) {
+    if (material.base_colour_image != MAX_UINT_VALUE) {
         base_colour = DescriptorHandle<Sampler2D>(material.base_colour_image)
                           .Sample(in.uv)
                           .rgb;

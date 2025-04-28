@@ -1,4 +1,4 @@
-import common;
+import shared.colour;
 
 struct Vertex {
     float2 pos;

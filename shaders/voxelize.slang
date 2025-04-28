@@ -1,5 +1,5 @@
 import gltf;
-import common;
+import shared.constants;
 
 func fetch_3<T>(T* values, uint[3] indices) -> T[3] {
     return {values[indices[0]], values[indices[1]], values[indices[2]]};
@@ -148,7 +148,7 @@ fragment(Interp values, uniform PushConstants push_constants, ) {
     let material = push_constants.gltf.materials[values.material_index];
     var base_colour = float3(1);
 
-    if (material.base_colour_image != max_value) {
+    if (material.base_colour_image != MAX_UINT_VALUE) {
         float4 sample = DescriptorHandle<Sampler2D>(material.base_colour_image)
                             .SampleLevel(values.uv, 0);
 
@@ -160,7 +160,7 @@ fragment(Interp values, uniform PushConstants push_constants, ) {
     }
 
     var emissive_sample = float3(0);
-    if (material.emissive_image != max_value) {
+    if (material.emissive_image != MAX_UINT_VALUE) {
         emissive_sample = DescriptorHandle<Sampler2D>(material.emissive_image)
                               .SampleLevel(values.uv, 0)
                               .rgb;
@@ -175,7 +175,7 @@ fragment(Interp values, uniform PushConstants push_constants, ) {
     var roughness = 1.0;
     var is_metallic = false;
 
-    if (material.metallic_roughness_image != max_value) {
+    if (material.metallic_roughness_image != MAX_UINT_VALUE) {
         let metal_roughness =
             DescriptorHandle<Sampler2D>(material.metallic_roughness_image)
                 .SampleLevel(values.uv, 0);

@@ -6,6 +6,8 @@ use std::collections::HashSet;
 use std::ffi::c_char;
 use std::ffi::{self, CStr};
 use std::io::Read;
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -75,7 +77,6 @@ pub struct Descriptors {
     pub set: vk::DescriptorSet,
     sampled_image_count: parking_lot::Mutex<CountTracker>,
     storage_image_count: parking_lot::Mutex<CountTracker>,
-    linear_sampler: Sampler,
 }
 
 pub use gpu_allocator::MemoryLocation;
@@ -115,16 +116,18 @@ pub struct Device {
     surface_loader: ash::khr::surface::Instance,
     pub device: ash::Device,
     pub physical_device: vk::PhysicalDevice,
-    pub descriptors: std::mem::ManuallyDrop<Descriptors>,
-    pub allocator: std::mem::ManuallyDrop<Arc<Allocator>>,
+    pub descriptors: ManuallyDrop<Descriptors>,
+    pub allocator: ManuallyDrop<Arc<Allocator>>,
     pub graphics_queue: Queue,
     pub compute_queue: Queue,
     pub transfer_queue: Queue,
     pub swapchain_loader: ash::khr::swapchain::Device,
     pub debug_utils_device_loader: ash::ext::debug_utils::Device,
-    pub pipeline_layout: std::mem::ManuallyDrop<PipelineLayout>,
+    pub pipeline_layout: ManuallyDrop<PipelineLayout>,
     pub properties: vk::PhysicalDeviceProperties,
     pub mesh_shader_loader: ash::ext::mesh_shader::Device,
+    pub repeat_sampler: ManuallyDrop<Sampler>,
+    pub clamp_sampler: ManuallyDrop<Sampler>,
 }
 
 impl Device {
@@ -278,12 +281,15 @@ impl Device {
         let mut enabled_vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default();
         let mut enabled_vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default();
         let mut enabled_mesh_shader_features = vk::PhysicalDeviceMeshShaderFeaturesEXT::default();
+        let mut enabled_mutable_descriptor_features =
+            vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT::default();
 
         let mut enabled_features = vk::PhysicalDeviceFeatures2::default()
             .push_next(&mut enabled_vulkan_1_1_features)
             .push_next(&mut enabled_vulkan_1_2_features)
             .push_next(&mut enabled_vulkan_1_3_features)
-            .push_next(&mut enabled_mesh_shader_features);
+            .push_next(&mut enabled_mesh_shader_features)
+            .push_next(&mut enabled_mutable_descriptor_features);
 
         unsafe { instance.get_physical_device_features2(pdevice, &mut enabled_features) };
         assert!(enabled_features.features.shader_int16 > 0);
@@ -303,6 +309,7 @@ impl Device {
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_mesh_shader_features.mesh_shader > 0);
         assert!(enabled_mesh_shader_features.task_shader > 0);
+        assert!(enabled_mutable_descriptor_features.mutable_descriptor_type > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
             .shader_int16(true)
@@ -339,6 +346,10 @@ impl Device {
             .mesh_shader(true)
             .task_shader(true);
 
+        let mut mutable_descriptor_features =
+            vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT::default()
+                .mutable_descriptor_type(true);
+
         let mut queue_infos = vec![vk::DeviceQueueCreateInfo::default()
             .queue_family_index(graphics_queue_family_index)
             .queue_priorities(&[1.0])];
@@ -372,12 +383,14 @@ impl Device {
                             ash::khr::shader_non_semantic_info::NAME.as_ptr(),
                             // ;)
                             ash::ext::mesh_shader::NAME.as_ptr(),
+                            ash::ext::mutable_descriptor_type::NAME.as_ptr(),
                         ])
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_1_features)
                         .push_next(&mut vulkan_1_2_features)
                         .push_next(&mut vulkan_1_3_features)
-                        .push_next(&mut mesh_shader_features),
+                        .push_next(&mut mesh_shader_features)
+                        .push_next(&mut mutable_descriptor_features),
                     None,
                 )
                 .unwrap()
@@ -396,7 +409,7 @@ impl Device {
                                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                                 .descriptor_count(counts_of_each_descriptor_type),
                             vk::DescriptorPoolSize::default()
-                                .ty(vk::DescriptorType::STORAGE_IMAGE)
+                                .ty(vk::DescriptorType::MUTABLE_EXT)
                                 .descriptor_count(counts_of_each_descriptor_type),
                         ]),
                     None,
@@ -419,14 +432,25 @@ impl Device {
                 let mut flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
                     .binding_flags(&[vk::DescriptorBindingFlags::UPDATE_AFTER_BIND; 2]);
 
+                let allowed_descriptor_types_per_binding = [
+                    vk::MutableDescriptorTypeListEXT::default(),
+                    vk::MutableDescriptorTypeListEXT::default()
+                        .descriptor_types(&[vk::DescriptorType::STORAGE_IMAGE]),
+                ];
+
+                let mut mutable_descriptor_create_info =
+                    vk::MutableDescriptorTypeCreateInfoEXT::default()
+                        .mutable_descriptor_type_lists(&allowed_descriptor_types_per_binding);
+
                 device.create_descriptor_set_layout(
                     &vk::DescriptorSetLayoutCreateInfo::default()
                         .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
                         .bindings(&[
                             binding(0, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
-                            binding(1, vk::DescriptorType::STORAGE_IMAGE),
+                            binding(1, vk::DescriptorType::MUTABLE_EXT),
                         ])
-                        .push_next(&mut flags),
+                        .push_next(&mut flags)
+                        .push_next(&mut mutable_descriptor_create_info),
                     None,
                 )
             }
@@ -454,32 +478,12 @@ impl Device {
             })
             .unwrap();
 
-        let descriptors = std::mem::ManuallyDrop::new(Descriptors {
+        let descriptors = ManuallyDrop::new(Descriptors {
             _pool: descriptor_pool,
             set: descriptor_set,
             layout: descriptor_set_layout,
             sampled_image_count: Default::default(),
             storage_image_count: Default::default(),
-            linear_sampler: Sampler::from_raw(
-                unsafe {
-                    device.create_sampler(
-                        &vk::SamplerCreateInfo::default()
-                            .anisotropy_enable(true)
-                            .max_anisotropy(properties.limits.max_sampler_anisotropy)
-                            .mag_filter(vk::Filter::LINEAR)
-                            .min_filter(vk::Filter::LINEAR)
-                            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-                            .min_lod(0.0)
-                            .max_lod(f32::MAX)
-                            .address_mode_u(vk::SamplerAddressMode::REPEAT)
-                            .address_mode_v(vk::SamplerAddressMode::REPEAT)
-                            .address_mode_w(vk::SamplerAddressMode::REPEAT),
-                        None,
-                    )
-                }
-                .unwrap(),
-                &device,
-            ),
         });
 
         let pipeline_layout = unsafe {
@@ -501,7 +505,30 @@ impl Device {
         }
         .unwrap();
 
-        Self {
+        let create_sampler = |address_mode| {
+            ManuallyDrop::new(Sampler::from_raw(
+                unsafe {
+                    device.create_sampler(
+                        &vk::SamplerCreateInfo::default()
+                            .anisotropy_enable(true)
+                            .max_anisotropy(properties.limits.max_sampler_anisotropy)
+                            .mag_filter(vk::Filter::LINEAR)
+                            .min_filter(vk::Filter::LINEAR)
+                            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                            .min_lod(0.0)
+                            .max_lod(f32::MAX)
+                            .address_mode_u(address_mode)
+                            .address_mode_v(address_mode)
+                            .address_mode_w(address_mode),
+                        None,
+                    )
+                }
+                .unwrap(),
+                &device,
+            ))
+        };
+
+        let this = Self {
             physical_device: pdevice,
             swapchain_loader: ash::khr::swapchain::Device::new(&instance, &device),
             debug_utils_device_loader: ash::ext::debug_utils::Device::new(&instance, &device),
@@ -511,22 +538,27 @@ impl Device {
             debug_callback,
             debug_utils_loader,
             surface_loader,
-            pipeline_layout: std::mem::ManuallyDrop::new(PipelineLayout::from_raw(
-                pipeline_layout,
-                &device,
-            )),
+            pipeline_layout: ManuallyDrop::new(PipelineLayout::from_raw(pipeline_layout, &device)),
             descriptors,
             graphics_queue: Queue::new(&device, graphics_queue_family_index),
             compute_queue: Queue::new(&device, compute_queue_family_index),
             transfer_queue: Queue::new(&device, transfer_queue_family_index),
+            repeat_sampler: create_sampler(vk::SamplerAddressMode::REPEAT),
+            clamp_sampler: create_sampler(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+
             device,
-            allocator: std::mem::ManuallyDrop::new(Arc::new(Allocator {
+            allocator: ManuallyDrop::new(Arc::new(Allocator {
                 inner: RwLock::new(allocator),
                 deallocation_notifier: Default::default(),
                 deallocation_mutex: Default::default(),
             })),
             properties,
-        }
+        };
+
+        this.set_object_name(**this.repeat_sampler, "repeat_sampler");
+        this.set_object_name(**this.clamp_sampler, "clamp_sampler");
+
+        this
     }
 
     pub fn get_memory_budget(&self) -> vk::PhysicalDeviceMemoryBudgetPropertiesEXT {
@@ -625,8 +657,8 @@ impl Device {
 
         Swapchain {
             images: swapchain_images,
-            surface: std::mem::ManuallyDrop::new(surface),
-            swapchain: std::mem::ManuallyDrop::new(swapchain),
+            surface: ManuallyDrop::new(surface),
+            swapchain: ManuallyDrop::new(swapchain),
             create_info,
         }
     }
@@ -677,9 +709,9 @@ impl Device {
             .collect();
 
         unsafe {
-            std::mem::ManuallyDrop::drop(&mut swapchain.swapchain);
+            ManuallyDrop::drop(&mut swapchain.swapchain);
         }
-        swapchain.swapchain = std::mem::ManuallyDrop::new(raw_swapchain);
+        swapchain.swapchain = ManuallyDrop::new(raw_swapchain);
     }
 
     pub fn create_surface(&self, window: &Window) -> Surface {
@@ -873,7 +905,7 @@ impl Device {
     }
 
     pub fn register_image(&self, view: vk::ImageView, is_storage: bool) -> u32 {
-        self.register_image_with_sampler(view, &self.descriptors.linear_sampler, is_storage)
+        self.register_image_with_sampler(view, &self.repeat_sampler, is_storage)
     }
 
     pub fn create_image_with_data_in_command_buffer(
@@ -895,7 +927,11 @@ impl Device {
             format: desc.format,
             extent: desc.extent,
             usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            ty: vk::ImageViewType::TYPE_2D,
+            ty: if desc.extent.depth > 1 {
+                vk::ImageViewType::TYPE_3D
+            } else {
+                vk::ImageViewType::TYPE_2D
+            },
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });
@@ -1235,7 +1271,6 @@ impl Device {
         ReloadableShader {
             inner: self.load_shader(path),
             dirty,
-            path: path.to_owned(),
             _watcher: watcher,
         }
     }
@@ -1256,7 +1291,10 @@ impl Device {
 
         self.set_object_name(shader_module, path.to_str().unwrap());
 
-        ShaderModule::from_raw(shader_module, &self.device)
+        ShaderModule {
+            inner: WrappedShaderModule::from_raw(shader_module, &self.device),
+            path: path.into(),
+        }
     }
 
     pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Pipeline {
@@ -1362,7 +1400,11 @@ impl Device {
         }
         .unwrap();
 
-        Pipeline::from_raw(pipelines[0], &self.device)
+        let pipeline = pipelines[0];
+
+        self.set_object_name(pipeline, desc.name);
+
+        Pipeline::from_raw(pipeline, &self.device)
     }
 
     pub fn create_compute_pipeline(&self, module: &ShaderModule, entry_point: &CStr) -> Pipeline {
@@ -1381,7 +1423,18 @@ impl Device {
         }
         .unwrap();
 
-        Pipeline::from_raw(pipelines[0], &self.device)
+        let pipeline = pipelines[0];
+
+        self.set_object_name(
+            pipeline,
+            &format!(
+                "{} - {}",
+                module.path.display(),
+                entry_point.to_str().unwrap()
+            ),
+        );
+
+        Pipeline::from_raw(pipeline, &self.device)
     }
 
     pub fn get_queue(&self, ty: QueueType) -> &Queue {
@@ -1515,9 +1568,11 @@ impl Drop for Device {
             .report_memory_leaks(log::Level::Error);
 
         unsafe {
-            std::mem::ManuallyDrop::drop(&mut self.allocator);
-            std::mem::ManuallyDrop::drop(&mut self.descriptors);
-            std::mem::ManuallyDrop::drop(&mut self.pipeline_layout);
+            ManuallyDrop::drop(&mut self.allocator);
+            ManuallyDrop::drop(&mut self.descriptors);
+            ManuallyDrop::drop(&mut self.pipeline_layout);
+            ManuallyDrop::drop(&mut self.repeat_sampler);
+            ManuallyDrop::drop(&mut self.clamp_sampler);
 
             self.device.destroy_device(None);
 
@@ -1562,9 +1617,22 @@ macro_rules! wrap_raii_struct {
     };
 }
 
+pub struct ShaderModule {
+    inner: WrappedShaderModule,
+    path: PathBuf,
+}
+
+impl Deref for ShaderModule {
+    type Target = vk::ShaderModule;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 wrap_raii_struct!(Fence, vk::Fence, ash::Device::destroy_fence);
 wrap_raii_struct!(
-    ShaderModule,
+    WrappedShaderModule,
     vk::ShaderModule,
     ash::Device::destroy_shader_module
 );
@@ -1625,6 +1693,7 @@ pub struct ShaderDesc<'a> {
 }
 
 pub struct GraphicsPipelineDesc<'a> {
+    pub name: &'a str,
     pub shaders: GraphicsPipelineShaders<'a>,
     pub color_attachment_formats: &'a [vk::Format],
     pub blend_attachments: &'a [vk::PipelineColorBlendAttachmentState],
@@ -1832,7 +1901,7 @@ impl StagingBuffer {
             )
             .unwrap();
         let offset = self.offset;
-        self.offset += size as usize;
+        self.offset += size;
         offset
     }
 
@@ -1881,7 +1950,11 @@ impl StagingBuffer {
             format: desc.format,
             extent: desc.extent,
             usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            ty: vk::ImageViewType::TYPE_2D,
+            ty: if desc.extent.depth > 1 {
+                vk::ImageViewType::TYPE_3D
+            } else {
+                vk::ImageViewType::TYPE_2D
+            },
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });

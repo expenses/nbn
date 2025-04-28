@@ -1,7 +1,7 @@
 use crate::*;
 
 pub fn render(device: &nbn::Device, state: &mut WindowState) {
-    state.blit_pipeline.refresh(device);
+    state.blit_pipelines.refresh(device);
     state.mesh_pipelines.refresh(device);
     state.compute_pipelines.refresh(device);
 
@@ -48,27 +48,6 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
     let frustum_x = (projection.row(3).truncate() + projection.row(0).truncate()).normalize();
     let frustum_y = (projection.row(3).truncate() + projection.row(1).truncate()).normalize();
 
-    uniforms[state.sync_resources.current_frame] = UniformBuffer {
-        mat: mat.to_cols_array(),
-        view: view.to_cols_array(),
-        perspective: projection.to_cols_array(),
-        near_plane: 0.0001,
-        instances: *state.instances,
-        meshlet_instances: *state.meshlet_instances,
-        extent: [extent.width, extent.height],
-        num_instances: state.num_instances,
-        visbuffer: state.visbuffer.index,
-        dispatches: *state.dispatches,
-        models: *state.models,
-        camera_position: camera_pos.into(),
-        frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
-        opaque_prefix_sum_values: *state.prefix_sum_values,
-        alpha_clip_prefix_sum_values: *state.prefix_sum_values + (8 * TOTAL_NUM_INSTANCES_OF_TYPE),
-    };
-
-    let uniforms_ptr = *state.combined_uniform_buffer
-        + (std::mem::size_of::<UniformBuffer>() * state.sync_resources.current_frame) as u64;
-
     let raw_input = state.egui_winit.take_egui_input(&state.window);
 
     let egui_ctx = state.egui_winit.egui_ctx();
@@ -111,6 +90,33 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                 vk::Fence::null(),
             )
             .unwrap();
+
+        uniforms[current_frame] = UniformBuffer {
+            mat: mat.to_cols_array(),
+            view: view.to_cols_array(),
+            perspective: projection.to_cols_array(),
+            near_plane: 0.0001,
+            instances: *state.instances,
+            meshlet_instances: *state.meshlet_instances,
+            extent: [extent.width, extent.height],
+            num_instances: state.num_instances,
+            visbuffer: state.framebuffers.vis.index,
+            hdrbuffer: state.framebuffers.hdr.index,
+            swapchain_image: state.swapchain_image_heap_indices[next_image as usize],
+            dispatches: *state.dispatches,
+            models: *state.models,
+            camera_position: camera_pos.into(),
+            frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
+            opaque_prefix_sum_values: *state.prefix_sum_values,
+            alpha_clip_prefix_sum_values: *state.prefix_sum_values
+                + (8 * TOTAL_NUM_INSTANCES_OF_TYPE),
+            tonemap_lut_image: *state.tonemap_lut,
+            depthbuffer: state.framebuffers.depth.index,
+        };
+
+        let uniforms_ptr = *state.combined_uniform_buffer
+            + (std::mem::size_of::<UniformBuffer>() * current_frame) as u64;
+
         let image = &state.swapchain.images[next_image as usize];
 
         device.reset_command_buffer(command_buffer);
@@ -170,7 +176,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.depth_buffer,
+                    image: **state.framebuffers.depth.image,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)
@@ -184,7 +190,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.visbuffer.image,
+                    image: **state.framebuffers.vis.image,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)
@@ -198,7 +204,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             extent.width,
             extent.height,
             &[vk::RenderingAttachmentInfo::default()
-                .image_view(*state.visbuffer.image.view)
+                .image_view(*state.framebuffers.vis.image.view)
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .clear_value(vk::ClearValue {
                     color: vk::ClearColorValue {
@@ -209,7 +215,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                 .store_op(vk::AttachmentStoreOp::STORE)],
             Some(
                 &vk::RenderingAttachmentInfo::default()
-                    .image_view(*state.depth_buffer.view)
+                    .image_view(*state.framebuffers.depth.image.view)
                     .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
                     .store_op(vk::AttachmentStoreOp::STORE)
@@ -258,6 +264,54 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             &[],
             &[
                 nbn::ImageBarrier {
+                    previous_accesses: &[nbn::AccessType::ColorAttachmentWrite],
+                    next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
+                    previous_layout: nbn::ImageLayout::Optimal,
+                    next_layout: nbn::ImageLayout::Optimal,
+                    discard_contents: false,
+                    src_queue_family_index: device.graphics_queue.index,
+                    dst_queue_family_index: device.graphics_queue.index,
+                    image: **state.framebuffers.vis.image,
+                    range: vk::ImageSubresourceRange::default()
+                        .layer_count(1)
+                        .level_count(1)
+                        .aspect_mask(vk::ImageAspectFlags::COLOR),
+                },
+                nbn::ImageBarrier {
+                    previous_accesses: &[],
+                    next_accesses: &[nbn::AccessType::ComputeShaderWrite],
+                    previous_layout: nbn::ImageLayout::Optimal,
+                    next_layout: nbn::ImageLayout::Optimal,
+                    discard_contents: true,
+                    src_queue_family_index: device.graphics_queue.index,
+                    dst_queue_family_index: device.graphics_queue.index,
+                    image: **state.framebuffers.hdr.image,
+                    range: vk::ImageSubresourceRange::default()
+                        .layer_count(1)
+                        .level_count(1)
+                        .aspect_mask(vk::ImageAspectFlags::COLOR),
+                },
+            ],
+        );
+        device.cmd_bind_pipeline(
+            **command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *state.blit_pipelines.resolve_visbuffer,
+        );
+        device.push_constants(command_buffer, uniforms_ptr);
+        device.cmd_dispatch(
+            **command_buffer,
+            extent.width.div_ceil(8),
+            extent.height.div_ceil(8),
+            1,
+        );
+        nbn::pipeline_barrier(
+            device,
+            **command_buffer,
+            None,
+            &[],
+            &[
+                nbn::ImageBarrier {
                     previous_accesses: &[nbn::AccessType::Present],
                     next_accesses: &[nbn::AccessType::ComputeShaderWrite],
                     previous_layout: nbn::ImageLayout::Optimal,
@@ -272,14 +326,14 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                         .aspect_mask(vk::ImageAspectFlags::COLOR),
                 },
                 nbn::ImageBarrier {
-                    previous_accesses: &[nbn::AccessType::ColorAttachmentWrite],
+                    previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
                     next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
                     previous_layout: nbn::ImageLayout::Optimal,
                     next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: false,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.visbuffer.image,
+                    image: **state.framebuffers.hdr.image,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)
@@ -290,15 +344,9 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
         device.cmd_bind_pipeline(
             **command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            **state.blit_pipeline,
+            *state.blit_pipelines.tonemap,
         );
-        device.push_constants(
-            command_buffer,
-            (
-                uniforms_ptr,
-                state.swapchain_image_heap_indices[next_image as usize],
-            ),
-        );
+        device.push_constants(command_buffer, uniforms_ptr);
         device.cmd_dispatch(
             **command_buffer,
             extent.width.div_ceil(8),

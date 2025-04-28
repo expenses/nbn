@@ -26,7 +26,10 @@ PrefixSumValue prefix_sum_inclusive_append(
     uint32_t buffer_index = uint32_t(sum_and_counter >> 32);
 
     // Add the current value to make in inclusive rather than exclusive.
-    PrefixSumValue prefix_sum_value = {index, uint32_t(sum_and_counter) + value};
+    PrefixSumValue prefix_sum_value = {
+        index,
+        uint32_t(sum_and_counter) + value
+    };
 
     buf.values[buffer_index] = prefix_sum_value;
     return prefix_sum_value;

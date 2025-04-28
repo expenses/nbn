@@ -16,6 +16,10 @@ struct UniformBuffer {
     DispatchBuffer* dispatches;
     uint num_instances;
     uint visbuffer;
+    uint hdrbuffer;
+    uint depthbuffer;
+    uint swapchain_image;
+    uint tonemap_lut_image;
 
     PrefixSumValue* opaque_prefix_sum_values;
     PrefixSumValue* alpha_clip_prefix_sum_values;

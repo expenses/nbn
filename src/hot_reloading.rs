@@ -3,7 +3,6 @@ pub use crate::*;
 pub struct ReloadableShader {
     pub(crate) inner: ShaderModule,
     pub(crate) dirty: Arc<AtomicBool>,
-    pub(crate) path: PathBuf,
     pub(crate) _watcher: notify::RecommendedWatcher,
 }
 

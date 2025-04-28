@@ -10,7 +10,6 @@ use nbn::vk;
 use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
 slang_struct::slang_include!("shaders/models.slang");
-slang_struct::slang_include!("shaders/culling.slang");
 slang_struct::slang_include!("shaders/uniforms.slang");
 
 const TOTAL_NUM_INSTANCES_OF_TYPE: u64 = 10_000;
@@ -19,6 +18,7 @@ const TOTAL_NUM_VISIBLE_MESHLETS: usize = 1_000_000;
 fn create_mesh_pipeline(device: &nbn::Device, shader: &nbn::ShaderModule) -> MeshPipelines {
     let create_pipeline = |fragment: &CStr, cull_mode| {
         device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+            name: "mesh pipeline",
             shaders: nbn::GraphicsPipelineShaders::Task {
                 task: nbn::ShaderDesc {
                     module: shader,
@@ -63,12 +63,86 @@ struct ComputePipelines {
     generate_meshlet_prefix_sums: nbn::Pipeline,
 }
 
+struct BlitPipelines {
+    resolve_visbuffer: nbn::Pipeline,
+    tonemap: nbn::Pipeline,
+}
+
 #[derive(Default)]
 struct KeyboardState {
     pub forwards: bool,
     pub backwards: bool,
     pub left: bool,
     pub right: bool,
+}
+
+struct Framebuffers {
+    vis: nbn::IndexedImage,
+    depth: nbn::IndexedImage,
+    hdr: nbn::IndexedImage,
+}
+
+impl Framebuffers {
+    fn new(device: &nbn::Device, extent: vk::Extent3D) -> Self {
+        let create_and_register = |is_storage_image, desc| {
+            let image = device.create_image(desc);
+            nbn::IndexedImage {
+                index: device.register_image(*image.view, is_storage_image),
+                image,
+            }
+        };
+
+        Self {
+            vis: create_and_register(
+                true,
+                nbn::ImageDescriptor {
+                    name: "visbuffer",
+                    format: vk::Format::R32_UINT,
+                    extent,
+                    ty: vk::ImageViewType::TYPE_2D,
+                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
+            hdr: create_and_register(
+                true,
+                nbn::ImageDescriptor {
+                    name: "hdrbuffer",
+                    format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent,
+                    ty: vk::ImageViewType::TYPE_2D,
+                    usage: vk::ImageUsageFlags::STORAGE,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
+            depth: create_and_register(
+                false,
+                nbn::ImageDescriptor {
+                    name: "depth_buffer",
+                    format: vk::Format::D32_SFLOAT,
+                    extent,
+                    ty: vk::ImageViewType::TYPE_2D,
+                    usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                        | vk::ImageUsageFlags::SAMPLED,
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    mip_levels: 1,
+                },
+            ),
+        }
+    }
+
+    fn deregister(&self, device: &nbn::Device) {
+        device.deregister_image(self.vis.index, true);
+        device.deregister_image(self.hdr.index, true);
+        device.deregister_image(self.depth.index, false);
+    }
+
+    fn recreate(&mut self, device: &nbn::Device, extent: vk::Extent3D) {
+        self.deregister(device);
+        *self = Self::new(device, extent);
+    }
 }
 
 struct WindowState {
@@ -80,9 +154,8 @@ struct WindowState {
     combined_uniform_buffer: nbn::Buffer,
     mesh_pipelines: nbn::ReloadablePipeline<MeshPipelines>,
     compute_pipelines: nbn::ReloadablePipeline<ComputePipelines>,
-    blit_pipeline: nbn::ReloadablePipeline<nbn::Pipeline>,
-    depth_buffer: nbn::Image,
-    visbuffer: nbn::IndexedImage,
+    blit_pipelines: nbn::ReloadablePipeline<BlitPipelines>,
+    framebuffers: Framebuffers,
     time: f32,
     prefix_sum_values: nbn::Buffer,
     _gltf: GltfData,
@@ -101,6 +174,7 @@ struct WindowState {
     meshlet_debugging_pipeline: nbn::Pipeline,
     num_debug_meshlet_instances: u32,
     debug_meshlet_instances: nbn::Buffer,
+    tonemap_lut: nbn::IndexedImage,
 }
 
 // copied from https://docs.rs/ultraviolet/latest/src/ultraviolet/projection/rh_yup.rs.html#350-365
@@ -136,13 +210,31 @@ impl winit::application::ApplicationHandler for App {
             .unwrap();
         let device = nbn::Device::new(Some(&window), false);
 
+        let mut staging_buffer = nbn::StagingBuffer::new(&device, 64 * 1024 * 1024);
+
+        let tonemap_lut = assets::create_image(
+            &device,
+            &mut staging_buffer,
+            "shaders/tony-mc-mapface/shader/tony_mc_mapface.dds",
+            nbn::QueueType::Graphics,
+        );
+        let tonemap_lut = nbn::IndexedImage {
+            index: device.register_image_with_sampler(
+                *tonemap_lut.view,
+                &device.clamp_sampler,
+                false,
+            ),
+            image: tonemap_lut,
+        };
+
         let gltf = load_gltf(
             &device,
-            //std::path::Path::new("models/citadel/voxelization_ktx2.gltf"),
-            std::path::Path::new("models/Bistro_v5_2/bistro_combined.gltf"),
+            &mut staging_buffer,
+            std::path::Path::new("models/citadel/voxelization_ktx2.gltf"),
+            //std::path::Path::new("models/Bistro_v5_2/bistro_combined.gltf"),
         );
 
-        dbg!(std::mem::size_of::<Meshlet>());
+        staging_buffer.finish(&device);
 
         let mut models = Vec::new();
         let mut instances = Vec::new();
@@ -183,20 +275,6 @@ impl winit::application::ApplicationHandler for App {
 
         let size = window.inner_size();
 
-        let visbuffer = device.create_image(nbn::ImageDescriptor {
-            name: "visbuffer",
-            format: vk::Format::R32_UINT,
-            extent: vk::Extent3D {
-                width: size.width,
-                height: size.height,
-                depth: 1,
-            },
-            ty: vk::ImageViewType::TYPE_2D,
-            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_levels: 1,
-        });
-
         let camera_rig: dolly::rig::CameraRig = dolly::rig::CameraRig::builder()
             .with(dolly::drivers::Position::new([1000.0, 1000.0, 0.0]))
             .with(dolly::drivers::YawPitch::new())
@@ -206,9 +284,11 @@ impl winit::application::ApplicationHandler for App {
         let debugging_module = device.load_shader("shaders/compiled/debugging.spv");
 
         self.window_state = Some(WindowState {
+            tonemap_lut,
             num_debug_meshlet_instances,
             debug_meshlet_instances,
             debugging_pipeline: device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+                name: "model debugging pipeline",
                 shaders: nbn::GraphicsPipelineShaders::Legacy {
                     vertex: nbn::ShaderDesc {
                         module: &debugging_module,
@@ -233,6 +313,7 @@ impl winit::application::ApplicationHandler for App {
             }),
             meshlet_debugging_pipeline: device.create_graphics_pipeline(
                 nbn::GraphicsPipelineDesc {
+                    name: "meshlet debugging pipeline",
                     shaders: nbn::GraphicsPipelineShaders::Legacy {
                         vertex: nbn::ShaderDesc {
                             module: &debugging_module,
@@ -320,28 +401,22 @@ impl winit::application::ApplicationHandler for App {
                         .create_compute_pipeline(shader, c"generate_meshlet_prefix_sums"),
                 },
             ),
-            blit_pipeline: nbn::ReloadablePipeline::new(
+            blit_pipelines: nbn::ReloadablePipeline::new(
                 &device,
                 device.load_reloadable_shader("shaders/compiled/resolve_visbuffer.spv"),
-                &|device: &nbn::Device, shader| device.create_compute_pipeline(shader, c"main"),
+                &|device: &nbn::Device, shader| BlitPipelines {
+                    resolve_visbuffer: device.create_compute_pipeline(shader, c"resolve_visbuffer"),
+                    tonemap: device.create_compute_pipeline(shader, c"tonemap"),
+                },
             ),
-            depth_buffer: device.create_image(nbn::ImageDescriptor {
-                name: "depth_buffer",
-                format: vk::Format::D32_SFLOAT,
-                extent: vk::Extent3D {
+            framebuffers: Framebuffers::new(
+                &device,
+                vk::Extent3D {
                     width: size.width,
                     height: size.height,
                     depth: 1,
                 },
-                ty: vk::ImageViewType::TYPE_2D,
-                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                aspect_mask: vk::ImageAspectFlags::DEPTH,
-                mip_levels: 1,
-            }),
-            visbuffer: nbn::IndexedImage {
-                index: device.register_image(*visbuffer.view, true),
-                image: visbuffer,
-            },
+            ),
             _gltf: gltf,
             instances: device.create_buffer_with_data(nbn::BufferInitDescriptor {
                 name: "instances",
@@ -390,35 +465,15 @@ impl winit::application::ApplicationHandler for App {
 
                 device.recreate_swapchain(&mut state.swapchain);
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
-                state.depth_buffer = device.create_image(nbn::ImageDescriptor {
-                    name: "depth_buffer",
-                    format: vk::Format::D32_SFLOAT,
-                    extent: vk::Extent3D {
-                        width: new_size.width,
-                        height: new_size.height,
-                        depth: 1,
-                    },
-                    ty: vk::ImageViewType::TYPE_2D,
-                    usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                    aspect_mask: vk::ImageAspectFlags::DEPTH,
-                    mip_levels: 1,
-                });
-                device.deregister_image(state.visbuffer.index, true);
-                state.visbuffer.image = device.create_image(nbn::ImageDescriptor {
-                    name: "visbuffer",
-                    format: vk::Format::R32_UINT,
-                    extent: vk::Extent3D {
-                        width: new_size.width,
-                        height: new_size.height,
-                        depth: 1,
-                    },
-                    ty: vk::ImageViewType::TYPE_2D,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_levels: 1,
-                });
 
-                state.visbuffer.index = device.register_image(*state.visbuffer.image.view, true);
+                state.framebuffers.recreate(
+                    &device,
+                    vk::Extent3D {
+                        width: new_size.width,
+                        height: new_size.height,
+                        depth: 1,
+                    },
+                );
 
                 for index in state.swapchain_image_heap_indices.drain(..) {
                     device.deregister_image(index, true);

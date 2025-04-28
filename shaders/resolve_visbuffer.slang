@@ -1,29 +1,26 @@
-[vk::binding(0, 0)] Sampler2D sampled_images[];
+[vk::binding(0, 0)] __DynamicResource sampled_images[];
 [vk::binding(1, 0)] __DynamicResource storage_images[];
 
-import common;
+import shared.constants;
+import shared.util;
+import shared.colour;
+import shared.barycentrics;
+import shared.derivatives;
 import models;
-import visbuffer;
 import uniforms;
 
-struct BlitPC {
-    UniformBuffer* uniforms;
-    uint output_image;
-};
-
 float4 sample(uint index, WithDerivatives<float2> uv) {
-    return sampled_images[NonUniformResourceIndex(index)]
+    Sampler2D image =  sampled_images[NonUniformResourceIndex(index)];
+    return image
         .SampleGrad(uv.val, uv.dx, uv.dy);
 }
 
 [shader("compute")][NumThreads(8, 8, 1)] void resolve_visbuffer(
     uint2 thread : SV_DispatchThreadID,
-    uniform BlitPC constants
+    uniform UniformBuffer* uniforms
 ) {
-    let uniforms = constants.uniforms;
-
     Texture2D<uint> input_image = storage_images[uniforms.visbuffer];
-    RWTexture2D<float4> output_image = storage_images[constants.output_image];
+    WTexture2D<float4> output_image = storage_images[uniforms.hdrbuffer];
 
     if (any(thread > uniforms.extent)) {
         return;
@@ -31,7 +28,7 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
 
     let val = input_image[thread];
 
-    if (val == max_value) {
+    if (val == MAX_UINT_VALUE) {
         output_image.Store(thread, float4(0.2, 0.2, 0.6, 1));
         return;
     }
@@ -94,7 +91,7 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
     var roughness = 1.0;
     var is_metallic = 0.0;
 
-    if (material.normal_image != max_value) {
+    if (material.normal_image != MAX_UINT_VALUE) {
         let sampled_normal = sample(material.normal_image, uv).xyz;
 
         if (all(sampled_normal != float3(0.0))) {
@@ -105,15 +102,20 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
         }
     }
 
-    if (material.metallic_roughness_image != max_value) {
+    if (material.metallic_roughness_image != MAX_UINT_VALUE) {
         let metal_roughness = sample(material.metallic_roughness_image, uv);
         roughness = metal_roughness.g;
         is_metallic = metal_roughness.b;
     }
 
-    if (material.base_colour_image != max_value) {
-        float4 sample = sample(material.base_colour_image, uv);
-        base_colour = sample.rgb;
+    if (material.base_colour_image != MAX_UINT_VALUE) {
+        base_colour = sample(material.base_colour_image, uv).rgb;
+    }
+
+    var emission = float3(0);
+    let emission_factor = 100.0;
+    if (material.emissive_image != MAX_UINT_VALUE) {
+        emission = sample(material.emissive_image, uv).rgb * emission_factor;
     }
 
     let sun = normalize(float3(1.0, 2.0, 0.75));
@@ -122,6 +124,33 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
 
     factor = max(factor, .1);
 
-    let output = factor * base_colour;
-    output_image.Store(thread, float4(srgb_lin2encoded(output), 1.0));
+    let output = (factor * base_colour) + emission;
+    output_image.Store(thread, float4(output, 1.0));
+}
+
+    [shader("compute")][NumThreads(8, 8, 1)] void tonemap(
+        uint2 thread : SV_DispatchThreadID,
+        uniform UniformBuffer* uniforms
+    ) {
+    Sampler3D<float3> lut = sampled_images[uniforms.tonemap_lut_image];
+    Sampler2D<float3> input_image = storage_images[uniforms.hdrbuffer];
+    WTexture2D<float4> output_image = storage_images[uniforms.swapchain_image];
+
+
+    if (any(thread > uniforms.extent)) {
+        return;
+    }
+
+    //let sample = compute_dof(thread_to_uv(thread, uniforms.extent),
+    //    sampled_images[uniforms.depthbuffer],
+    //    input_image,
+    //    uniforms.extent,
+    //    uniforms.near_plane
+    //    );
+
+    let sample = input_image[thread];//.SampleLevel(thread_to_uv(thread, uniforms.extent), 0);
+
+    let value = tony_mc_mapface(lut, sample);
+
+    output_image.Store(thread, float4(srgb_lin2encoded(sample), 1.0));
 }

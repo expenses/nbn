@@ -2,7 +2,7 @@ import models;
 import uniforms;
 import prefix_sum;
 import dispatches;
-import common;
+import shared.util;
 
 [shader("compute")][NumThreads(1, 1, 1)] void
 reset_buffers(uniform DispatchBuffer* buffer) {
@@ -15,6 +15,7 @@ reset_buffers(uniform DispatchBuffer* buffer) {
 
 struct PC {
     UniformBuffer* uniforms;
+
 }
 
     [shader("compute")][NumThreads(64, 1, 1)] void
@@ -37,7 +38,11 @@ struct PC {
     PrefixSumBuffer prefix_sum_buffer =
         uniforms.get_prefix_sum_buffer(is_alpha_clipped);
 
-    let value = prefix_sum_inclusive_append(prefix_sum_buffer, thread, model.num_meshlets);
+    let value = prefix_sum_inclusive_append(
+        prefix_sum_buffer,
+        thread,
+        model.num_meshlets
+    );
 
     InterlockedMax(
         dispatches.dispatches[uint(is_alpha_clipped)].x,

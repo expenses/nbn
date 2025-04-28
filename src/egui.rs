@@ -5,7 +5,6 @@ use std::collections::HashMap;
 pub struct Renderer {
     pipeline: nbn::Pipeline,
     textures: HashMap<egui::TextureId, EguiTexture>,
-    sampler: nbn::Sampler,
     buffer: nbn::Buffer,
     temporary_buffers: [Vec<nbn::Buffer>; nbn::FRAMES_IN_FLIGHT],
     temporary_textures: [Vec<nbn::Image>; nbn::FRAMES_IN_FLIGHT],
@@ -32,6 +31,7 @@ impl Renderer {
             temporary_textures: Default::default(),
             textures: Default::default(),
             pipeline: device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+                name: "egui pipeline",
                 shaders: nbn::GraphicsPipelineShaders::Legacy {
                     vertex: nbn::ShaderDesc {
                         entry_point: c"vertex",
@@ -57,26 +57,7 @@ impl Renderer {
                 depth: nbn::GraphicsPipelineDepthDesc::default(),
                 cull_mode: vk::CullModeFlags::NONE,
             }),
-            sampler: nbn::Sampler::from_raw(
-                unsafe {
-                    device.create_sampler(
-                        &vk::SamplerCreateInfo::default()
-                            .anisotropy_enable(true)
-                            .max_anisotropy(device.properties.limits.max_sampler_anisotropy)
-                            .mag_filter(vk::Filter::LINEAR)
-                            .min_filter(vk::Filter::LINEAR)
-                            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-                            .min_lod(0.0)
-                            .max_lod(f32::MAX)
-                            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                            .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
-                        None,
-                    )
-                }
-                .unwrap(),
-                device,
-            ),
+
             buffer: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "egui buffer",
@@ -114,53 +95,148 @@ impl Renderer {
         }
 
         for (id, data) in &textures.set {
-            self.remove_texture(device, *id, current_frame);
+            match data.pos {
+                Some([x, y]) => {
+                    let texture = self.textures.get(id).unwrap();
 
-            let (staging_buffer, image) = match &data.image {
-                egui::ImageData::Color(image) => device.create_image_with_data_in_command_buffer(
-                    nbn::SampledImageDescriptor {
-                        name: &format!("egui image ({:?}) (rgba8)", id),
-                        format: vk::Format::R8G8B8A8_SRGB,
-                        extent: vk::Extent3D {
-                            width: image.width() as _,
-                            height: image.height() as _,
-                            depth: 1,
+                    let (width, height, data) = match &data.image {
+                        egui::ImageData::Color(image) => (
+                            image.width(),
+                            image.height(),
+                            nbn::cast_slice::<_, u8>(&image.pixels),
+                        ),
+                        egui::ImageData::Font(image) => (
+                            image.width(),
+                            image.height(),
+                            nbn::cast_slice::<_, u8>(&image.pixels),
+                        ),
+                    };
+
+                    let staging_buffer =
+                        device.create_buffer_with_data(nbn::BufferInitDescriptor {
+                            name: "egui update buffer",
+                            data,
+                        });
+
+                    device.insert_pipeline_barrier(
+                        command_buffer,
+                        None,
+                        &[],
+                        &[nbn::ImageBarrier {
+                            previous_accesses: &[
+                                nbn::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer,
+                            ],
+                            next_accesses: &[nbn::AccessType::TransferWrite],
+                            previous_layout: nbn::ImageLayout::Optimal,
+                            next_layout: nbn::ImageLayout::Optimal,
+                            discard_contents: false,
+                            src_queue_family_index: device.graphics_queue.index,
+                            dst_queue_family_index: device.graphics_queue.index,
+                            image: *texture.image.image,
+                            range: texture.image.subresource_range,
+                        }],
+                    );
+                    unsafe {
+                        device.cmd_copy_buffer_to_image(
+                            **command_buffer,
+                            *staging_buffer.buffer,
+                            *texture.image.image,
+                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            &[vk::BufferImageCopy::default()
+                                .buffer_offset(0)
+                                .image_offset(vk::Offset3D {
+                                    x: x as _,
+                                    y: y as _,
+                                    z: 0,
+                                })
+                                .image_extent(vk::Extent3D {
+                                    width: width as _,
+                                    height: height as _,
+                                    depth: 1,
+                                })
+                                .image_subresource(
+                                    vk::ImageSubresourceLayers::default()
+                                        .layer_count(1)
+                                        .aspect_mask(vk::ImageAspectFlags::COLOR),
+                                )],
+                        )
+                    }
+                    device.insert_pipeline_barrier(
+                        command_buffer,
+                        None,
+                        &[],
+                        &[nbn::ImageBarrier {
+                            previous_accesses: &[nbn::AccessType::TransferWrite],
+                            next_accesses: &[
+                                nbn::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer,
+                            ],
+                            previous_layout: nbn::ImageLayout::Optimal,
+                            next_layout: nbn::ImageLayout::Optimal,
+                            discard_contents: false,
+                            src_queue_family_index: device.graphics_queue.index,
+                            dst_queue_family_index: device.graphics_queue.index,
+                            image: *texture.image.image,
+                            range: texture.image.subresource_range,
+                        }],
+                    );
+
+                    self.temporary_buffers[current_frame].push(staging_buffer);
+                }
+                None => {
+                    self.remove_texture(device, *id, current_frame);
+
+                    let (staging_buffer, image) = match &data.image {
+                        egui::ImageData::Color(image) => device
+                            .create_image_with_data_in_command_buffer(
+                                nbn::SampledImageDescriptor {
+                                    name: &format!("egui image ({:?}) (rgba8)", id),
+                                    format: vk::Format::R8G8B8A8_SRGB,
+                                    extent: vk::Extent3D {
+                                        width: image.width() as _,
+                                        height: image.height() as _,
+                                        depth: 1,
+                                    },
+                                },
+                                nbn::cast_slice(&image.pixels),
+                                nbn::QueueType::Graphics,
+                                &[0],
+                                command_buffer,
+                            ),
+                        egui::ImageData::Font(image) => device
+                            .create_image_with_data_in_command_buffer(
+                                nbn::SampledImageDescriptor {
+                                    name: &format!("egui image ({:?}) (r32f)", id),
+                                    format: vk::Format::R32_SFLOAT,
+                                    extent: vk::Extent3D {
+                                        width: image.width() as _,
+                                        height: image.height() as _,
+                                        depth: 1,
+                                    },
+                                },
+                                nbn::cast_slice(&image.pixels),
+                                nbn::QueueType::Graphics,
+                                &[0],
+                                command_buffer,
+                            ),
+                    };
+
+                    let registered_id = device.register_image_with_sampler(
+                        *image.view,
+                        &device.clamp_sampler,
+                        false,
+                    );
+
+                    self.textures.insert(
+                        *id,
+                        EguiTexture {
+                            id: registered_id,
+                            image,
                         },
-                    },
-                    nbn::cast_slice(&image.pixels),
-                    nbn::QueueType::Graphics,
-                    &[0],
-                    command_buffer,
-                ),
-                egui::ImageData::Font(image) => device.create_image_with_data_in_command_buffer(
-                    nbn::SampledImageDescriptor {
-                        name: &format!("egui image ({:?}) (r32f)", id),
-                        format: vk::Format::R32_SFLOAT,
-                        extent: vk::Extent3D {
-                            width: image.width() as _,
-                            height: image.height() as _,
-                            depth: 1,
-                        },
-                    },
-                    nbn::cast_slice(&image.pixels),
-                    nbn::QueueType::Graphics,
-                    &[0],
-                    command_buffer,
-                ),
-            };
+                    );
 
-            let registered_id =
-                device.register_image_with_sampler(*image.view, &self.sampler, false);
-
-            self.textures.insert(
-                *id,
-                EguiTexture {
-                    id: registered_id,
-                    image,
-                },
-            );
-
-            self.temporary_buffers[current_frame].push(staging_buffer);
+                    self.temporary_buffers[current_frame].push(staging_buffer);
+                }
+            }
         }
     }
 

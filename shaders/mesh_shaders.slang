@@ -1,6 +1,5 @@
 import models;
-import common;
-import culling;
+import shared.constants;
 import uniforms;
 import prefix_sum;
 
@@ -43,8 +42,7 @@ groupshared uint[64] gs_meshlet_instance_indices;
 
     let is_alpha_clipped = push_constants.is_alpha_clipped_meshlets != 0;
 
-    let prefix_sum_buffer =
-        uniforms.get_prefix_sum_buffer(is_alpha_clipped);
+    let prefix_sum_buffer = uniforms.get_prefix_sum_buffer(is_alpha_clipped);
 
     // Check that we're in range for the number of meshlets being drawn.
 
@@ -53,16 +51,14 @@ groupshared uint[64] gs_meshlet_instance_indices;
     if (visible) {
         // Binary search to find out what instance we're rasterizing meshlets for.
 
-        let val =
-            prefix_sum_binary_search(prefix_sum_buffer, thread);
+        let val = prefix_sum_binary_search(prefix_sum_buffer, thread);
 
         let instance = uniforms.instances[val.index];
         let model = uniforms.models[instance.model_index];
 
         // Calculate the index of the meshlet inside the model.
         let num_meshlets_before_this_instance = val.sum - model.num_meshlets;
-        let local_meshlet_index =
-            thread - num_meshlets_before_this_instance;
+        let local_meshlet_index = thread - num_meshlets_before_this_instance;
 
         Meshlet meshlet = model.meshlets[local_meshlet_index];
 
@@ -91,7 +87,8 @@ groupshared uint[64] gs_meshlet_instance_indices;
         if (visible) {
             // Correctly calculate output index and write the meshlet instance.
 
-            let meshlet_instance_index = uniforms.dispatches.visible_meshlets.add(1);
+            let meshlet_instance_index =
+                uniforms.dispatches.visible_meshlets.add(1);
 
             uniforms.meshlet_instances[meshlet_instance_index] = {
                 meshlet,
@@ -165,7 +162,7 @@ groupshared uint[64] gs_meshlet_instance_indices;
     let model = uniforms.models[instance.model_index];
     let material = model.material;
 
-    if (material.base_colour_image != max_value) {
+    if (material.base_colour_image != MAX_UINT_VALUE) {
         float4 sample = DescriptorHandle<Sampler2D>(material.base_colour_image)
                             .Sample(in.uv);
         if (sample.a < 0.5) {

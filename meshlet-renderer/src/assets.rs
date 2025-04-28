@@ -1,13 +1,12 @@
 use crate::*;
 
-fn create_image(
+pub fn create_image(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
     filename: &str,
-    _format: vk::Format,
     transition_to: nbn::QueueType,
-) -> nbn::IndexedImage {
-    let image = if filename.ends_with(".dds") {
+) -> nbn::Image {
+    if filename.ends_with(".dds") {
         let dds = ddsfile::Dds::read(std::fs::File::open(filename).unwrap()).unwrap();
 
         // See for bpp values.
@@ -16,12 +15,15 @@ fn create_image(
             ddsfile::DxgiFormat::BC1_UNorm_sRGB => (vk::Format::BC1_RGB_SRGB_BLOCK, 4),
             ddsfile::DxgiFormat::BC3_UNorm_sRGB => (vk::Format::BC3_SRGB_BLOCK, 8),
             ddsfile::DxgiFormat::BC5_UNorm => (vk::Format::BC5_UNORM_BLOCK, 8),
+            ddsfile::DxgiFormat::R9G9B9E5_SharedExp => {
+                (vk::Format::E5B9G9R9_UFLOAT_PACK32, 9 + 9 + 5)
+            }
             other => panic!("{:?}", other),
         };
         let extent = vk::Extent3D {
             width: dds.get_width(),
             height: dds.get_height(),
-            depth: 1,
+            depth: dds.get_depth(),
         };
         let mut offset = 0;
         let mut offsets = Vec::new();
@@ -39,11 +41,13 @@ fn create_image(
                 extent,
                 format,
             },
-            dds.get_data(0).unwrap(),
+            &dds.data,
             transition_to,
             &offsets,
         )
-    } else if filename.ends_with(".ktx2") {
+    } else {
+        assert!(filename.ends_with(".ktx2"));
+
         let ktx2 = ktx2::Reader::new(std::fs::read(filename).unwrap()).unwrap();
         let header = ktx2.header();
 
@@ -76,29 +80,6 @@ fn create_image(
             transition_to,
             &offsets,
         )
-    } else {
-        /*let image_data = image::open(filename).unwrap().to_rgba8();
-
-        device.create_sampled_image_with_data(
-            nbn::SampledImageDescriptor {
-                name: filename,
-                extent: vk::Extent3D {
-                    width: image_data.width(),
-                    height: image_data.height(),
-                    depth: 1,
-                },
-                format,
-            },
-            &image_data,
-            transition_to,
-            &[0],
-        )*/
-        panic!()
-    };
-
-    nbn::IndexedImage {
-        index: device.register_image(*image.view, false),
-        image,
     }
 }
 
@@ -167,7 +148,11 @@ fn read_meshlets_file(
     })
 }
 
-pub fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
+pub fn load_gltf(
+    device: &nbn::Device,
+    staging_buffer: &mut nbn::StagingBuffer,
+    path: &std::path::Path,
+) -> GltfData {
     let bytes = std::fs::read(path).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
@@ -187,13 +172,8 @@ pub fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
         }
     }
 
-    let mut staging_buffer = nbn::StagingBuffer::new(device, 64 * 1024 * 1024);
-    let meshlets = read_meshlets_file(
-        &device,
-        &mut staging_buffer,
-        &path.with_extension("meshlets"),
-    )
-    .unwrap();
+    let meshlets =
+        read_meshlets_file(&device, staging_buffer, &path.with_extension("meshlets")).unwrap();
     let meshlets_buffer = meshlets.buffer;
 
     let buffer_file =
@@ -209,20 +189,22 @@ pub fn load_gltf(device: &nbn::Device, path: &std::path::Path) -> GltfData {
         .images
         .iter()
         .zip(&image_formats)
-        .map(|(image, format)| {
-            create_image(
+        .map(|(image, _format)| {
+            let image = create_image(
                 device,
-                &mut staging_buffer,
+                staging_buffer,
                 path.with_file_name(image.uri.as_ref().unwrap())
                     .to_str()
                     .unwrap(),
-                *format,
                 nbn::QueueType::Graphics,
-            )
+            );
+
+            nbn::IndexedImage {
+                index: device.register_image(*image.view, false),
+                image,
+            }
         })
         .collect::<Vec<_>>();
-
-    staging_buffer.finish(device);
 
     dbg!(images.len());
 
