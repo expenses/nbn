@@ -26,10 +26,13 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
     let extent = state.swapchain.create_info.image_extent;
 
     let scale = 500.0;
+
+    let near_depth = 0.0001;
+
     let projection = perspective_reversed_infinite_z_vk(
         45.0_f32.to_radians(),
         extent.width as f32 / extent.height as f32,
-        0.0001,
+        near_depth,
     );
     let start_camera_pos = glam::Vec3::new(scale, scale, 0.0);
     let camera_pos = glam::Vec3::from_array(transform.position.into());
@@ -60,6 +63,10 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
         });
         egui::Window::new("Memory Blocks").show(&egui_ctx, |ui| {
             state.alloc_vis.render_memory_block_ui(ui, &allocator);
+        });
+        egui::Window::new("Images").show(&egui_ctx, |ui| {
+            ui.label(format!("{:?}", &device.descriptors.sampled_image_count));
+            ui.label(format!("{:?}", &device.descriptors.storage_image_count));
         });
         state
             .alloc_vis
@@ -95,14 +102,15 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             mat: mat.to_cols_array(),
             view: view.to_cols_array(),
             perspective: projection.to_cols_array(),
-            near_plane: 0.0001,
+            near_plane: near_depth,
             instances: *state.instances,
             meshlet_instances: *state.meshlet_instances,
             extent: [extent.width, extent.height],
             num_instances: state.num_instances,
-            visbuffer: state.framebuffers.vis.index,
-            hdrbuffer: state.framebuffers.hdr.index,
-            swapchain_image: state.swapchain_image_heap_indices[next_image as usize],
+            visbuffer: *state.framebuffers.vis_index,
+            hdrbuffer: *state.framebuffers.hdr_storage_index,
+            hdrbuffer_sampled: *state.framebuffers.hdr_sampled_index,
+            swapchain_image: *state.swapchain_image_heap_indices[next_image as usize],
             dispatches: *state.dispatches,
             models: *state.models,
             camera_position: camera_pos.into(),
@@ -111,7 +119,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             alpha_clip_prefix_sum_values: *state.prefix_sum_values
                 + (8 * TOTAL_NUM_INSTANCES_OF_TYPE),
             tonemap_lut_image: *state.tonemap_lut,
-            depthbuffer: state.framebuffers.depth.index,
+            depthbuffer: *state.framebuffers.depth_index,
         };
 
         let uniforms_ptr = *state.combined_uniform_buffer
@@ -176,7 +184,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.depth.image,
+                    image: **state.framebuffers.depth,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)
@@ -190,7 +198,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.vis.image,
+                    image: **state.framebuffers.vis,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)
@@ -204,7 +212,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             extent.width,
             extent.height,
             &[vk::RenderingAttachmentInfo::default()
-                .image_view(*state.framebuffers.vis.image.view)
+                .image_view(*state.framebuffers.vis.view)
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .clear_value(vk::ClearValue {
                     color: vk::ClearColorValue {
@@ -215,7 +223,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                 .store_op(vk::AttachmentStoreOp::STORE)],
             Some(
                 &vk::RenderingAttachmentInfo::default()
-                    .image_view(*state.framebuffers.depth.image.view)
+                    .image_view(*state.framebuffers.depth.view)
                     .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
                     .store_op(vk::AttachmentStoreOp::STORE)
@@ -271,7 +279,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: false,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.vis.image,
+                    image: **state.framebuffers.vis,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)
@@ -285,7 +293,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.hdr.image,
+                    image: **state.framebuffers.hdr,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)
@@ -308,7 +316,10 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
         nbn::pipeline_barrier(
             device,
             **command_buffer,
-            None,
+            Some(nbn::GlobalBarrier {
+                previous_accesses: &[nbn::AccessType::DepthStencilAttachmentWrite],
+                next_accesses: &[nbn::AccessType::DepthStencilAttachmentRead],
+            }),
             &[],
             &[
                 nbn::ImageBarrier {
@@ -333,7 +344,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: false,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.hdr.image,
+                    image: **state.framebuffers.hdr,
                     range: vk::ImageSubresourceRange::default()
                         .layer_count(1)
                         .level_count(1)

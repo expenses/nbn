@@ -17,6 +17,7 @@ struct UniformBuffer {
     uint num_instances;
     uint visbuffer;
     uint hdrbuffer;
+    uint hdrbuffer_sampled;
     uint depthbuffer;
     uint swapchain_image;
     uint tonemap_lut_image;

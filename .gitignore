@@ -1,5 +1,4 @@
 /target
-*.spv
 *.tree64
 *.png
 *.gltf
@@ -18,4 +17,5 @@
 perf.data*
 /.ninja_log
 *.slang-module
-*.spv
+*.rdc
+*.cap

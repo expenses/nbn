@@ -24,11 +24,26 @@ public uint div_ceil(uint value, uint divisor) {
     return (value + divisor - 1) / divisor;
 }
 
-public float2 thread_to_uv(uint2 thread, uint2 output_size) {
-    return (float2(thread) + 0.5) / float2(output_size);
+public float2 texel_size(uint2 extent) {
+    return 1.0 / float2(extent);
+}
+
+public float2 thread_to_uv(uint2 thread, uint2 extent) {
+    return (float2(thread) + 0.5) * texel_size(extent);
 }
 
 // https://www.reddit.com/r/GraphicsProgramming/comments/f9zwin/linearising_reverse_depth_buffer/fix7ifb/
 public float linearize_reverse_infinite_depth_buffer(float sample_value, float near_depth) {
     return near_depth / sample_value;
+}
+
+float3 quadratic_colour_thresholding(float3 colour, float threshold, float knee) {
+    float3 curve = float3(threshold - knee, knee * 2.0, 0.25 / knee);
+
+    float brightness = max(colour.x, max(colour.y, colour.z));
+
+    float rq = clamp(brightness - curve.x, 0.0, curve.y);
+    rq = curve.z * rq * rq;
+
+    return colour * max(rq, brightness - threshold) / max(brightness, 1.0e-4);
 }

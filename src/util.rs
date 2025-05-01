@@ -64,25 +64,3 @@ pub fn cast_slice_mut<I: Copy, O: Copy>(slice: &mut [I]) -> &mut [O] {
         )
     }
 }
-
-#[derive(Default)]
-pub(crate) struct CountTracker {
-    next: u32,
-    unused: Vec<u32>,
-}
-
-impl CountTracker {
-    pub(crate) fn add(&mut self) -> u32 {
-        if let Some(index) = self.unused.pop() {
-            return index;
-        }
-
-        let index = self.next;
-        self.next += 1;
-        index
-    }
-
-    pub(crate) fn remove(&mut self, index: u32) {
-        self.unused.push(index);
-    }
-}

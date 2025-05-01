@@ -7,13 +7,16 @@ fn create_pipeline(
     swapchain: &nbn::Swapchain,
 ) -> nbn::Pipeline {
     device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        vertex: nbn::ShaderDesc {
-            module: shader,
-            entry_point: c"vertex",
-        },
-        fragment: nbn::ShaderDesc {
-            module: shader,
-            entry_point: c"fragment",
+        name: "triangle pipeline",
+        shaders: nbn::GraphicsPipelineShaders::Legacy {
+            vertex: nbn::ShaderDesc {
+                module: shader,
+                entry_point: c"vertex",
+            },
+            fragment: nbn::ShaderDesc {
+                module: shader,
+                entry_point: c"fragment",
+            },
         },
         color_attachment_formats: &[swapchain.create_info.image_format],
         blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
@@ -21,7 +24,6 @@ fn create_pipeline(
         conservative_rasterization: false,
         depth: Default::default(),
         cull_mode: Default::default(),
-        mesh_shader: false,
     })
 }
 
@@ -123,6 +125,8 @@ impl winit::application::ApplicationHandler for App {
                     let allocator = device.allocator.inner.read();
                     egui::Window::new("Memory Allocations").show(egui_ctx, |ui| {
                         state.alloc_vis.render_breakdown_ui(ui, &allocator);
+                        ui.label(format!("{:?}", &device.descriptors.sampled_image_count));
+                        ui.label(format!("{:?}", &device.descriptors.storage_image_count));
                     });
                     egui::Window::new("Memory Blocks").show(egui_ctx, |ui| {
                         state.alloc_vis.render_memory_block_ui(ui, &allocator);

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 pub struct Renderer {
     pipeline: nbn::Pipeline,
-    textures: HashMap<egui::TextureId, EguiTexture>,
+    textures: HashMap<egui::TextureId, nbn::IndexedImage>,
     buffer: nbn::Buffer,
     temporary_buffers: [Vec<nbn::Buffer>; nbn::FRAMES_IN_FLIGHT],
     temporary_textures: [Vec<nbn::Image>; nbn::FRAMES_IN_FLIGHT],
@@ -68,14 +68,8 @@ impl Renderer {
         }
     }
 
-    pub fn remove_texture(
-        &mut self,
-        device: &nbn::Device,
-        id: egui::TextureId,
-        current_frame: usize,
-    ) {
+    pub fn remove_texture(&mut self, id: egui::TextureId, current_frame: usize) {
         if let Some(texture) = self.textures.remove(&id) {
-            device.deregister_image(texture.id, false);
             self.temporary_textures[current_frame].push(texture.image);
         }
     }
@@ -91,7 +85,7 @@ impl Renderer {
         self.temporary_textures[current_frame].clear();
 
         for &id in &textures.free {
-            self.remove_texture(device, id, current_frame);
+            self.remove_texture(id, current_frame);
         }
 
         for (id, data) in &textures.set {
@@ -183,7 +177,7 @@ impl Renderer {
                     self.temporary_buffers[current_frame].push(staging_buffer);
                 }
                 None => {
-                    self.remove_texture(device, *id, current_frame);
+                    self.remove_texture(*id, current_frame);
 
                     let (staging_buffer, image) = match &data.image {
                         egui::ImageData::Color(image) => device
@@ -228,8 +222,8 @@ impl Renderer {
 
                     self.textures.insert(
                         *id,
-                        EguiTexture {
-                            id: registered_id,
+                        nbn::IndexedImage {
+                            index: registered_id,
                             image,
                         },
                     );
@@ -291,23 +285,18 @@ impl Renderer {
                 slice[offset..offset + indices_slice.len()].copy_from_slice(indices_slice);
                 offset += indices_slice.len();
 
-                device.push_constants(
+                device.push_constants::<(u64, u64, [u32; 2], f32, u32)>(
                     command_buffer,
                     (
                         buffer_ptr + vertices_offset as u64,
                         buffer_ptr + indices_offset as u64,
                         extent,
                         scale_factor,
-                        texture.id,
+                        **texture,
                     ),
                 );
                 device.cmd_draw(**command_buffer, mesh.indices.len() as _, 1, 0, 0);
             }
         }
     }
-}
-
-struct EguiTexture {
-    id: u32,
-    image: nbn::Image,
 }

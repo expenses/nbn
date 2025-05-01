@@ -77,78 +77,71 @@ struct KeyboardState {
 }
 
 struct Framebuffers {
-    vis: nbn::IndexedImage,
-    depth: nbn::IndexedImage,
-    hdr: nbn::IndexedImage,
+    vis: nbn::Image,
+    vis_index: nbn::ImageIndex,
+    depth: nbn::Image,
+    depth_index: nbn::ImageIndex,
+    hdr: nbn::Image,
+    hdr_sampled_index: nbn::ImageIndex,
+    hdr_storage_index: nbn::ImageIndex,
 }
 
 impl Framebuffers {
     fn new(device: &nbn::Device, extent: vk::Extent3D) -> Self {
-        let create_and_register = |is_storage_image, desc| {
-            let image = device.create_image(desc);
-            nbn::IndexedImage {
-                index: device.register_image(*image.view, is_storage_image),
-                image,
-            }
-        };
+        let vis = device.create_image(nbn::ImageDescriptor {
+            name: "visbuffer",
+            format: vk::Format::R32_UINT,
+            extent,
+            ty: vk::ImageViewType::TYPE_2D,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels: 1,
+        });
+
+        let hdr = device.create_image(nbn::ImageDescriptor {
+            name: "hdrbuffer",
+            format: vk::Format::R16G16B16A16_SFLOAT,
+            extent,
+            ty: vk::ImageViewType::TYPE_2D,
+            usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels: 1,
+        });
+
+        let depth = device.create_image(nbn::ImageDescriptor {
+            name: "depth_buffer",
+            format: vk::Format::D32_SFLOAT,
+            extent,
+            ty: vk::ImageViewType::TYPE_2D,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+            aspect_mask: vk::ImageAspectFlags::DEPTH,
+            mip_levels: 1,
+        });
 
         Self {
-            vis: create_and_register(
-                true,
-                nbn::ImageDescriptor {
-                    name: "visbuffer",
-                    format: vk::Format::R32_UINT,
-                    extent,
-                    ty: vk::ImageViewType::TYPE_2D,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_levels: 1,
-                },
-            ),
-            hdr: create_and_register(
-                true,
-                nbn::ImageDescriptor {
-                    name: "hdrbuffer",
-                    format: vk::Format::R16G16B16A16_SFLOAT,
-                    extent,
-                    ty: vk::ImageViewType::TYPE_2D,
-                    usage: vk::ImageUsageFlags::STORAGE,
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_levels: 1,
-                },
-            ),
-            depth: create_and_register(
+            vis_index: device.register_image(*vis.view, true),
+            depth_index: device.register_image_with_sampler(
+                *depth.view,
+                &device.clamp_sampler,
                 false,
-                nbn::ImageDescriptor {
-                    name: "depth_buffer",
-                    format: vk::Format::D32_SFLOAT,
-                    extent,
-                    ty: vk::ImageViewType::TYPE_2D,
-                    usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
-                        | vk::ImageUsageFlags::SAMPLED,
-                    aspect_mask: vk::ImageAspectFlags::DEPTH,
-                    mip_levels: 1,
-                },
             ),
+            hdr_sampled_index: device.register_image_with_sampler(
+                *hdr.view,
+                &device.clamp_sampler,
+                false,
+            ),
+            hdr_storage_index: device.register_image(*hdr.view, true),
+            depth,
+            vis,
+            hdr,
         }
-    }
-
-    fn deregister(&self, device: &nbn::Device) {
-        device.deregister_image(self.vis.index, true);
-        device.deregister_image(self.hdr.index, true);
-        device.deregister_image(self.depth.index, false);
-    }
-
-    fn recreate(&mut self, device: &nbn::Device, extent: vk::Extent3D) {
-        self.deregister(device);
-        *self = Self::new(device, extent);
     }
 }
 
 struct WindowState {
     window: winit::window::Window,
     swapchain: nbn::Swapchain,
-    swapchain_image_heap_indices: Vec<u32>,
+    swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
     combined_uniform_buffer: nbn::Buffer,
@@ -466,7 +459,7 @@ impl winit::application::ApplicationHandler for App {
                 device.recreate_swapchain(&mut state.swapchain);
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
 
-                state.framebuffers.recreate(
+                state.framebuffers = Framebuffers::new(
                     &device,
                     vk::Extent3D {
                         width: new_size.width,
@@ -475,9 +468,7 @@ impl winit::application::ApplicationHandler for App {
                     },
                 );
 
-                for index in state.swapchain_image_heap_indices.drain(..) {
-                    device.deregister_image(index, true);
-                }
+                state.swapchain_image_heap_indices.clear();
                 state.swapchain_image_heap_indices.extend(
                     state
                         .swapchain

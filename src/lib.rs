@@ -17,15 +17,18 @@ pub use vk_sync::{
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
+pub mod descriptors;
 pub mod egui;
 mod hot_reloading;
 mod surface;
 mod util;
 
+pub use descriptors::ImageIndex;
 pub use hot_reloading::*;
 pub use surface::*;
 pub use util::*;
 
+#[derive(Clone, Copy)]
 pub enum QueueType {
     Graphics,
     Compute,
@@ -71,14 +74,6 @@ impl Allocator {
     }
 }
 
-pub struct Descriptors {
-    _pool: DescriptorPool,
-    layout: DescriptorSetLayout,
-    pub set: vk::DescriptorSet,
-    sampled_image_count: parking_lot::Mutex<CountTracker>,
-    storage_image_count: parking_lot::Mutex<CountTracker>,
-}
-
 pub use gpu_allocator::MemoryLocation;
 
 pub struct BufferDescriptor<'a> {
@@ -116,7 +111,7 @@ pub struct Device {
     surface_loader: ash::khr::surface::Instance,
     pub device: ash::Device,
     pub physical_device: vk::PhysicalDevice,
-    pub descriptors: ManuallyDrop<Descriptors>,
+    pub descriptors: ManuallyDrop<descriptors::Descriptors>,
     pub allocator: ManuallyDrop<Arc<Allocator>>,
     pub graphics_queue: Queue,
     pub compute_queue: Queue,
@@ -396,77 +391,6 @@ impl Device {
                 .unwrap()
         };
 
-        let counts_of_each_descriptor_type = 1024;
-
-        let descriptor_pool = DescriptorPool::from_raw(
-            unsafe {
-                device.create_descriptor_pool(
-                    &vk::DescriptorPoolCreateInfo::default()
-                        .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
-                        .max_sets(1)
-                        .pool_sizes(&[
-                            vk::DescriptorPoolSize::default()
-                                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                                .descriptor_count(counts_of_each_descriptor_type),
-                            vk::DescriptorPoolSize::default()
-                                .ty(vk::DescriptorType::MUTABLE_EXT)
-                                .descriptor_count(counts_of_each_descriptor_type),
-                        ]),
-                    None,
-                )
-            }
-            .unwrap(),
-            &device,
-        );
-
-        let descriptor_set_layout = DescriptorSetLayout::from_raw(
-            unsafe {
-                let binding = |index, ty| {
-                    vk::DescriptorSetLayoutBinding::default()
-                        .binding(index)
-                        .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT)
-                        .descriptor_type(ty)
-                        .descriptor_count(counts_of_each_descriptor_type)
-                };
-
-                let mut flags = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
-                    .binding_flags(&[vk::DescriptorBindingFlags::UPDATE_AFTER_BIND; 2]);
-
-                let allowed_descriptor_types_per_binding = [
-                    vk::MutableDescriptorTypeListEXT::default(),
-                    vk::MutableDescriptorTypeListEXT::default()
-                        .descriptor_types(&[vk::DescriptorType::STORAGE_IMAGE]),
-                ];
-
-                let mut mutable_descriptor_create_info =
-                    vk::MutableDescriptorTypeCreateInfoEXT::default()
-                        .mutable_descriptor_type_lists(&allowed_descriptor_types_per_binding);
-
-                device.create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default()
-                        .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-                        .bindings(&[
-                            binding(0, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
-                            binding(1, vk::DescriptorType::MUTABLE_EXT),
-                        ])
-                        .push_next(&mut flags)
-                        .push_next(&mut mutable_descriptor_create_info),
-                    None,
-                )
-            }
-            .unwrap(),
-            &device,
-        );
-
-        let descriptor_set = unsafe {
-            device.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::default()
-                    .descriptor_pool(*descriptor_pool)
-                    .set_layouts(&[*descriptor_set_layout]),
-            )
-        }
-        .unwrap()[0];
-
         let allocator =
             gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
                 instance: instance.clone(),
@@ -478,26 +402,14 @@ impl Device {
             })
             .unwrap();
 
-        let descriptors = ManuallyDrop::new(Descriptors {
-            _pool: descriptor_pool,
-            set: descriptor_set,
-            layout: descriptor_set_layout,
-            sampled_image_count: Default::default(),
-            storage_image_count: Default::default(),
-        });
+        let descriptors = ManuallyDrop::new(descriptors::Descriptors::new(&device));
 
         let pipeline_layout = unsafe {
             device.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::default()
                     .set_layouts(&[*descriptors.layout])
                     .push_constant_ranges(&[vk::PushConstantRange::default()
-                        .stage_flags(
-                            vk::ShaderStageFlags::COMPUTE
-                                | vk::ShaderStageFlags::VERTEX
-                                | vk::ShaderStageFlags::FRAGMENT
-                                | vk::ShaderStageFlags::MESH_EXT
-                                | vk::ShaderStageFlags::TASK_EXT,
-                        )
+                        .stage_flags(vk::ShaderStageFlags::ALL)
                         .offset(0)
                         .size(properties.limits.max_push_constants_size)]),
                 None,
@@ -844,16 +756,12 @@ impl Device {
         }
     }
 
-    fn get_image_tracker(&self, is_storage: bool) -> &parking_lot::Mutex<CountTracker> {
+    fn get_image_tracker(&self, is_storage: bool) -> descriptors::ImageCountTracker {
         if is_storage {
-            &self.descriptors.storage_image_count
+            self.descriptors.storage_image_count.clone()
         } else {
-            &self.descriptors.sampled_image_count
+            self.descriptors.sampled_image_count.clone()
         }
-    }
-
-    pub fn deregister_image(&self, index: u32, is_storage: bool) {
-        self.get_image_tracker(is_storage).lock().remove(index);
     }
 
     pub fn register_image_with_sampler(
@@ -861,8 +769,8 @@ impl Device {
         view: vk::ImageView,
         sampler: &Sampler,
         is_storage: bool,
-    ) -> u32 {
-        let index = self.get_image_tracker(is_storage).lock().add();
+    ) -> ImageIndex {
+        let index = ImageIndex::new(self.get_image_tracker(is_storage));
 
         if is_storage {
             let image_info = vk::DescriptorImageInfo::default()
@@ -874,7 +782,7 @@ impl Device {
                     &[vk::WriteDescriptorSet::default()
                         .dst_set(self.descriptors.set)
                         .dst_binding(1)
-                        .dst_array_element(index)
+                        .dst_array_element(*index)
                         .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                         .descriptor_count(1)
                         .image_info(&[image_info])],
@@ -892,7 +800,7 @@ impl Device {
                     &[vk::WriteDescriptorSet::default()
                         .dst_set(self.descriptors.set)
                         .dst_binding(0)
-                        .dst_array_element(index)
+                        .dst_array_element(*index)
                         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                         .descriptor_count(1)
                         .image_info(&[image_info])],
@@ -904,7 +812,7 @@ impl Device {
         index
     }
 
-    pub fn register_image(&self, view: vk::ImageView, is_storage: bool) -> u32 {
+    pub fn register_image(&self, view: vk::ImageView, is_storage: bool) -> ImageIndex {
         self.register_image_with_sampler(view, &self.repeat_sampler, is_storage)
     }
 
@@ -1054,6 +962,42 @@ impl Device {
         );
     }
 
+    pub fn insert_global_barrier(
+        &self,
+        command_buffer: &CommandBuffer,
+        previous_accesses: &[vk_sync::AccessType],
+        next_accesses: &[vk_sync::AccessType],
+    ) {
+        self.insert_pipeline_barrier(
+            command_buffer,
+            Some(vk_sync::GlobalBarrier {
+                previous_accesses,
+                next_accesses,
+            }),
+            &[],
+            &[],
+        );
+    }
+
+    pub fn insert_image_barrier(&self, command_buffer: &CommandBuffer, barrier: ImageBarrier2) {
+        self.insert_pipeline_barrier(
+            command_buffer,
+            None,
+            &[],
+            &[ImageBarrier {
+                image: ***barrier.image,
+                range: barrier.image.subresource_range,
+                discard_contents: barrier.discard_contents,
+                previous_accesses: barrier.previous_accesses,
+                next_accesses: barrier.next_accesses,
+                src_queue_family_index: self.get_queue(barrier.src_queue_type).index,
+                dst_queue_family_index: self.get_queue(barrier.dst_queue_type).index,
+                previous_layout: ImageLayout::Optimal,
+                next_layout: ImageLayout::Optimal,
+            }],
+        );
+    }
+
     pub fn bind_internal_descriptor_sets(
         &self,
         command_buffer: &CommandBuffer,
@@ -1081,11 +1025,7 @@ impl Device {
             self.cmd_push_constants(
                 **command_buffer,
                 **self.pipeline_layout,
-                vk::ShaderStageFlags::COMPUTE
-                    | vk::ShaderStageFlags::VERTEX
-                    | vk::ShaderStageFlags::FRAGMENT
-                    | vk::ShaderStageFlags::MESH_EXT
-                    | vk::ShaderStageFlags::TASK_EXT,
+                vk::ShaderStageFlags::ALL,
                 0,
                 cast_slice(&[data]),
             );
@@ -1125,24 +1065,6 @@ impl Device {
             );
             self.cmd_set_scissor(**command_buffer, 0, &[render_area]);
         }
-    }
-
-    pub fn insert_global_barrier(
-        &self,
-        command_buffer: &CommandBuffer,
-        previous_accesses: &[vk_sync::AccessType],
-        next_accesses: &[vk_sync::AccessType],
-    ) {
-        vk_sync::cmd::pipeline_barrier(
-            self,
-            **command_buffer,
-            Some(vk_sync::GlobalBarrier {
-                previous_accesses,
-                next_accesses,
-            }),
-            &[],
-            &[],
-        );
     }
 
     pub fn create_buffer(&self, desc: BufferDescriptor) -> VkResult<Buffer> {
@@ -1761,7 +1683,7 @@ impl Drop for Buffer {
 
 pub struct IndexedImage {
     pub image: Image,
-    pub index: u32,
+    pub index: ImageIndex,
 }
 
 impl std::ops::Deref for IndexedImage {
@@ -1840,7 +1762,6 @@ impl StagingBuffer {
     }
 
     pub fn flush(&mut self, device: &Device) {
-        dbg!("flushing");
         let fence = device.create_fence();
         unsafe {
             device.end_command_buffer(*self.command_buffer).unwrap();
@@ -1863,7 +1784,6 @@ impl StagingBuffer {
     }
 
     pub fn finish(self, device: &Device) {
-        dbg!("finishing");
         let fence = device.create_fence();
         unsafe {
             device.end_command_buffer(*self.command_buffer).unwrap();
@@ -1958,24 +1878,18 @@ impl StagingBuffer {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });
+        device.insert_image_barrier(
+            &self.command_buffer,
+            ImageBarrier2 {
+                image: &image,
+                previous_accesses: &[],
+                next_accesses: &[AccessType::TransferWrite],
+                discard_contents: true,
+                src_queue_type: QueueType::Transfer,
+                dst_queue_type: QueueType::Transfer,
+            },
+        );
         unsafe {
-            device.insert_pipeline_barrier(
-                &self.command_buffer,
-                None,
-                &[],
-                &[ImageBarrier {
-                    previous_accesses: &[],
-                    next_accesses: &[AccessType::TransferWrite],
-                    previous_layout: ImageLayout::Optimal,
-                    next_layout: ImageLayout::Optimal,
-                    range: image.subresource_range,
-                    discard_contents: true,
-                    image: *image.image,
-                    src_queue_family_index: device.transfer_queue.index,
-                    dst_queue_family_index: device.transfer_queue.index,
-                }],
-            );
-
             let copies: Vec<_> = lod_offsets
                 .iter()
                 .enumerate()
@@ -2003,24 +1917,44 @@ impl StagingBuffer {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &copies,
             );
-
-            device.insert_pipeline_barrier(
-                &self.command_buffer,
-                None,
-                &[],
-                &[ImageBarrier {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
-                    previous_layout: ImageLayout::Optimal,
-                    next_layout: ImageLayout::Optimal,
-                    range: image.subresource_range,
-                    discard_contents: false,
-                    image: *image.image,
-                    src_queue_family_index: device.transfer_queue.index,
-                    dst_queue_family_index: device.get_queue(transition_to).index,
-                }],
-            );
         }
+
+        device.insert_image_barrier(
+            &self.command_buffer,
+            ImageBarrier2 {
+                image: &image,
+                previous_accesses: &[AccessType::TransferWrite],
+                next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
+                discard_contents: false,
+                src_queue_type: QueueType::Transfer,
+                dst_queue_type: transition_to,
+            },
+        );
         image
+    }
+}
+
+pub struct ImageBarrier2<'a> {
+    pub image: &'a Image,
+    pub previous_accesses: &'a [AccessType],
+    pub next_accesses: &'a [AccessType],
+    pub discard_contents: bool,
+    src_queue_type: QueueType,
+    dst_queue_type: QueueType,
+}
+
+impl ImageBarrier2<'_> {
+    fn into(&self, device: &Device) -> ImageBarrier {
+        ImageBarrier {
+            image: ***self.image,
+            range: self.image.subresource_range,
+            discard_contents: self.discard_contents,
+            previous_accesses: self.previous_accesses,
+            next_accesses: self.next_accesses,
+            src_queue_family_index: device.get_queue(self.src_queue_type).index,
+            dst_queue_family_index: device.get_queue(self.dst_queue_type).index,
+            previous_layout: ImageLayout::Optimal,
+            next_layout: ImageLayout::Optimal,
+        }
     }
 }
