@@ -109,3 +109,12 @@ interpolate(BarycentricDeriv deriv, float3 v0, float3 v1, float3 v2) {
     interp.dy.z = z.z;
     return interp;
 }
+
+func interpolate_ray_barycentrics<int N>(
+    vector<float, N> a,
+    vector<float, N> b,
+    vector<float, N> c,
+    float2 barycentrics
+) -> vector<float, N> {
+    return a * (1.0 - barycentrics.x - barycentrics.y) + b * barycentrics.x + c * barycentrics.y;
+}

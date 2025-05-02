@@ -85,6 +85,7 @@ pub fn create_image(
 
 pub struct GltfModel {
     pub model: Model,
+    pub acceleration_structure: nbn::AccelerationStructure,
     // for debugging
     pub meshlets: Vec<Meshlet>,
 }
@@ -93,7 +94,7 @@ pub struct GltfData {
     _images: Vec<nbn::IndexedImage>,
     pub(crate) _buffer: nbn::Buffer,
     _meshlets_buffer: nbn::Buffer,
-    pub meshes: Vec<Vec<GltfModel>>,
+    pub meshes: Vec<GltfModel>,
 }
 
 struct Meshlets {
@@ -246,18 +247,21 @@ pub fn load_gltf(
 
     let mut meshes = Vec::new();
 
-    for (mesh, meshlets_mesh) in gltf.meshes.iter().zip(&meshlets.metadata) {
-        let mut primitives = Vec::new();
-
+    for (mesh_index, (mesh, meshlets_mesh)) in
+        gltf.meshes.iter().zip(&meshlets.metadata).enumerate()
+    {
         for (
-            primitive,
-            &[
-                num_meshlets,
-                vertices_offset,
-                triangles_offset,
-                meshlets_offset,
-            ],
-        ) in mesh.primitives.iter().zip(meshlets_mesh)
+            primitive_index,
+            (
+                primitive,
+                &[
+                    num_meshlets,
+                    vertices_offset,
+                    triangles_offset,
+                    meshlets_offset,
+                ],
+            ),
+        ) in mesh.primitives.iter().zip(meshlets_mesh).enumerate()
         {
             let material = materials[primitive.material.unwrap()];
 
@@ -273,10 +277,38 @@ pub fn load_gltf(
                 goth_gltf::ComponentType::UnsignedInt => true,
                 other => unimplemented!("{:?}", other),
             };
-            primitives.push(GltfModel {
+
+            let positions_accessor = &gltf.accessors[primitive.attributes.position.unwrap()];
+
+            let positions = get(primitive.attributes.position);
+
+            let acceleration_structure = device.create_acceleration_structure(
+                &format!(
+                    "{} mesh {} primitive {} acceleration structure",
+                    path.display(),
+                    mesh_index,
+                    primitive_index
+                ),
+                nbn::AccelerationStructureData::Triangles {
+                    index_type: if is_32_bit {
+                        vk::IndexType::UINT32
+                    } else {
+                        vk::IndexType::UINT16
+                    },
+                    opaque: material.flags == 0,
+                    vertices_buffer_address: positions,
+                    indices_buffer_address: get_buffer_offset(indices),
+                    num_vertices: positions_accessor.count as _,
+                    num_indices: indices.count as _,
+                },
+                staging_buffer,
+            );
+
+            meshes.push(GltfModel {
+                acceleration_structure,
                 model: Model {
                     material,
-                    positions: get(primitive.attributes.position),
+                    positions,
                     uvs: get(primitive.attributes.texcoord_0),
                     normals: get(primitive.attributes.normal),
                     indices: get_buffer_offset(indices),
@@ -292,8 +324,6 @@ pub fn load_gltf(
                     .to_vec(),
             });
         }
-
-        meshes.push(primitives);
     }
 
     dbg!(&materials.len());

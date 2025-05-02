@@ -29,7 +29,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
 
     let near_depth = 0.0001;
 
-    let projection = perspective_reversed_infinite_z_vk(
+    let projection = nbn::perspective_reversed_infinite_z_vk(
         45.0_f32.to_radians(),
         extent.width as f32 / extent.height as f32,
         near_depth,
@@ -120,6 +120,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                 + (8 * TOTAL_NUM_INSTANCES_OF_TYPE),
             tonemap_lut_image: *state.tonemap_lut,
             depthbuffer: *state.framebuffers.depth_index,
+            _acceleration_structure: *state.tlas,
         };
 
         let uniforms_ptr = *state.combined_uniform_buffer

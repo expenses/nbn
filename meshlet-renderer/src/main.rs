@@ -168,27 +168,7 @@ struct WindowState {
     num_debug_meshlet_instances: u32,
     debug_meshlet_instances: nbn::Buffer,
     tonemap_lut: nbn::IndexedImage,
-}
-
-// copied from https://docs.rs/ultraviolet/latest/src/ultraviolet/projection/rh_yup.rs.html#350-365
-// The glam version only works for opengl/wgpu I think :(
-fn perspective_reversed_infinite_z_vk(
-    vertical_fov: f32,
-    aspect_ratio: f32,
-    z_near: f32,
-) -> glam::Mat4 {
-    let t = (vertical_fov / 2.0).tan();
-
-    let sy = 1.0 / t;
-
-    let sx = sy / aspect_ratio;
-
-    glam::Mat4::from_cols(
-        glam::Vec4::new(sx, 0.0, 0.0, 0.0),
-        glam::Vec4::new(0.0, -sy, 0.0, 0.0),
-        glam::Vec4::new(0.0, 0.0, 0.0, -1.0),
-        glam::Vec4::new(0.0, 0.0, z_near, 0.0),
-    )
+    tlas: nbn::AccelerationStructure,
 }
 
 struct App {
@@ -228,32 +208,60 @@ impl winit::application::ApplicationHandler for App {
             //std::path::Path::new("models/Bistro_v5_2/bistro_combined.gltf"),
         );
 
-        staging_buffer.finish(&device);
-
         let mut models = Vec::new();
         let mut instances = Vec::new();
 
         let mut debug_meshlet_instances = Vec::new();
 
-        for mesh in &gltf.meshes {
-            for model in mesh {
-                for &meshlet in &model.meshlets {
-                    debug_meshlet_instances.push(MeshletInstance {
-                        meshlet,
-                        instance: Instance {
-                            _model_index_and_padding: [models.len() as u32; 4],
-                            position: [0.0; 4],
-                        },
-                    });
-                }
+        let mut acceleration_structure_instances: Vec<vk::AccelerationStructureInstanceKHR> =
+            Vec::new();
 
-                instances.push(Instance {
-                    _model_index_and_padding: [models.len() as u32; 4],
-                    position: [0.0; 4],
+        for model in &gltf.meshes {
+            acceleration_structure_instances.push(
+                nbn::AccelerationStructureInstance {
+                    acceleration_structure_address: *model.acceleration_structure,
+                    custom_index: models.len() as u32,
+                    mask: 0xff,
+                    shader_binding_table_record_offset: 0,
+                    flags: vk::GeometryInstanceFlagsKHR::empty(),
+                    transform: nbn::transform_from_mat4(glam::Mat4::IDENTITY),
+                }
+                .into(),
+            );
+
+            for &meshlet in &model.meshlets {
+                debug_meshlet_instances.push(MeshletInstance {
+                    meshlet,
+                    instance: Instance {
+                        _model_index_and_padding: [models.len() as u32; 4],
+                        position: [0.0; 4],
+                    },
                 });
-                models.push(model.model);
             }
+
+            instances.push(Instance {
+                _model_index_and_padding: [models.len() as u32; 4],
+                position: [0.0; 4],
+            });
+            models.push(model.model);
         }
+
+        let acceleration_structure_instances =
+            device.create_buffer_with_data(nbn::BufferInitDescriptor {
+                name: "acceleration_structure_instances",
+                data: &acceleration_structure_instances,
+            });
+
+        let tlas = device.create_acceleration_structure(
+            "tlas",
+            nbn::AccelerationStructureData::Instances {
+                buffer_address: *acceleration_structure_instances,
+                count: instances.len() as _,
+            },
+            &mut staging_buffer,
+        );
+
+        staging_buffer.finish(&device);
 
         let num_debug_meshlet_instances = debug_meshlet_instances.len() as u32;
         let debug_meshlet_instances = device.create_buffer_with_data(nbn::BufferInitDescriptor {
@@ -278,6 +286,7 @@ impl winit::application::ApplicationHandler for App {
         let debugging_module = device.load_shader("shaders/compiled/debugging.spv");
 
         self.window_state = Some(WindowState {
+            tlas,
             tonemap_lut,
             num_debug_meshlet_instances,
             debug_meshlet_instances,

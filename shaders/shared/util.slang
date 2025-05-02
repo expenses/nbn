@@ -47,3 +47,19 @@ float3 quadratic_colour_thresholding(float3 colour, float threshold, float knee)
 
     return colour * max(rq, brightness - threshold) / max(brightness, 1.0e-4);
 }
+
+struct Ray {
+    float3 origin;
+    float3 direction;
+}
+
+Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv) {
+    Ray ray;
+
+    let d = uv * 2.0 - 1.0;
+    ray.origin = mul(view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    let temp = mul(proj_inv, float4(d.x, d.y, 1.0, 1.0));
+    ray.direction = mul(view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
+
+    return ray;
+}

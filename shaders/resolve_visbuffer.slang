@@ -111,6 +111,9 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     let sun = normalize(float3(1.0, 2.0, 0.75));
 
     var factor = dot(sun, normal);
+    if (factor > 0.0) {
+        factor *= float(trace_shadow_ray(uniforms, pos.val, sun));
+    }
 
     factor = max(factor, .1);
 
@@ -155,4 +158,111 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     let value = tony_mc_mapface(lut, sample);
 
     output_image.Store(thread, float4(srgb_lin2encoded(sample), 1.0));
+}
+
+Optional<float3> trace(UniformBuffer* uniforms, float3 position, float3 dir) {
+    RayDesc desc;
+    desc.Direction = dir;
+    desc.Origin = position;
+    desc.TMax = 1e6f;
+    desc.TMin = 0.1f;
+
+    var query = RayQuery<RAY_FLAG_NONE>();
+    query.TraceRayInline(
+        uniforms.acceleration_structure,
+        RAY_FLAG_NONE,
+        0xff,
+        desc
+    );
+
+    while (query.Proceed()) {
+        let base_colour = base_colour_from_ray(
+            uniforms,
+            query.CandidateTriangleBarycentrics(),
+            query.CandidateRayInstanceCustomIndex(),
+            query.CandidatePrimitiveIndex()
+        );
+
+        if (base_colour.a >= .5) {
+            query.CommitNonOpaqueTriangleHit();
+        }
+    }
+
+    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        let base_colour = base_colour_from_ray(
+            uniforms,
+            query.CommittedTriangleBarycentrics(),
+            query.CommittedRayInstanceCustomIndex(),
+            query.CommittedPrimitiveIndex()
+        );
+
+        return base_colour.rgb;
+    } else {
+        return none;
+    }
+}
+
+bool trace_shadow_ray(
+    UniformBuffer* uniforms,
+    float3 position,
+    float3 sun_direction
+) {
+    RayDesc desc;
+    desc.Direction = sun_direction;
+    desc.Origin = position;
+    desc.TMax = 1e6f;
+    desc.TMin = 0.1f;
+
+    var query = RayQuery<
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+        | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES>();
+    query.TraceRayInline(
+        uniforms.acceleration_structure,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+            | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES,
+        0xff,
+        desc
+    );
+    while (query.Proceed()) {
+       let base_colour = base_colour_from_ray(
+            uniforms,
+            query.CandidateTriangleBarycentrics(),
+            query.CandidateRayInstanceCustomIndex(),
+            query.CandidatePrimitiveIndex()
+        );
+
+        if (base_colour.a >= .5) {
+            query.CommitNonOpaqueTriangleHit();
+        }
+    }
+    return query.CommittedStatus() != COMMITTED_TRIANGLE_HIT;
+}
+
+float4 base_colour_from_ray(
+    UniformBuffer* uniforms,
+    float2 barycentrics,
+    uint model_index,
+    uint primitive_index,
+) {
+    let model = uniforms.models[model_index];
+
+    if (model.material.base_colour_image == MAX_UINT_VALUE) {
+        return float4(1.0);
+    }
+
+    let indices = uint3(
+        model.read_index(primitive_index * 3 + 0),
+        model.read_index(primitive_index * 3 + 1),
+        model.read_index(primitive_index * 3 + 2),
+    );
+
+    let uv = interpolate_ray_barycentrics(
+        model.uvs[indices.x],
+        model.uvs[indices.y],
+        model.uvs[indices.z],
+        barycentrics
+    );
+
+    Sampler2D image = sampled_images[NonUniformResourceIndex(model.material.base_colour_image)];
+    return image.SampleLevel(uv, 0);
 }

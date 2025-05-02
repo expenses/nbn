@@ -14,6 +14,7 @@ struct UniformBuffer {
     Instance* instances;
     MeshletInstance* meshlet_instances;
     DispatchBuffer* dispatches;
+    uint64_t _acceleration_structure;
     uint num_instances;
     uint visbuffer;
     uint hdrbuffer;
@@ -31,5 +32,11 @@ struct UniformBuffer {
             is_alpha_clipped ? alpha_clip_prefix_sum_values
                              : opaque_prefix_sum_values
         };
+    }
+
+    property RaytracingAccelerationStructure acceleration_structure {
+        get {
+            return RaytracingAccelerationStructure(_acceleration_structure);
+        }
     }
 };

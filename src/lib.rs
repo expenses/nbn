@@ -1513,20 +1513,25 @@ impl Device {
 
     pub fn create_acceleration_structure(
         &self,
+        name: &str,
         data: AccelerationStructureData,
         staging_buffer: &mut StagingBuffer,
     ) -> AccelerationStructure {
-        let geometry =
-            vk::AccelerationStructureGeometryKHR::default().flags(vk::GeometryFlagsKHR::OPAQUE);
-
         let (geometry, ty, num_primitives) = match data {
             AccelerationStructureData::Triangles {
                 index_type,
                 vertices_buffer_address,
                 indices_buffer_address,
                 num_vertices,
+                num_indices,
+                opaque,
             } => (
-                geometry
+                vk::AccelerationStructureGeometryKHR::default()
+                    .flags(if opaque {
+                        vk::GeometryFlagsKHR::OPAQUE
+                    } else {
+                        Default::default()
+                    })
                     .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
                     .geometry(vk::AccelerationStructureGeometryDataKHR {
                         triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
@@ -1542,13 +1547,13 @@ impl Device {
                             .vertex_stride(3 * 4),
                     }),
                 vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                num_vertices / 3,
+                num_indices / 3,
             ),
             AccelerationStructureData::Instances {
                 buffer_address,
                 count,
             } => (
-                geometry
+                vk::AccelerationStructureGeometryKHR::default()
                     .geometry_type(vk::GeometryTypeKHR::INSTANCES)
                     .geometry(vk::AccelerationStructureGeometryDataKHR {
                         instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
@@ -1581,8 +1586,6 @@ impl Device {
                 )
         };
 
-        dbg!(size_info);
-
         let scratch_data_offset = (*staging_buffer.staging_buffer)
             + staging_buffer.allocate_with_alignment(
                 &self,
@@ -1592,7 +1595,7 @@ impl Device {
 
         let buffer = self
             .create_buffer(BufferDescriptor {
-                name: "acceleration structure buffer",
+                name: &format!("{} backing buffer", name),
                 size: size_info.acceleration_structure_size,
                 ty: MemoryLocation::GpuOnly,
             })
@@ -1612,6 +1615,8 @@ impl Device {
             .unwrap(),
             loader: self.acceleration_structure_loader.clone(),
         };
+
+        self.set_object_name(*acceleration_structure, name);
 
         let geometry_info = geometry_info
             .dst_acceleration_structure(*acceleration_structure)
@@ -2183,6 +2188,8 @@ pub enum AccelerationStructureData {
         vertices_buffer_address: u64,
         indices_buffer_address: u64,
         num_vertices: u32,
+        num_indices: u32,
+        opaque: bool,
     },
 }
 
