@@ -1833,7 +1833,6 @@ dependencies = [
  "anyhow",
  "ash",
  "ash-window",
- "bytemuck",
  "ddsfile",
  "egui",
  "egui-winit",

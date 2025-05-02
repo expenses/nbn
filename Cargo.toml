@@ -24,7 +24,6 @@ tree64 = { git = "https://github.com/expenses/tree64" }
 glam = "0.29.2"
 image = "0.25.5"
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
-bytemuck = { version = "1.21.0", features = ["derive"] }
 rayon = "1.10.0"
 fnv = "1.0.7"
 radsort = "0.1.1"

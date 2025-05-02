@@ -203,7 +203,8 @@ impl winit::application::ApplicationHandler for App {
             .unwrap();
         let device = nbn::Device::new(Some(&window), false);
 
-        let mut staging_buffer = nbn::StagingBuffer::new(&device, 64 * 1024 * 1024);
+        let mut staging_buffer =
+            nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Transfer);
 
         let tonemap_lut = assets::create_image(
             &device,

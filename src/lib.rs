@@ -121,6 +121,7 @@ pub struct Device {
     pub pipeline_layout: ManuallyDrop<PipelineLayout>,
     pub properties: vk::PhysicalDeviceProperties,
     pub mesh_shader_loader: ash::ext::mesh_shader::Device,
+    pub acceleration_structure_loader: ash::khr::acceleration_structure::Device,
     pub repeat_sampler: ManuallyDrop<Sampler>,
     pub clamp_sampler: ManuallyDrop<Sampler>,
 }
@@ -279,12 +280,23 @@ impl Device {
         let mut enabled_mutable_descriptor_features =
             vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT::default();
 
+        let mut enabled_acceleration_structure_features =
+            vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
+
+        let mut ray_tracing_pipeline_features =
+            vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
+
+        let mut ray_query_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
+
         let mut enabled_features = vk::PhysicalDeviceFeatures2::default()
             .push_next(&mut enabled_vulkan_1_1_features)
             .push_next(&mut enabled_vulkan_1_2_features)
             .push_next(&mut enabled_vulkan_1_3_features)
             .push_next(&mut enabled_mesh_shader_features)
-            .push_next(&mut enabled_mutable_descriptor_features);
+            .push_next(&mut enabled_mutable_descriptor_features)
+            .push_next(&mut enabled_acceleration_structure_features)
+            .push_next(&mut ray_tracing_pipeline_features)
+            .push_next(&mut ray_query_features);
 
         unsafe { instance.get_physical_device_features2(pdevice, &mut enabled_features) };
         assert!(enabled_features.features.shader_int16 > 0);
@@ -305,6 +317,9 @@ impl Device {
         assert!(enabled_mesh_shader_features.mesh_shader > 0);
         assert!(enabled_mesh_shader_features.task_shader > 0);
         assert!(enabled_mutable_descriptor_features.mutable_descriptor_type > 0);
+        assert!(enabled_acceleration_structure_features.acceleration_structure > 0);
+        assert!(ray_tracing_pipeline_features.ray_tracing_pipeline > 0);
+        assert!(ray_query_features.ray_query > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
             .shader_int16(true)
@@ -345,6 +360,16 @@ impl Device {
             vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT::default()
                 .mutable_descriptor_type(true);
 
+        let mut acceleration_structure_features =
+            vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default()
+                .acceleration_structure(true);
+
+        let mut ray_tracing_pipeline_features =
+            vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default().ray_tracing_pipeline(true);
+
+        let mut ray_query_features =
+            vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true);
+
         let mut queue_infos = vec![vk::DeviceQueueCreateInfo::default()
             .queue_family_index(graphics_queue_family_index)
             .queue_priorities(&[1.0])];
@@ -379,13 +404,21 @@ impl Device {
                             // ;)
                             ash::ext::mesh_shader::NAME.as_ptr(),
                             ash::ext::mutable_descriptor_type::NAME.as_ptr(),
+                            // Ray tracing
+                            ash::khr::acceleration_structure::NAME.as_ptr(),
+                            ash::khr::deferred_host_operations::NAME.as_ptr(),
+                            ash::khr::ray_tracing_pipeline::NAME.as_ptr(),
+                            ash::khr::ray_query::NAME.as_ptr(),
                         ])
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_1_features)
                         .push_next(&mut vulkan_1_2_features)
                         .push_next(&mut vulkan_1_3_features)
                         .push_next(&mut mesh_shader_features)
-                        .push_next(&mut mutable_descriptor_features),
+                        .push_next(&mut mutable_descriptor_features)
+                        .push_next(&mut acceleration_structure_features)
+                        .push_next(&mut ray_tracing_pipeline_features)
+                        .push_next(&mut ray_query_features),
                     None,
                 )
                 .unwrap()
@@ -445,6 +478,9 @@ impl Device {
             swapchain_loader: ash::khr::swapchain::Device::new(&instance, &device),
             debug_utils_device_loader: ash::ext::debug_utils::Device::new(&instance, &device),
             mesh_shader_loader: ash::ext::mesh_shader::Device::new(&instance, &device),
+            acceleration_structure_loader: ash::khr::acceleration_structure::Device::new(
+                &instance, &device,
+            ),
             instance,
             entry,
             debug_callback,
@@ -1072,10 +1108,12 @@ impl Device {
             self.device.create_buffer(
                 &vk::BufferCreateInfo::default().size(desc.size).usage(
                     vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_KHR
-                        | vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER
                         | vk::BufferUsageFlags::TRANSFER_SRC
                         | vk::BufferUsageFlags::TRANSFER_DST
-                        | vk::BufferUsageFlags::INDIRECT_BUFFER,
+                        | vk::BufferUsageFlags::INDIRECT_BUFFER
+                        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+                        | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+                        | vk::BufferUsageFlags::STORAGE_BUFFER,
                 ),
                 None,
             )
@@ -1472,6 +1510,143 @@ impl Device {
                 .unwrap();
         }
     }
+
+    pub fn create_acceleration_structure(
+        &self,
+        data: AccelerationStructureData,
+        staging_buffer: &mut StagingBuffer,
+    ) -> AccelerationStructure {
+        let geometry =
+            vk::AccelerationStructureGeometryKHR::default().flags(vk::GeometryFlagsKHR::OPAQUE);
+
+        let (geometry, ty, num_primitives) = match data {
+            AccelerationStructureData::Triangles {
+                index_type,
+                vertices_buffer_address,
+                indices_buffer_address,
+                num_vertices,
+            } => (
+                geometry
+                    .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+                    .geometry(vk::AccelerationStructureGeometryDataKHR {
+                        triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
+                            .index_type(index_type)
+                            .max_vertex(num_vertices - 1)
+                            .index_data(vk::DeviceOrHostAddressConstKHR {
+                                device_address: indices_buffer_address,
+                            })
+                            .vertex_data(vk::DeviceOrHostAddressConstKHR {
+                                device_address: vertices_buffer_address,
+                            })
+                            .vertex_format(vk::Format::R32G32B32_SFLOAT)
+                            .vertex_stride(3 * 4),
+                    }),
+                vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                num_vertices / 3,
+            ),
+            AccelerationStructureData::Instances {
+                buffer_address,
+                count,
+            } => (
+                geometry
+                    .geometry_type(vk::GeometryTypeKHR::INSTANCES)
+                    .geometry(vk::AccelerationStructureGeometryDataKHR {
+                        instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
+                            .data(vk::DeviceOrHostAddressConstKHR {
+                                device_address: buffer_address,
+                            }),
+                    }),
+                vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                count,
+            ),
+        };
+
+        let geometries = &[geometry];
+
+        let geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+            .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+            .ty(ty)
+            .geometries(geometries);
+
+        let mut size_info = vk::AccelerationStructureBuildSizesInfoKHR::default();
+
+        unsafe {
+            self.acceleration_structure_loader
+                .get_acceleration_structure_build_sizes(
+                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                    &geometry_info,
+                    &[num_primitives],
+                    &mut size_info,
+                )
+        };
+
+        dbg!(size_info);
+
+        let scratch_data_offset = (*staging_buffer.staging_buffer)
+            + staging_buffer.allocate_with_alignment(
+                &self,
+                size_info.build_scratch_size as _,
+                BufferAlignmentType::Address(128),
+            ) as u64;
+
+        let buffer = self
+            .create_buffer(BufferDescriptor {
+                name: "acceleration structure buffer",
+                size: size_info.acceleration_structure_size,
+                ty: MemoryLocation::GpuOnly,
+            })
+            .unwrap();
+
+        let acceleration_structure = WrappedAccelerationStructure {
+            inner: unsafe {
+                self.acceleration_structure_loader
+                    .create_acceleration_structure(
+                        &vk::AccelerationStructureCreateInfoKHR::default()
+                            .size(size_info.acceleration_structure_size)
+                            .buffer(*buffer.buffer)
+                            .ty(ty),
+                        None,
+                    )
+            }
+            .unwrap(),
+            loader: self.acceleration_structure_loader.clone(),
+        };
+
+        let geometry_info = geometry_info
+            .dst_acceleration_structure(*acceleration_structure)
+            .scratch_data(vk::DeviceOrHostAddressKHR {
+                device_address: scratch_data_offset,
+            });
+
+        unsafe {
+            self.acceleration_structure_loader
+                .cmd_build_acceleration_structures(
+                    *staging_buffer.command_buffer,
+                    &[geometry_info],
+                    &[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
+                        .primitive_count(num_primitives)]],
+                );
+        }
+
+        self.insert_global_barrier(
+            &staging_buffer.command_buffer,
+            &[AccessType::AccelerationStructureBuildWrite],
+            &[AccessType::AccelerationStructureBuildRead],
+        );
+
+        AccelerationStructure {
+            address: unsafe {
+                self.acceleration_structure_loader
+                    .get_acceleration_structure_device_address(
+                        &vk::AccelerationStructureDeviceAddressInfoKHR::default()
+                            .acceleration_structure(*acceleration_structure),
+                    )
+            },
+            inner: acceleration_structure,
+            _buffer: buffer,
+        }
+    }
 }
 
 impl std::ops::Deref for Device {
@@ -1584,6 +1759,25 @@ wrap_raii_struct!(
 );
 wrap_raii_struct!(Sampler, vk::Sampler, ash::Device::destroy_sampler);
 wrap_raii_struct!(Semaphore, vk::Semaphore, ash::Device::destroy_semaphore);
+
+struct WrappedAccelerationStructure {
+    inner: vk::AccelerationStructureKHR,
+    loader: ash::khr::acceleration_structure::Device,
+}
+
+impl Deref for WrappedAccelerationStructure {
+    type Target = vk::AccelerationStructureKHR;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl Drop for WrappedAccelerationStructure {
+    fn drop(&mut self) {
+        unsafe { self.loader.destroy_acceleration_structure(self.inner, None) }
+    }
+}
 
 pub struct CommandBuffer {
     pub command_buffer: vk::CommandBuffer,
@@ -1736,11 +1930,12 @@ pub struct StagingBuffer {
     staging_buffer: Buffer,
     command_buffer: CommandBuffer,
     buffer_size: u64,
+    queue_type: QueueType,
 }
 
 impl StagingBuffer {
-    pub fn new(device: &Device, buffer_size: u64) -> Self {
-        let command_buffer = device.create_command_buffer(QueueType::Transfer);
+    pub fn new(device: &Device, buffer_size: u64, queue_type: QueueType) -> Self {
+        let command_buffer = device.create_command_buffer(queue_type);
         unsafe {
             device
                 .begin_command_buffer(*command_buffer, &Default::default())
@@ -1748,6 +1943,7 @@ impl StagingBuffer {
         };
 
         Self {
+            queue_type,
             offset: 0,
             buffer_size,
             staging_buffer: device
@@ -1767,7 +1963,7 @@ impl StagingBuffer {
             device.end_command_buffer(*self.command_buffer).unwrap();
             device
                 .queue_submit(
-                    *device.transfer_queue,
+                    **device.get_queue(self.queue_type),
                     &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
                     *fence,
                 )
@@ -1789,7 +1985,7 @@ impl StagingBuffer {
             device.end_command_buffer(*self.command_buffer).unwrap();
             device
                 .queue_submit(
-                    *device.transfer_queue,
+                    **device.get_queue(self.queue_type),
                     &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
                     *fence,
                 )
@@ -1799,8 +1995,19 @@ impl StagingBuffer {
         }
     }
 
-    fn allocate<R: Read>(&mut self, device: &Device, size: usize, mut reader: R) -> usize {
-        self.offset = self.offset.next_multiple_of(16);
+    fn allocate_with_alignment(
+        &mut self,
+        device: &Device,
+        size: usize,
+        alignment: BufferAlignmentType,
+    ) -> usize {
+        self.offset = match alignment {
+            BufferAlignmentType::Offset(offset) => self.offset.next_multiple_of(offset),
+            BufferAlignmentType::Address(address_offset) => {
+                (*self.staging_buffer as usize + self.offset).next_multiple_of(address_offset)
+                    - *self.staging_buffer as usize
+            }
+        };
         if size > self.buffer_size as usize {
             self.flush(device);
             self.buffer_size = (self.buffer_size * 2).max(size as u64);
@@ -1814,14 +2021,16 @@ impl StagingBuffer {
         } else if size > (self.buffer_size as usize).saturating_sub(self.offset) {
             self.flush(device);
         }
-        reader
-            .read_exact(
-                &mut self.staging_buffer.try_as_slice_mut().unwrap()
-                    [self.offset..self.offset + size],
-            )
-            .unwrap();
         let offset = self.offset;
         self.offset += size;
+        offset
+    }
+
+    fn allocate<R: Read>(&mut self, device: &Device, size: usize, mut reader: R) -> usize {
+        let offset = self.allocate_with_alignment(device, size, BufferAlignmentType::Offset(16));
+        reader
+            .read_exact(&mut self.staging_buffer.try_as_slice_mut().unwrap()[offset..offset + size])
+            .unwrap();
         offset
     }
 
@@ -1934,6 +2143,11 @@ impl StagingBuffer {
     }
 }
 
+enum BufferAlignmentType {
+    Address(usize),
+    Offset(usize),
+}
+
 pub struct ImageBarrier2<'a> {
     pub image: &'a Image,
     pub previous_accesses: &'a [AccessType],
@@ -1956,5 +2170,32 @@ impl ImageBarrier2<'_> {
             previous_layout: ImageLayout::Optimal,
             next_layout: ImageLayout::Optimal,
         }
+    }
+}
+
+pub enum AccelerationStructureData {
+    Instances {
+        buffer_address: u64,
+        count: u32,
+    },
+    Triangles {
+        index_type: vk::IndexType,
+        vertices_buffer_address: u64,
+        indices_buffer_address: u64,
+        num_vertices: u32,
+    },
+}
+
+pub struct AccelerationStructure {
+    inner: WrappedAccelerationStructure,
+    pub _buffer: Buffer,
+    address: u64,
+}
+
+impl Deref for AccelerationStructure {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.address
     }
 }

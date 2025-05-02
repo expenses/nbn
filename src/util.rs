@@ -64,3 +64,24 @@ pub fn cast_slice_mut<I: Copy, O: Copy>(slice: &mut [I]) -> &mut [O] {
         )
     }
 }
+
+// copied from https://docs.rs/ultraviolet/latest/src/ultraviolet/projection/rh_yup.rs.html#350-365
+// The glam version only works for opengl/wgpu I think :(
+pub fn perspective_reversed_infinite_z_vk(
+    vertical_fov: f32,
+    aspect_ratio: f32,
+    z_near: f32,
+) -> [[f32; 4]; 4] {
+    let t = (vertical_fov / 2.0).tan();
+
+    let sy = 1.0 / t;
+
+    let sx = sy / aspect_ratio;
+
+    [
+        [sx, 0.0, 0.0, 0.0],
+        [0.0, -sy, 0.0, 0.0],
+        [0.0, 0.0, 0.0, -1.0],
+        [0.0, 0.0, z_near, 0.0],
+    ]
+}

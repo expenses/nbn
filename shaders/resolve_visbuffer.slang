@@ -10,27 +10,17 @@ import models;
 import uniforms;
 
 float4 sample(uint index, WithDerivatives<float2> uv) {
-    Sampler2D image =  sampled_images[NonUniformResourceIndex(index)];
-    return image
-        .SampleGrad(uv.val, uv.dx, uv.dy);
+    Sampler2D image = sampled_images[NonUniformResourceIndex(index)];
+    return image.SampleGrad(uv.val, uv.dx, uv.dy);
 }
 
-[shader("compute")][NumThreads(8, 8, 1)] void resolve_visbuffer(
-    uint2 thread : SV_DispatchThreadID,
-    uniform UniformBuffer* uniforms
-) {
+float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     Texture2D<uint> input_image = storage_images[uniforms.visbuffer];
-    WTexture2D<float4> output_image = storage_images[uniforms.hdrbuffer];
-
-    if (any(thread > uniforms.extent)) {
-        return;
-    }
 
     let val = input_image[thread];
 
     if (val == MAX_UINT_VALUE) {
-        output_image.Store(thread, float4(0.2, 0.2, 0.6, 1));
-        return;
+        return float3(0.2, 0.2, 0.6);
     }
 
     let meshlet_instance_index = val >> 7;
@@ -124,7 +114,19 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
 
     factor = max(factor, .1);
 
-    let output = (factor * base_colour) + emission;
+    return (factor * base_colour) + emission;
+}
+
+[shader("compute")][NumThreads(8, 8, 1)] void resolve_visbuffer(
+    uint2 thread : SV_DispatchThreadID,
+    uniform UniformBuffer* uniforms
+) {
+    if (any(thread > uniforms.extent)) {
+        return;
+    }
+
+    WTexture2D<float4> output_image = storage_images[uniforms.hdrbuffer];
+    let output = resolve_visbuffer_inner(thread, uniforms);
     output_image.Store(thread, float4(output, 1.0));
 }
 
@@ -135,7 +137,6 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
     Sampler3D<float3> lut = sampled_images[uniforms.tonemap_lut_image];
     Sampler2D<float3> input_image = storage_images[uniforms.hdrbuffer];
     WTexture2D<float4> output_image = storage_images[uniforms.swapchain_image];
-
 
     if (any(thread > uniforms.extent)) {
         return;
@@ -148,7 +149,8 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
     //    uniforms.near_plane
     //    );
 
-    let sample = input_image[thread];//.SampleLevel(thread_to_uv(thread, uniforms.extent), 0);
+    let sample = input_image
+        [thread]; //.SampleLevel(thread_to_uv(thread, uniforms.extent), 0);
 
     let value = tony_mc_mapface(lut, sample);
 

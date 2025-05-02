@@ -5,5 +5,6 @@ build shaders/compiled/debugging.spv: slang shaders/debugging.slang | shaders/un
 build shaders/compiled/egui.spv: slang shaders/egui.slang | shaders/shared/colour.slang
 build shaders/compiled/mesh_shaders.spv: slang shaders/mesh_shaders.slang | shaders/models.slang shaders/shared/constants.slang shaders/uniforms.slang shaders/dispatches.slang shaders/prefix_sum.slang
 build shaders/compiled/resolve_visbuffer.spv: slang shaders/resolve_visbuffer.slang | shaders/shared/constants.slang shaders/shared/util.slang shaders/shared/derivatives.slang shaders/shared/colour.slang shaders/shared/barycentrics.slang shaders/models.slang shaders/uniforms.slang shaders/dispatches.slang shaders/prefix_sum.slang
+build shaders/compiled/rt_triangle.spv: slang shaders/rt_triangle.slang | shaders/shared/colour.slang shaders/shared/util.slang shaders/shared/derivatives.slang
 build shaders/compiled/triangle.spv: slang shaders/triangle.slang
 build shaders/compiled/voxelize.spv: slang shaders/voxelize.slang | shaders/gltf.slang shaders/shared/constants.slang
