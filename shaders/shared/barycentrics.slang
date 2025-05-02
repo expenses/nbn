@@ -116,5 +116,6 @@ func interpolate_ray_barycentrics<int N>(
     vector<float, N> c,
     float2 barycentrics
 ) -> vector<float, N> {
-    return a * (1.0 - barycentrics.x - barycentrics.y) + b * barycentrics.x + c * barycentrics.y;
+    return a * (1.0 - barycentrics.x - barycentrics.y) + b * barycentrics.x
+        + c * barycentrics.y;
 }

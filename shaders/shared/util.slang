@@ -5,7 +5,9 @@ float length_squared(float3 v) {
 }
 
 // Adapted from http://www.thetenthplanet.de/archives/1180
-public float3x3 compute_cotangent_frame(
+public
+
+float3x3 compute_cotangent_frame(
     float3 normal,
     WithDerivatives<float3> position,
     WithDerivatives<float2> uv
@@ -20,24 +22,36 @@ public float3x3 compute_cotangent_frame(
     return float3x3(t * invmax, b * invmax, normal);
 }
 
-public uint div_ceil(uint value, uint divisor) {
+public
+
+uint div_ceil(uint value, uint divisor) {
     return (value + divisor - 1) / divisor;
 }
 
-public float2 texel_size(uint2 extent) {
+public
+
+float2 texel_size(uint2 extent) {
     return 1.0 / float2(extent);
 }
 
-public float2 thread_to_uv(uint2 thread, uint2 extent) {
+public
+
+float2 thread_to_uv(uint2 thread, uint2 extent) {
     return (float2(thread) + 0.5) * texel_size(extent);
 }
 
 // https://www.reddit.com/r/GraphicsProgramming/comments/f9zwin/linearising_reverse_depth_buffer/fix7ifb/
-public float linearize_reverse_infinite_depth_buffer(float sample_value, float near_depth) {
+public
+
+float linearize_reverse_infinite_depth_buffer(
+    float sample_value,
+    float near_depth
+) {
     return near_depth / sample_value;
 }
 
-float3 quadratic_colour_thresholding(float3 colour, float threshold, float knee) {
+float3
+quadratic_colour_thresholding(float3 colour, float threshold, float knee) {
     float3 curve = float3(threshold - knee, knee * 2.0, 0.25 / knee);
 
     float brightness = max(colour.x, max(colour.y, colour.z));
@@ -51,9 +65,11 @@ float3 quadratic_colour_thresholding(float3 colour, float threshold, float knee)
 struct Ray {
     float3 origin;
     float3 direction;
+
 }
 
-Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv) {
+Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv)
+{
     Ray ray;
 
     let d = uv * 2.0 - 1.0;

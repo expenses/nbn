@@ -6,6 +6,7 @@ import shared.util;
 import shared.colour;
 import shared.barycentrics;
 import shared.derivatives;
+import shared.sampling;
 import models;
 import uniforms;
 
@@ -112,7 +113,15 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
 
     var factor = dot(sun, normal);
     if (factor > 0.0) {
-        factor *= float(trace_shadow_ray(uniforms, pos.val, sun));
+        factor *= float(trace_shadow_ray(
+            uniforms,
+            pos.val,
+            SphericalDirectionalLightRayDirection(
+                interleaved_gradient_noise(thread.x, thread.y),
+                sun,
+                0.025
+            )
+        ));
     }
 
     factor = max(factor, .1);
@@ -145,12 +154,12 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
         return;
     }
 
-    //let sample = compute_dof(thread_to_uv(thread, uniforms.extent),
-    //    sampled_images[uniforms.depthbuffer],
-    //    input_image,
-    //    uniforms.extent,
-    //    uniforms.near_plane
-    //    );
+    // let sample = compute_dof(thread_to_uv(thread, uniforms.extent),
+    //     sampled_images[uniforms.depthbuffer],
+    //     input_image,
+    //     uniforms.extent,
+    //     uniforms.near_plane
+    //     );
 
     let sample = input_image
         [thread]; //.SampleLevel(thread_to_uv(thread, uniforms.extent), 0);
@@ -224,7 +233,7 @@ bool trace_shadow_ray(
         desc
     );
     while (query.Proceed()) {
-       let base_colour = base_colour_from_ray(
+        let base_colour = base_colour_from_ray(
             uniforms,
             query.CandidateTriangleBarycentrics(),
             query.CandidateRayInstanceCustomIndex(),
@@ -263,6 +272,8 @@ float4 base_colour_from_ray(
         barycentrics
     );
 
-    Sampler2D image = sampled_images[NonUniformResourceIndex(model.material.base_colour_image)];
+    Sampler2D image =
+        sampled_images[NonUniformResourceIndex(model.material.base_colour_image
+        )];
     return image.SampleLevel(uv, 0);
 }

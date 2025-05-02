@@ -52,11 +52,14 @@ impl winit::application::ApplicationHandler for App {
         });
 
         let accel = device.create_acceleration_structure(
+            "triangles",
             nbn::AccelerationStructureData::Triangles {
-                index_type: vk::IndexType::NONE_KHR,
+                index_type: vk::IndexType::UINT16,
                 num_vertices: 3,
                 indices_buffer_address: *data_buffer + 3 * 4 * 3,
                 vertices_buffer_address: *data_buffer,
+                opaque: true,
+                num_indices: 3,
             },
             &mut staging_buffer,
         );
@@ -86,6 +89,7 @@ impl winit::application::ApplicationHandler for App {
         });
 
         let tlas = device.create_acceleration_structure(
+            "tlas",
             nbn::AccelerationStructureData::Instances {
                 buffer_address: *instance_buffer,
                 count: 1,
@@ -278,12 +282,11 @@ impl winit::application::ApplicationHandler for App {
                         glam::Vec3::ZERO,
                         glam::Vec3::Y,
                     );
-                    let proj =
-                        glam::Mat4::from_cols_array_2d(&nbn::perspective_reversed_infinite_z_vk(
-                            59.0_f32.to_radians(),
-                            extent.width as f32 / extent.height as f32,
-                            0.001,
-                        ));
+                    let proj = nbn::perspective_reversed_infinite_z_vk(
+                        59.0_f32.to_radians(),
+                        extent.width as f32 / extent.height as f32,
+                        0.001,
+                    );
 
                     device.push_constants::<(glam::Mat4, glam::Mat4, u64, vk::Extent2D, u32)>(
                         command_buffer,

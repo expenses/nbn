@@ -6,21 +6,23 @@ fn create_pipeline(
     swapchain: &nbn::Swapchain,
 ) -> nbn::Pipeline {
     device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        vertex: nbn::ShaderDesc {
-            module: shader,
-            entry_point: c"vertex",
+        name: "triangle pipeline",
+        shaders: nbn::GraphicsPipelineShaders::Legacy {
+            vertex: nbn::ShaderDesc {
+                module: shader,
+                entry_point: c"vertex",
+            },
+            fragment: nbn::ShaderDesc {
+                module: shader,
+                entry_point: c"fragment",
+            },
         },
-        fragment: nbn::ShaderDesc {
-            module: shader,
-            entry_point: c"fragment",
-        },
+        color_attachment_formats: &[swapchain.create_info.image_format],
         blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)],
-        color_attachment_formats: &[swapchain.create_info.image_format],
         conservative_rasterization: false,
         depth: Default::default(),
         cull_mode: Default::default(),
-        mesh_shader: false,
     })
 }
 

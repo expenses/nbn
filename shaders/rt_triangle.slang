@@ -50,7 +50,7 @@ struct PushConstants {
         float4(
             srgb_lin2encoded(
                 float3(uv, .5) * float(got)
-                //desc.Direction
+                // desc.Direction
             ),
             1
         )
