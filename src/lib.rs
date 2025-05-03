@@ -954,7 +954,7 @@ impl Device {
         let image = self.create_image(ImageDescriptor {
             name: desc.name,
             format: desc.format,
-            extent: desc.extent.into(),
+            extent: desc.extent,
             usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
@@ -965,17 +965,15 @@ impl Device {
                 command_buffer,
                 None,
                 &[],
-                &[ImageBarrier {
+                &[ImageBarrier2 {
                     previous_accesses: &[],
                     next_accesses: &[AccessType::TransferWrite],
-                    previous_layout: ImageLayout::Optimal,
-                    next_layout: ImageLayout::Optimal,
-                    range: image.subresource_range,
                     discard_contents: true,
-                    image: *image.image,
+                    image: &image,
                     src_queue_family_index: command_buffer.queue_family_index,
                     dst_queue_family_index: command_buffer.queue_family_index,
-                }],
+                }
+                .into()],
             );
 
             let copies: Vec<_> = lod_offsets
@@ -1010,17 +1008,15 @@ impl Device {
                 command_buffer,
                 None,
                 &[],
-                &[ImageBarrier {
+                &[ImageBarrier2 {
                     previous_accesses: &[AccessType::TransferWrite],
                     next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
-                    previous_layout: ImageLayout::Optimal,
-                    next_layout: ImageLayout::Optimal,
-                    range: image.subresource_range,
                     discard_contents: false,
-                    image: *image.image,
+                    image: &image,
                     src_queue_family_index: command_buffer.queue_family_index,
                     dst_queue_family_index: self.get_queue(transition_to).index,
-                }],
+                }
+                .into()],
             );
         }
 
@@ -1095,23 +1091,12 @@ impl Device {
         );
     }
 
-    pub fn insert_image_barrier(&self, command_buffer: &CommandBuffer, barrier: ImageBarrier2) {
-        self.insert_pipeline_barrier(
-            command_buffer,
-            None,
-            &[],
-            &[ImageBarrier {
-                image: ***barrier.image,
-                range: barrier.image.subresource_range,
-                discard_contents: barrier.discard_contents,
-                previous_accesses: barrier.previous_accesses,
-                next_accesses: barrier.next_accesses,
-                src_queue_family_index: self.get_queue(barrier.src_queue_type).index,
-                dst_queue_family_index: self.get_queue(barrier.dst_queue_type).index,
-                previous_layout: ImageLayout::Optimal,
-                next_layout: ImageLayout::Optimal,
-            }],
-        );
+    pub fn insert_image_barrier<T: Into<ImageInfo> + Copy>(
+        &self,
+        command_buffer: &CommandBuffer,
+        barrier: ImageBarrier2<T>,
+    ) {
+        self.insert_pipeline_barrier(command_buffer, None, &[], &[barrier.into()]);
     }
 
     pub fn bind_internal_descriptor_sets(
@@ -1668,7 +1653,7 @@ impl Device {
 
         let scratch_data_offset = (*staging_buffer.staging_buffer)
             + staging_buffer.allocate_with_alignment(
-                &self,
+                self,
                 size_info.build_scratch_size as _,
                 BufferAlignmentType::Address(128),
             ) as u64;
@@ -1728,7 +1713,7 @@ impl Device {
                             .acceleration_structure(*acceleration_structure),
                     )
             },
-            inner: acceleration_structure,
+            _inner: acceleration_structure,
             _buffer: buffer,
         }
     }
@@ -2201,8 +2186,8 @@ impl StagingBuffer {
                 previous_accesses: &[],
                 next_accesses: &[AccessType::TransferWrite],
                 discard_contents: true,
-                src_queue_type: QueueType::Transfer,
-                dst_queue_type: QueueType::Transfer,
+                src_queue_family_index: device.get_queue(QueueType::Transfer).index,
+                dst_queue_family_index: device.get_queue(QueueType::Transfer).index,
             },
         );
         unsafe {
@@ -2242,8 +2227,8 @@ impl StagingBuffer {
                 previous_accesses: &[AccessType::TransferWrite],
                 next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
                 discard_contents: false,
-                src_queue_type: QueueType::Transfer,
-                dst_queue_type: transition_to,
+                src_queue_family_index: self.command_buffer.queue_family_index,
+                dst_queue_family_index: device.get_queue(transition_to).index,
             },
         );
         image
@@ -2255,25 +2240,40 @@ enum BufferAlignmentType {
     Offset(usize),
 }
 
-pub struct ImageBarrier2<'a> {
-    pub image: &'a Image,
+pub struct ImageInfo {
+    image: vk::Image,
+    subresource_range: vk::ImageSubresourceRange,
+}
+
+impl From<&Image> for ImageInfo {
+    fn from(image: &Image) -> Self {
+        Self {
+            image: *image.image,
+            subresource_range: image.subresource_range,
+        }
+    }
+}
+
+pub struct ImageBarrier2<'a, T> {
+    pub image: T,
     pub previous_accesses: &'a [AccessType],
     pub next_accesses: &'a [AccessType],
     pub discard_contents: bool,
-    src_queue_type: QueueType,
-    dst_queue_type: QueueType,
+    pub src_queue_family_index: u32,
+    pub dst_queue_family_index: u32,
 }
 
-impl ImageBarrier2<'_> {
-    fn into(&self, device: &Device) -> ImageBarrier {
-        ImageBarrier {
-            image: ***self.image,
-            range: self.image.subresource_range,
-            discard_contents: self.discard_contents,
-            previous_accesses: self.previous_accesses,
-            next_accesses: self.next_accesses,
-            src_queue_family_index: device.get_queue(self.src_queue_type).index,
-            dst_queue_family_index: device.get_queue(self.dst_queue_type).index,
+impl<'a, T: Into<ImageInfo> + Copy> From<ImageBarrier2<'a, T>> for ImageBarrier<'a> {
+    fn from(barrier: ImageBarrier2<'a, T>) -> Self {
+        let image_info: ImageInfo = barrier.image.into();
+        Self {
+            image: image_info.image,
+            range: image_info.subresource_range,
+            discard_contents: barrier.discard_contents,
+            previous_accesses: barrier.previous_accesses,
+            next_accesses: barrier.next_accesses,
+            src_queue_family_index: barrier.src_queue_family_index,
+            dst_queue_family_index: barrier.dst_queue_family_index,
             previous_layout: ImageLayout::Optimal,
             next_layout: ImageLayout::Optimal,
         }
@@ -2296,8 +2296,8 @@ pub enum AccelerationStructureData {
 }
 
 pub struct AccelerationStructure {
-    inner: WrappedAccelerationStructure,
-    pub _buffer: Buffer,
+    _inner: WrappedAccelerationStructure,
+    _buffer: Buffer,
     address: u64,
 }
 

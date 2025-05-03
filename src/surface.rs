@@ -165,3 +165,15 @@ pub struct SwapchainImage {
     pub image: vk::Image,
     pub view: ImageView,
 }
+
+impl From<&SwapchainImage> for ImageInfo {
+    fn from(image: &SwapchainImage) -> Self {
+        Self {
+            image: image.image,
+            subresource_range: vk::ImageSubresourceRange::default()
+                .level_count(1)
+                .layer_count(1)
+                .aspect_mask(vk::ImageAspectFlags::COLOR),
+        }
+    }
+}

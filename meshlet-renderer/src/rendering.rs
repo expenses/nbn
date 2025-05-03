@@ -189,28 +189,24 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             }),
             &[],
             &[
-                nbn::ImageBarrier {
+                nbn::ImageBarrier2 {
                     previous_accesses: &[],
                     next_accesses: &[nbn::AccessType::DepthStencilAttachmentWrite],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.depth,
-                    range: state.framebuffers.depth.subresource_range,
-                },
-                nbn::ImageBarrier {
+                    image: &state.framebuffers.depth,
+                }
+                .into(),
+                nbn::ImageBarrier2 {
                     previous_accesses: &[],
                     next_accesses: &[nbn::AccessType::ColorAttachmentWrite],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.vis,
-                    range: state.framebuffers.vis.subresource_range,
-                },
+                    image: &state.framebuffers.vis,
+                }
+                .into(),
             ],
         );
 
@@ -278,41 +274,35 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             None,
             &[],
             &[
-                nbn::ImageBarrier {
+                nbn::ImageBarrier2 {
                     previous_accesses: &[nbn::AccessType::ColorAttachmentWrite],
                     next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: false,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.vis,
-                    range: state.framebuffers.vis.subresource_range,
-                },
-                nbn::ImageBarrier {
+                    image: &state.framebuffers.vis,
+                }
+                .into(),
+                nbn::ImageBarrier2 {
                     previous_accesses: &[],
                     next_accesses: &[nbn::AccessType::ComputeShaderWrite],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.hdr,
-                    range: state.framebuffers.hdr.subresource_range,
-                },
-                nbn::ImageBarrier {
+                    image: &state.framebuffers.hdr,
+                }
+                .into(),
+                nbn::ImageBarrier2 {
                     previous_accesses: &[nbn::AccessType::DepthStencilAttachmentWrite],
                     next_accesses: &[
                         nbn::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer,
                     ],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: false,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.depth,
-                    range: state.framebuffers.depth.subresource_range,
-                },
+                    image: &state.framebuffers.depth,
+                }
+                .into(),
             ],
         );
 
@@ -355,31 +345,24 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             }),
             &[],
             &[
-                nbn::ImageBarrier {
+                nbn::ImageBarrier2 {
                     previous_accesses: &[nbn::AccessType::Present],
                     next_accesses: &[nbn::AccessType::ComputeShaderWrite],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: image.image,
-                    range: vk::ImageSubresourceRange::default()
-                        .layer_count(1)
-                        .level_count(1)
-                        .aspect_mask(vk::ImageAspectFlags::COLOR),
-                },
-                nbn::ImageBarrier {
+                    image,
+                }
+                .into(),
+                nbn::ImageBarrier2 {
                     previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
                     next_accesses: &[nbn::AccessType::ComputeShaderReadOther],
-                    previous_layout: nbn::ImageLayout::Optimal,
-                    next_layout: nbn::ImageLayout::Optimal,
                     discard_contents: false,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: **state.framebuffers.hdr,
-                    range: state.framebuffers.hdr.subresource_range,
-                },
+                    image: &state.framebuffers.hdr,
+                }
+                .into(),
             ],
         );
         device.dispatch_command_pipeline(
@@ -395,20 +378,15 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             **command_buffer,
             None,
             &[],
-            &[nbn::ImageBarrier {
+            &[nbn::ImageBarrier2 {
                 previous_accesses: &[nbn::AccessType::ComputeShaderWrite],
                 next_accesses: &[nbn::AccessType::ColorAttachmentReadWrite],
-                previous_layout: nbn::ImageLayout::Optimal,
-                next_layout: nbn::ImageLayout::Optimal,
                 discard_contents: false,
                 src_queue_family_index: device.graphics_queue.index,
                 dst_queue_family_index: device.graphics_queue.index,
-                image: image.image,
-                range: vk::ImageSubresourceRange::default()
-                    .layer_count(1)
-                    .level_count(1)
-                    .aspect_mask(vk::ImageAspectFlags::COLOR),
-            }],
+                image,
+            }
+            .into()],
         );
         device.begin_rendering(
             command_buffer,
@@ -435,20 +413,15 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             **command_buffer,
             None,
             &[],
-            &[nbn::ImageBarrier {
+            &[nbn::ImageBarrier2 {
                 previous_accesses: &[nbn::AccessType::ColorAttachmentReadWrite],
                 next_accesses: &[nbn::AccessType::Present],
-                previous_layout: nbn::ImageLayout::Optimal,
-                next_layout: nbn::ImageLayout::Optimal,
                 discard_contents: false,
                 src_queue_family_index: device.graphics_queue.index,
                 dst_queue_family_index: device.graphics_queue.index,
-                image: image.image,
-                range: vk::ImageSubresourceRange::default()
-                    .layer_count(1)
-                    .level_count(1)
-                    .aspect_mask(vk::ImageAspectFlags::COLOR),
-            }],
+                image,
+            }
+            .into()],
         );
         device.end_command_buffer(**command_buffer).unwrap();
 

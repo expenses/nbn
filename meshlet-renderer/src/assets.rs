@@ -32,7 +32,7 @@ pub fn create_image(
         };
         let mut offset = 0;
         let mut offsets = Vec::new();
-        for i in (0..dds.get_num_mipmap_levels()) {
+        for i in 0..dds.get_num_mipmap_levels() {
             offsets.push(offset);
             let level_width = (extent.width >> i).max(1).next_multiple_of(4) as u64;
             let level_height = (extent.height >> i).max(1).next_multiple_of(4) as u64;
