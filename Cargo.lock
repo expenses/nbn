@@ -337,6 +337,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "blue-noise-sampler"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af927b0484dfa38eea63f00b86bd446ddff6352f70f9708eaf036e27ae45ad21"
+
+[[package]]
 name = "built"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1750,6 +1756,7 @@ name = "meshlet-renderer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blue-noise-sampler",
  "ddsfile",
  "dolly",
  "egui",

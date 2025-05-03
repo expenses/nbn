@@ -103,6 +103,12 @@ pub struct BufferInitDescriptor<'a, T> {
     pub data: &'a [T],
 }
 
+pub struct Samplers {
+    pub repeat: Sampler,
+    pub clamp: Sampler,
+    pub nearest_clamp: Sampler,
+}
+
 pub struct Device {
     entry: ash::Entry,
     instance: ash::Instance,
@@ -122,8 +128,7 @@ pub struct Device {
     pub properties: vk::PhysicalDeviceProperties,
     pub mesh_shader_loader: ash::ext::mesh_shader::Device,
     pub acceleration_structure_loader: ash::khr::acceleration_structure::Device,
-    pub repeat_sampler: ManuallyDrop<Sampler>,
-    pub clamp_sampler: ManuallyDrop<Sampler>,
+    pub samplers: ManuallyDrop<Samplers>,
 }
 
 impl Device {
@@ -450,15 +455,15 @@ impl Device {
         }
         .unwrap();
 
-        let create_sampler = |address_mode| {
-            ManuallyDrop::new(Sampler::from_raw(
+        let create_sampler = |address_mode, filter| {
+            Sampler::from_raw(
                 unsafe {
                     device.create_sampler(
                         &vk::SamplerCreateInfo::default()
                             .anisotropy_enable(true)
                             .max_anisotropy(properties.limits.max_sampler_anisotropy)
-                            .mag_filter(vk::Filter::LINEAR)
-                            .min_filter(vk::Filter::LINEAR)
+                            .mag_filter(filter)
+                            .min_filter(filter)
                             .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
                             .min_lod(0.0)
                             .max_lod(f32::MAX)
@@ -470,7 +475,7 @@ impl Device {
                 }
                 .unwrap(),
                 &device,
-            ))
+            )
         };
 
         let this = Self {
@@ -491,8 +496,14 @@ impl Device {
             graphics_queue: Queue::new(&device, graphics_queue_family_index),
             compute_queue: Queue::new(&device, compute_queue_family_index),
             transfer_queue: Queue::new(&device, transfer_queue_family_index),
-            repeat_sampler: create_sampler(vk::SamplerAddressMode::REPEAT),
-            clamp_sampler: create_sampler(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+            samplers: ManuallyDrop::new(Samplers {
+                repeat: create_sampler(vk::SamplerAddressMode::REPEAT, vk::Filter::LINEAR),
+                clamp: create_sampler(vk::SamplerAddressMode::CLAMP_TO_EDGE, vk::Filter::LINEAR),
+                nearest_clamp: create_sampler(
+                    vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                    vk::Filter::NEAREST,
+                ),
+            }),
 
             device,
             allocator: ManuallyDrop::new(Arc::new(Allocator {
@@ -503,8 +514,9 @@ impl Device {
             properties,
         };
 
-        this.set_object_name(**this.repeat_sampler, "repeat_sampler");
-        this.set_object_name(**this.clamp_sampler, "clamp_sampler");
+        this.set_object_name(*this.samplers.repeat, "repeat_sampler");
+        this.set_object_name(*this.samplers.clamp, "clamp_sampler");
+        this.set_object_name(*this.samplers.nearest_clamp, "nearest_clamp_sampler");
 
         this
     }
@@ -849,7 +861,7 @@ impl Device {
     }
 
     pub fn register_image(&self, view: vk::ImageView, is_storage: bool) -> ImageIndex {
-        self.register_image_with_sampler(view, &self.repeat_sampler, is_storage)
+        self.register_image_with_sampler(view, &self.samplers.repeat, is_storage)
     }
 
     pub fn create_image_with_data_in_command_buffer(
@@ -1673,8 +1685,7 @@ impl Drop for Device {
             ManuallyDrop::drop(&mut self.allocator);
             ManuallyDrop::drop(&mut self.descriptors);
             ManuallyDrop::drop(&mut self.pipeline_layout);
-            ManuallyDrop::drop(&mut self.repeat_sampler);
-            ManuallyDrop::drop(&mut self.clamp_sampler);
+            ManuallyDrop::drop(&mut self.samplers);
 
             self.device.destroy_device(None);
 
@@ -2067,6 +2078,10 @@ impl StagingBuffer {
             );
         }
         buffer
+    }
+
+    pub fn create_buffer_from_slice(&mut self, device: &Device, name: &str, data: &[u8]) -> Buffer {
+        self.create_buffer(device, name, data.len(), std::io::Cursor::new(data))
     }
 
     pub fn create_sampled_image(

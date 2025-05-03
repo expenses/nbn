@@ -24,8 +24,8 @@ float3x3 compute_cotangent_frame(
 
 public
 
-uint div_ceil(uint value, uint divisor) {
-    return (value + divisor - 1) / divisor;
+func div_ceil<T : IInteger>(T value, uint divisor) -> T {
+    return (value + T(divisor - 1)) / T(divisor);
 }
 
 public
@@ -38,6 +38,12 @@ public
 
 float2 thread_to_uv(uint2 thread, uint2 extent) {
     return (float2(thread) + 0.5) * texel_size(extent);
+}
+
+public
+
+float2 thread_to_clip(uint2 thread, uint2 extent) {
+    return thread_to_uv(thread, extent) * 2.0 - 1.0;
 }
 
 // https://www.reddit.com/r/GraphicsProgramming/comments/f9zwin/linearising_reverse_depth_buffer/fix7ifb/
@@ -78,4 +84,18 @@ Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv)
     ray.direction = mul(view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
 
     return ray;
+}
+
+public
+
+float3 world_position_from_depth(
+    float2 clip,
+    float depth,
+    float4x4 view_proj_inverse
+) {
+    // Transform back into world position.
+    let world_pos = mul(view_proj_inverse, float4(clip, depth, 1.0));
+
+    // Undo projection.
+    return world_pos.xyz / world_pos.w;
 }

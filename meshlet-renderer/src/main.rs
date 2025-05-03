@@ -11,6 +11,7 @@ use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
 slang_struct::slang_include!("shaders/models.slang");
 slang_struct::slang_include!("shaders/uniforms.slang");
+slang_struct::slang_include!("shaders/shared/noise.slang");
 
 const TOTAL_NUM_INSTANCES_OF_TYPE: u64 = 10_000;
 const TOTAL_NUM_VISIBLE_MESHLETS: usize = 1_000_000;
@@ -84,6 +85,7 @@ struct Framebuffers {
     hdr: nbn::Image,
     hdr_sampled_index: nbn::ImageIndex,
     hdr_storage_index: nbn::ImageIndex,
+    half_size_shadow_buffer: nbn::Buffer,
 }
 
 impl Framebuffers {
@@ -118,22 +120,64 @@ impl Framebuffers {
             mip_levels: 1,
         });
 
+        let half_extent = vk::Extent3D {
+            width: extent.width.div_ceil(2),
+            height: extent.height.div_ceil(2),
+            depth: extent.depth,
+        };
+
         Self {
+            half_size_shadow_buffer: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "half_size_shadow_buffer",
+                    size: half_extent.width as u64 * half_extent.height as u64,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
+
             vis_index: device.register_image(*vis.view, true),
             depth_index: device.register_image_with_sampler(
                 *depth.view,
-                &device.clamp_sampler,
+                &device.samplers.clamp,
                 false,
             ),
             hdr_sampled_index: device.register_image_with_sampler(
                 *hdr.view,
-                &device.clamp_sampler,
+                &device.samplers.clamp,
                 false,
             ),
             hdr_storage_index: device.register_image(*hdr.view, true),
             depth,
             vis,
             hdr,
+        }
+    }
+}
+
+struct BlueNoiseBuffers {
+    sobol: nbn::Buffer,
+    ranking_tile: nbn::Buffer,
+    scrambling_tile: nbn::Buffer,
+}
+
+impl BlueNoiseBuffers {
+    fn new(device: &nbn::Device, staging_buffer: &mut nbn::StagingBuffer) -> Self {
+        Self {
+            sobol: staging_buffer.create_buffer_from_slice(
+                device,
+                "sobol",
+                nbn::cast_slice(blue_noise_sampler::spp64::SOBOL),
+            ),
+            ranking_tile: staging_buffer.create_buffer_from_slice(
+                device,
+                "ranking_tile",
+                nbn::cast_slice(blue_noise_sampler::spp64::RANKING_TILE),
+            ),
+            scrambling_tile: staging_buffer.create_buffer_from_slice(
+                device,
+                "scrambling_tile",
+                nbn::cast_slice(blue_noise_sampler::spp64::SCRAMBLING_TILE),
+            ),
         }
     }
 }
@@ -148,6 +192,7 @@ struct WindowState {
     mesh_pipelines: nbn::ReloadablePipeline<MeshPipelines>,
     compute_pipelines: nbn::ReloadablePipeline<ComputePipelines>,
     blit_pipelines: nbn::ReloadablePipeline<BlitPipelines>,
+    shadow_pipeline: nbn::ReloadablePipeline<nbn::Pipeline>,
     framebuffers: Framebuffers,
     time: f32,
     prefix_sum_values: nbn::Buffer,
@@ -169,6 +214,8 @@ struct WindowState {
     debug_meshlet_instances: nbn::Buffer,
     tonemap_lut: nbn::IndexedImage,
     tlas: nbn::AccelerationStructure,
+    blue_noise: BlueNoiseBuffers,
+    frame_index: u32,
 }
 
 struct App {
@@ -195,7 +242,7 @@ impl winit::application::ApplicationHandler for App {
         let tonemap_lut = nbn::IndexedImage {
             index: device.register_image_with_sampler(
                 *tonemap_lut.view,
-                &device.clamp_sampler,
+                &device.samplers.clamp,
                 false,
             ),
             image: tonemap_lut,
@@ -261,6 +308,8 @@ impl winit::application::ApplicationHandler for App {
             &mut staging_buffer,
         );
 
+        let blue_noise = BlueNoiseBuffers::new(&device, &mut staging_buffer);
+
         staging_buffer.finish(&device);
 
         let num_debug_meshlet_instances = debug_meshlet_instances.len() as u32;
@@ -287,9 +336,11 @@ impl winit::application::ApplicationHandler for App {
 
         self.window_state = Some(WindowState {
             tlas,
+            blue_noise,
             tonemap_lut,
             num_debug_meshlet_instances,
             debug_meshlet_instances,
+            frame_index: 0,
             debugging_pipeline: device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
                 name: "model debugging pipeline",
                 shaders: nbn::GraphicsPipelineShaders::Legacy {
@@ -411,6 +462,11 @@ impl winit::application::ApplicationHandler for App {
                     resolve_visbuffer: device.create_compute_pipeline(shader, c"resolve_visbuffer"),
                     tonemap: device.create_compute_pipeline(shader, c"tonemap"),
                 },
+            ),
+            shadow_pipeline: nbn::ReloadablePipeline::new(
+                &device,
+                device.load_reloadable_shader("shaders/compiled/shadows.spv"),
+                &|device: &nbn::Device, shader| device.create_compute_pipeline(shader, c"main"),
             ),
             framebuffers: Framebuffers::new(
                 &device,

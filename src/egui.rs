@@ -216,7 +216,7 @@ impl Renderer {
 
                     let registered_id = device.register_image_with_sampler(
                         *image.view,
-                        &device.clamp_sampler,
+                        &device.samplers.clamp,
                         false,
                     );
 

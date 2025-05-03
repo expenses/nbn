@@ -7,6 +7,7 @@ import shared.colour;
 import shared.barycentrics;
 import shared.derivatives;
 import shared.sampling;
+import shared.subops;
 import models;
 import uniforms;
 
@@ -17,6 +18,13 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
 
 float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     Texture2D<uint> input_image = storage_images[uniforms.visbuffer];
+
+    let shadow_thread = thread / 2;
+    let shadow_buffer_index = (shadow_thread.x / 8) +  (shadow_thread.y / 8) * (uniforms.half_extent.x  / 8);
+    let is_shadows_val = float(!wave64_unpack_bools(
+        uniforms.half_size_shadow_buffer[shadow_buffer_index],
+        shadow_thread % 8
+    ));
 
     let val = input_image[thread];
 
@@ -111,18 +119,7 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
 
     let sun = normalize(float3(1.0, 2.0, 0.75));
 
-    var factor = dot(sun, normal);
-    if (factor > 0.0) {
-        factor *= float(trace_shadow_ray(
-            uniforms,
-            pos.val,
-            SphericalDirectionalLightRayDirection(
-                interleaved_gradient_noise(thread.x, thread.y),
-                sun,
-                0.025
-            )
-        ));
-    }
+    var factor = dot(sun, normal) * is_shadows_val;
 
     factor = max(factor, .1);
 

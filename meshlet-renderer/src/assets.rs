@@ -7,7 +7,12 @@ pub fn create_image(
     transition_to: nbn::QueueType,
 ) -> nbn::Image {
     if filename.ends_with(".dds") {
-        let dds = ddsfile::Dds::read(std::fs::File::open(filename).unwrap()).unwrap();
+        let dds = match std::fs::File::open(filename) {
+            Ok(file) => ddsfile::Dds::read(file).unwrap(),
+            Err(error) => {
+                panic!("{} failed to load: {}", filename, error);
+            }
+        };
 
         // See for bpp values.
         // https://learn.microsoft.com/en-us/windows/win32/direct3d10/d3d10-graphics-programming-guide-resources-block-compression

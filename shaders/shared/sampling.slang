@@ -132,15 +132,6 @@ float3 SphericalSpotLightRayDirection(
     return normalize(direction + point.x * tangent + point.y * bitangent);
 }
 
-// x and y are in pixels.
-public
-
-float interleaved_gradient_noise(int x, int y) {
-    return fract(
-        52.9829189f * fract(0.06711056f * float(x) + 0.00583715f * float(y))
-    );
-}
-
 float AnimateBlueNoise(in float blueNoise, in int frameIndex) {
     return fract(blueNoise + float(frameIndex % 32) * 0.61803399);
 }

@@ -4,6 +4,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
     state.blit_pipelines.refresh(device);
     state.mesh_pipelines.refresh(device);
     state.compute_pipelines.refresh(device);
+    state.shadow_pipeline.refresh(device);
 
     let forward = state.keyboard.forwards as i32 - state.keyboard.backwards as i32;
     let right = state.keyboard.right as i32 - state.keyboard.left as i32;
@@ -100,6 +101,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
 
         uniforms[current_frame] = UniformBuffer {
             mat: mat.to_cols_array(),
+            mat_inv: mat.inverse().to_cols_array(),
             view: view.to_cols_array(),
             perspective: projection.to_cols_array(),
             near_plane: near_depth,
@@ -121,7 +123,16 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             tonemap_lut_image: *state.tonemap_lut,
             depthbuffer: *state.framebuffers.depth_index,
             _acceleration_structure: *state.tlas,
+            blue_noise: BlueNoiseData {
+                sobol: *state.blue_noise.sobol,
+                scrambling_tile: *state.blue_noise.scrambling_tile,
+                ranking_tile: *state.blue_noise.ranking_tile,
+            },
+            frame_index: state.frame_index,
+            half_size_shadow_buffer: *state.framebuffers.half_size_shadow_buffer,
         };
+
+        state.frame_index += 1;
 
         let uniforms_ptr = *state.combined_uniform_buffer
             + (std::mem::size_of::<UniformBuffer>() * current_frame) as u64;
@@ -300,8 +311,36 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                         .level_count(1)
                         .aspect_mask(vk::ImageAspectFlags::COLOR),
                 },
+                nbn::ImageBarrier {
+                    previous_accesses: &[nbn::AccessType::DepthStencilAttachmentWrite],
+                    next_accesses: &[
+                        nbn::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer,
+                    ],
+                    previous_layout: nbn::ImageLayout::Optimal,
+                    next_layout: nbn::ImageLayout::Optimal,
+                    discard_contents: false,
+                    src_queue_family_index: device.graphics_queue.index,
+                    dst_queue_family_index: device.graphics_queue.index,
+                    image: **state.framebuffers.depth,
+                    range: state.framebuffers.depth.subresource_range,
+                },
             ],
         );
+        {
+            device.cmd_bind_pipeline(
+                **command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                **state.shadow_pipeline,
+            );
+            device.push_constants(command_buffer, uniforms_ptr);
+            device.cmd_dispatch(
+                **command_buffer,
+                extent.width.div_ceil(2).div_ceil(8),
+                extent.height.div_ceil(2).div_ceil(8),
+                1,
+            );
+        }
+
         device.cmd_bind_pipeline(
             **command_buffer,
             vk::PipelineBindPoint::COMPUTE,
