@@ -85,15 +85,88 @@ pub struct BufferDescriptor<'a> {
 pub struct SampledImageDescriptor<'a> {
     pub name: &'a str,
     pub format: vk::Format,
-    pub extent: vk::Extent3D,
+    pub extent: ImageExtent,
+}
+
+#[derive(Clone, Copy)]
+pub enum ImageExtent {
+    D2 {
+        width: u32,
+        height: u32,
+    },
+    D2Layered {
+        width: u32,
+        height: u32,
+        num_layers: u32,
+    },
+    D3 {
+        width: u32,
+        height: u32,
+        depth: u32,
+    },
+}
+
+impl From<vk::Extent2D> for ImageExtent {
+    fn from(extent: vk::Extent2D) -> Self {
+        ImageExtent::D2 {
+            width: extent.width,
+            height: extent.height,
+        }
+    }
+}
+
+impl From<vk::Extent3D> for ImageExtent {
+    fn from(extent: vk::Extent3D) -> Self {
+        if extent.depth > 1 {
+            ImageExtent::D3 {
+                width: extent.width,
+                height: extent.height,
+                depth: extent.depth,
+            }
+        } else {
+            ImageExtent::D2 {
+                width: extent.width,
+                height: extent.height,
+            }
+        }
+    }
+}
+
+impl From<ImageExtent> for vk::Extent3D {
+    fn from(extent: ImageExtent) -> vk::Extent3D {
+        match extent {
+            ImageExtent::D2 { width, height } => vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            },
+            ImageExtent::D3 {
+                width,
+                height,
+                depth,
+            } => vk::Extent3D {
+                width,
+                height,
+                depth,
+            },
+            ImageExtent::D2Layered {
+                width,
+                height,
+                num_layers,
+            } => vk::Extent3D {
+                width,
+                height,
+                depth: num_layers,
+            },
+        }
+    }
 }
 
 pub struct ImageDescriptor<'a> {
     pub name: &'a str,
     pub format: vk::Format,
-    pub extent: vk::Extent3D,
+    pub extent: ImageExtent,
     pub usage: vk::ImageUsageFlags,
-    pub ty: vk::ImageViewType,
     pub aspect_mask: vk::ImageAspectFlags,
     pub mip_levels: u32,
 }
@@ -317,6 +390,7 @@ impl Device {
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
         assert!(enabled_vulkan_1_2_features.timeline_semaphore > 0);
         assert!(enabled_vulkan_1_2_features.shader_buffer_int64_atomics > 0);
+        assert!(enabled_vulkan_1_2_features.shader_float16 > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_mesh_shader_features.mesh_shader > 0);
@@ -349,6 +423,7 @@ impl Device {
             .runtime_descriptor_array(true)
             .timeline_semaphore(true)
             .shader_buffer_int64_atomics(true)
+            .shader_float16(true)
             // Needed for debug printf.
             .vulkan_memory_model(true)
             .vulkan_memory_model_device_scope(true);
@@ -724,19 +799,13 @@ impl Device {
                 self.device.create_image(
                     &vk::ImageCreateInfo::default()
                         .format(desc.format)
-                        .extent(desc.extent)
+                        .extent(desc.extent.into())
                         .samples(vk::SampleCountFlags::TYPE_1)
-                        .image_type(match desc.ty {
-                            vk::ImageViewType::TYPE_1D | vk::ImageViewType::TYPE_1D_ARRAY => {
-                                vk::ImageType::TYPE_1D
+                        .image_type(match desc.extent {
+                            ImageExtent::D2 { .. } => vk::ImageType::TYPE_2D,
+                            ImageExtent::D3 { .. } | ImageExtent::D2Layered { .. } => {
+                                vk::ImageType::TYPE_3D
                             }
-                            vk::ImageViewType::TYPE_2D | vk::ImageViewType::TYPE_2D_ARRAY => {
-                                vk::ImageType::TYPE_2D
-                            }
-                            vk::ImageViewType::TYPE_3D
-                            | vk::ImageViewType::CUBE
-                            | vk::ImageViewType::CUBE_ARRAY => vk::ImageType::TYPE_3D,
-                            _ => panic!(),
                         })
                         .array_layers(1)
                         .mip_levels(desc.mip_levels)
@@ -784,7 +853,11 @@ impl Device {
                         .image(*image)
                         .subresource_range(subresource_range)
                         .format(desc.format)
-                        .view_type(desc.ty),
+                        .view_type(match desc.extent {
+                            ImageExtent::D2 { .. } => vk::ImageViewType::TYPE_2D,
+                            ImageExtent::D3 { .. } => vk::ImageViewType::TYPE_3D,
+                            ImageExtent::D2Layered { .. } => vk::ImageViewType::TYPE_2D_ARRAY,
+                        }),
                     None,
                 )
             }
@@ -797,7 +870,7 @@ impl Device {
         Image {
             image,
             view: image_view,
-            extent: desc.extent,
+            extent: desc.extent.into(),
             subresource_range,
             allocator,
             allocation,
@@ -881,13 +954,8 @@ impl Device {
         let image = self.create_image(ImageDescriptor {
             name: desc.name,
             format: desc.format,
-            extent: desc.extent,
+            extent: desc.extent.into(),
             usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            ty: if desc.extent.depth > 1 {
-                vk::ImageViewType::TYPE_3D
-            } else {
-                vk::ImageViewType::TYPE_2D
-            },
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });
@@ -1664,6 +1732,29 @@ impl Device {
             _buffer: buffer,
         }
     }
+
+    pub fn dispatch_command_pipeline<T: Copy>(
+        &self,
+        command_buffer: &CommandBuffer,
+        pipeline: &Pipeline,
+        push_constants: T,
+        dispatch_width: u32,
+        dispatch_height: u32,
+        dispatch_depth: u32,
+    ) {
+        unsafe {
+            self.cmd_bind_pipeline(**command_buffer, vk::PipelineBindPoint::COMPUTE, **pipeline)
+        };
+        self.push_constants(command_buffer, push_constants);
+        unsafe {
+            self.cmd_dispatch(
+                **command_buffer,
+                dispatch_width,
+                dispatch_height,
+                dispatch_depth,
+            )
+        };
+    }
 }
 
 impl std::ops::Deref for Device {
@@ -2099,11 +2190,7 @@ impl StagingBuffer {
             format: desc.format,
             extent: desc.extent,
             usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
-            ty: if desc.extent.depth > 1 {
-                vk::ImageViewType::TYPE_3D
-            } else {
-                vk::ImageViewType::TYPE_2D
-            },
+
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });

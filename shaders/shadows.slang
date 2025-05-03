@@ -35,20 +35,24 @@ import shared.subops;
     let sun = normalize(float3(1.0, 2.0, 0.75));
 
     let in_shadow = trace_shadow_ray(
-            uniforms,
-            world_space_pos.xyz,
-            SphericalDirectionalLightRayDirection(
-                uniforms.blue_noise.sample(thread, uniforms.frame_index),
-                sun,
-                0.01
-            )
-        );
+        uniforms,
+        world_space_pos.xyz,
+        SphericalDirectionalLightRayDirection(
+            uniforms.blue_noise.sample(thread, uniforms.frame_index),
+            sun,
+            0.01
+        )
+    );
 
-    let packed = wave64_pack_bools(in_shadow);
+    let ballot = WaveActiveBallot(in_shadow);
+
+    let row_width = div_ceil(uniforms.half_extent.x, 8);
 
     if (WaveIsFirstLane()) {
-        let index = group_id.x +  group_id.y * uniforms.half_extent.x/ 8;
-        uniforms.half_size_shadow_buffer[index] = packed;    
+        uniforms.half_size_shadow_buffer
+            [group_id.x + (group_id.y * 2) * row_width] = ballot.x;
+        uniforms.half_size_shadow_buffer
+            [group_id.x + (group_id.y * 2 + 1) * row_width] = ballot.y;
     }
 }
 

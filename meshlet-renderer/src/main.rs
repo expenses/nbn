@@ -11,7 +11,6 @@ use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
 slang_struct::slang_include!("shaders/models.slang");
 slang_struct::slang_include!("shaders/uniforms.slang");
-slang_struct::slang_include!("shaders/shared/noise.slang");
 
 const TOTAL_NUM_INSTANCES_OF_TYPE: u64 = 10_000;
 const TOTAL_NUM_VISIBLE_MESHLETS: usize = 1_000_000;
@@ -69,12 +68,49 @@ struct BlitPipelines {
     tonemap: nbn::Pipeline,
 }
 
+struct ShadowDenoisingPipelines {
+    filter_pass_0: nbn::Pipeline,
+    filter_pass_1: nbn::Pipeline,
+    filter_pass_2: nbn::Pipeline,
+    tile_classification: nbn::Pipeline,
+}
+
 #[derive(Default)]
 struct KeyboardState {
     pub forwards: bool,
     pub backwards: bool,
     pub left: bool,
     pub right: bool,
+}
+
+struct PingPong<T> {
+    items: [T; 2],
+    flipped: bool,
+}
+
+impl<T> PingPong<T> {
+    fn new(items: [T; 2]) -> Self {
+        Self {
+            items,
+            flipped: false,
+        }
+    }
+
+    fn flip(&mut self) {
+        self.flipped = !self.flipped;
+    }
+
+    fn other(&self) -> &T {
+        &self.items[(!self.flipped) as usize]
+    }
+}
+
+impl<T> std::ops::Deref for PingPong<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.items[self.flipped as usize]
+    }
 }
 
 struct Framebuffers {
@@ -89,12 +125,11 @@ struct Framebuffers {
 }
 
 impl Framebuffers {
-    fn new(device: &nbn::Device, extent: vk::Extent3D) -> Self {
+    fn new(device: &nbn::Device, extent: vk::Extent2D) -> Self {
         let vis = device.create_image(nbn::ImageDescriptor {
             name: "visbuffer",
             format: vk::Format::R32_UINT,
-            extent,
-            ty: vk::ImageViewType::TYPE_2D,
+            extent: extent.into(),
             usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels: 1,
@@ -103,8 +138,7 @@ impl Framebuffers {
         let hdr = device.create_image(nbn::ImageDescriptor {
             name: "hdrbuffer",
             format: vk::Format::R16G16B16A16_SFLOAT,
-            extent,
-            ty: vk::ImageViewType::TYPE_2D,
+            extent: extent.into(),
             usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels: 1,
@@ -113,24 +147,22 @@ impl Framebuffers {
         let depth = device.create_image(nbn::ImageDescriptor {
             name: "depth_buffer",
             format: vk::Format::D32_SFLOAT,
-            extent,
-            ty: vk::ImageViewType::TYPE_2D,
+            extent: extent.into(),
             usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
             aspect_mask: vk::ImageAspectFlags::DEPTH,
             mip_levels: 1,
         });
 
-        let half_extent = vk::Extent3D {
+        let half_extent = vk::Extent2D {
             width: extent.width.div_ceil(2),
             height: extent.height.div_ceil(2),
-            depth: extent.depth,
         };
 
         Self {
             half_size_shadow_buffer: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "half_size_shadow_buffer",
-                    size: half_extent.width as u64 * half_extent.height as u64,
+                    size: (half_extent.width as u64 * half_extent.height as u64).div_ceil(8),
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
@@ -193,6 +225,7 @@ struct WindowState {
     compute_pipelines: nbn::ReloadablePipeline<ComputePipelines>,
     blit_pipelines: nbn::ReloadablePipeline<BlitPipelines>,
     shadow_pipeline: nbn::ReloadablePipeline<nbn::Pipeline>,
+    shadow_denoising_pipelines: nbn::ReloadablePipeline<ShadowDenoisingPipelines>,
     framebuffers: Framebuffers,
     time: f32,
     prefix_sum_values: nbn::Buffer,
@@ -468,12 +501,22 @@ impl winit::application::ApplicationHandler for App {
                 device.load_reloadable_shader("shaders/compiled/shadows.spv"),
                 &|device: &nbn::Device, shader| device.create_compute_pipeline(shader, c"main"),
             ),
+            shadow_denoising_pipelines: nbn::ReloadablePipeline::new(
+                &device,
+                device.load_reloadable_shader("shaders/compiled/shadow_denoising.spv"),
+                &|device: &nbn::Device, shader| ShadowDenoisingPipelines {
+                    filter_pass_0: device.create_compute_pipeline(shader, c"filter_pass_0"),
+                    filter_pass_1: device.create_compute_pipeline(shader, c"filter_pass_1"),
+                    filter_pass_2: device.create_compute_pipeline(shader, c"filter_pass_2"),
+                    tile_classification: device
+                        .create_compute_pipeline(shader, c"tile_classification"),
+                },
+            ),
             framebuffers: Framebuffers::new(
                 &device,
-                vk::Extent3D {
+                vk::Extent2D {
                     width: size.width,
                     height: size.height,
-                    depth: 1,
                 },
             ),
             _gltf: gltf,
@@ -527,10 +570,9 @@ impl winit::application::ApplicationHandler for App {
 
                 state.framebuffers = Framebuffers::new(
                     &device,
-                    vk::Extent3D {
+                    vk::Extent2D {
                         width: new_size.width,
                         height: new_size.height,
-                        depth: 1,
                     },
                 );
 

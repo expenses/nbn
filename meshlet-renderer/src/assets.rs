@@ -43,7 +43,7 @@ pub fn create_image(
             device,
             nbn::SampledImageDescriptor {
                 name: filename,
-                extent,
+                extent: extent.into(),
                 format,
             },
             &dds.data,
@@ -78,7 +78,8 @@ pub fn create_image(
                     width: header.pixel_width,
                     height: header.pixel_height,
                     depth: header.pixel_depth.max(1),
-                },
+                }
+                .into(),
                 format: vk::Format::from_raw(header.format.unwrap().value() as _),
             },
             &data,

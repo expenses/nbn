@@ -20,10 +20,11 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     Texture2D<uint> input_image = storage_images[uniforms.visbuffer];
 
     let shadow_thread = thread / 2;
-    let shadow_buffer_index = (shadow_thread.x / 8) +  (shadow_thread.y / 8) * (uniforms.half_extent.x  / 8);
+    let shadow_buffer_index = (shadow_thread.x / 8)
+        + (shadow_thread.y / 4) * div_ceil(uniforms.half_extent.x, 8);
     let is_shadows_val = float(!wave64_unpack_bools(
         uniforms.half_size_shadow_buffer[shadow_buffer_index],
-        shadow_thread % 8
+        uint2(shadow_thread.x % 8, shadow_thread.y % 4)
     ));
 
     let val = input_image[thread];

@@ -10,12 +10,14 @@ float interleaved_gradient_noise(int x, int y) {
 public
 
 struct BlueNoiseData {
+  public
     int* sobol;
+  public
     int* scrambling_tile;
+  public
     int* ranking_tile;
 
-    float
-    sample(int2 pixel, int sampleIndex, int sampleDimension) {
+    float sample(int2 pixel, int sampleIndex, int sampleDimension) {
         // wrap arguments
         pixel.x = pixel.x & 127;
         pixel.y = pixel.y & 127;
@@ -25,8 +27,7 @@ struct BlueNoiseData {
         // xor index based on optimized ranking
         // jb: 1spp blue noise has all 0 in g_blueNoiseRankingTile so we can skip the load
         int rankedSampleIndex = sampleIndex
-            ^ ranking_tile
-                [sampleDimension + (pixel.x + pixel.y * 128) * 8];
+            ^ ranking_tile[sampleDimension + (pixel.x + pixel.y * 128) * 8];
 
         // fetch value in sequence
         int value = sobol[sampleDimension + rankedSampleIndex * 256];
@@ -41,10 +42,12 @@ struct BlueNoiseData {
         return v;
     }
 
-    public float2 sample(int2 pixel, int sampleIndex) {
+  public
+
+    float2 sample(int2 pixel, int sampleIndex) {
         return float2(
             sample(pixel, sampleIndex, 0),
-             sample(pixel, sampleIndex, 1),
+            sample(pixel, sampleIndex, 1),
         );
     }
 };

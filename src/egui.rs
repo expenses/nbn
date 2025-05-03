@@ -185,11 +185,11 @@ impl Renderer {
                                 nbn::SampledImageDescriptor {
                                     name: &format!("egui image ({:?}) (rgba8)", id),
                                     format: vk::Format::R8G8B8A8_SRGB,
-                                    extent: vk::Extent3D {
+                                    extent: vk::Extent2D {
                                         width: image.width() as _,
                                         height: image.height() as _,
-                                        depth: 1,
-                                    },
+                                    }
+                                    .into(),
                                 },
                                 nbn::cast_slice(&image.pixels),
                                 nbn::QueueType::Graphics,
@@ -201,11 +201,11 @@ impl Renderer {
                                 nbn::SampledImageDescriptor {
                                     name: &format!("egui image ({:?}) (r32f)", id),
                                     format: vk::Format::R32_SFLOAT,
-                                    extent: vk::Extent3D {
+                                    extent: vk::Extent2D {
                                         width: image.width() as _,
                                         height: image.height() as _,
-                                        depth: 1,
-                                    },
+                                    }
+                                    .into(),
                                 },
                                 nbn::cast_slice(&image.pixels),
                                 nbn::QueueType::Graphics,
