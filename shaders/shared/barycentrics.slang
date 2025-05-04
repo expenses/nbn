@@ -1,4 +1,5 @@
 import derivatives;
+import util;
 
 // Copied from
 // http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/.
@@ -11,6 +12,33 @@ struct BarycentricDeriv {
     float3 m_ddx;
     float3 m_ddy;
 };
+
+struct BarycentricsAndInterpolatedPosition {
+    BarycentricDeriv barycentrics;
+    WithDerivatives<float3> position;
+
+}
+
+BarycentricsAndInterpolatedPosition
+calculate_barycentrics_from_world_positions(
+    float4x4 mat,
+    float3 pos_a,
+    float3 pos_b,
+    float3 pos_c,
+    uint2 thread,
+    uint2 extent
+) {
+    BarycentricsAndInterpolatedPosition output;
+    output.barycentrics = CalcFullBary(
+        mul(mat, float4(pos_a, 1.0)),
+        mul(mat, float4(pos_b, 1.0)),
+        mul(mat, float4(pos_c, 1.0)),
+        thread_to_clip(thread, extent),
+        extent
+    );
+    output.position = interpolate(output.barycentrics, pos_a, pos_b, pos_c);
+    return output;
+}
 
 BarycentricDeriv CalcFullBary(
     float4 pt0,

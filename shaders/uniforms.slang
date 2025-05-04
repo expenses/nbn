@@ -11,7 +11,10 @@ enum DebugMode {
     BaseColour,
     Normals,
     BaseNormals,
-    MapNormals
+    MapNormals,
+    Roughness,
+    Metallic,
+    RaytracedScene
 };
 
 struct UniformBuffer {

@@ -14,13 +14,16 @@ slang_struct::slang_include!("shaders/uniforms.slang");
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum DebugMode {
-    None = 0,
-    Triangles = 1,
-    Model = 2,
-    BaseColour = 3,
-    Normals = 4,
-    BaseNormals = 5,
-    MapNormals = 6,
+    None,
+    Triangles,
+    Model,
+    BaseColour,
+    Normals,
+    BaseNormals,
+    MapNormals,
+    Roughness,
+    Metallic,
+    RaytracedScene,
 }
 
 const TOTAL_NUM_INSTANCES_OF_TYPE: u64 = 10_000;

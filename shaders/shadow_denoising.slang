@@ -13,6 +13,7 @@
 import uniforms;
 import shared.linalg;
 import shared.util;
+import shared.constants;
 import fallback_bindings;
 
 
@@ -44,12 +45,7 @@ float4x4 ViewProjectionInverse() {
 }
 
 float4x4 ReprojectionMatrix() {
-    return float4x4(
-        float4(1, 0, 0, 0),
-        float4(0, 1, 0, 0),
-        float4(0, 0, 1, 0),
-        float4(0, 0, 0, 1),
-    );
+    return IDENTITY;
 }
 
 FfxFloat32x3 Eye() {

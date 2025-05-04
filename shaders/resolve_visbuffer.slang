@@ -3,6 +3,7 @@ import shared.util;
 import shared.colour;
 import shared.barycentrics;
 import shared.derivatives;
+import shared.linalg;
 import shared.sampling;
 import models;
 import uniforms;
@@ -15,14 +16,25 @@ float4 sample(uint index, WithDerivatives<float2> uv) {
 }
 
 float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
+    if (uniforms.debug_mode == DebugMode::RaytracedScene) {
+            return trace_primary_ray(
+                uniforms,
+                inverse(uniforms.view),
+                inverse(uniforms.perspective),
+                thread
+            );
+            }
+
     Texture2D<uint> input_image = storage_images[uniforms.visbuffer];
 
     let shadow_thread = thread / 2;
     let shadow_buffer_index = (shadow_thread.x / 8)
         + (shadow_thread.y / 4) * div_ceil(uniforms.half_extent.x, 8);
-    let packed_shadow_bits = uniforms.half_size_shadow_buffer[shadow_buffer_index];
+    let packed_shadow_bits =
+        uniforms.half_size_shadow_buffer[shadow_buffer_index];
     let packed_bit_index = (shadow_thread.x % 8) + (shadow_thread.y % 4) * 8;
-    let is_shadows_val = float(!bool((packed_shadow_bits >> packed_bit_index) & 1));
+    let is_shadows_val =
+        float(!bool((packed_shadow_bits >> packed_bit_index) & 1));
 
     let val = input_image[thread];
 
@@ -53,21 +65,16 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
                    [meshlet.triangle_offset + triangle_index * 3 + 2]],
     );
 
-    let pos_a = model.positions[indices.x] + instance.position.xyz;
-    let pos_b = model.positions[indices.y] + instance.position.xyz;
-    let pos_c = model.positions[indices.z] + instance.position.xyz;
-
-    let ndc = float2(thread) / float2(uniforms.extent) * 2.0 - 1.0;
-
-    let bary = CalcFullBary(
-        mul(uniforms.mat, float4(pos_a, 1.0)),
-        mul(uniforms.mat, float4(pos_b, 1.0)),
-        mul(uniforms.mat, float4(pos_c, 1.0)),
-        ndc,
+    let bary_and_pos = calculate_barycentrics_from_world_positions(
+        uniforms.mat,
+        model.positions[indices.x] + instance.position.xyz,
+        model.positions[indices.y] + instance.position.xyz,
+        model.positions[indices.z] + instance.position.xyz,
+        thread,
         uniforms.extent
     );
-
-    let pos = interpolate(bary, pos_a, pos_b, pos_c);
+    let pos = bary_and_pos.position;
+    let bary = bary_and_pos.barycentrics;
 
     let uv = interpolate(
         bary,
@@ -124,7 +131,7 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
 
     factor = max(factor, .1);
 
-     switch (uniforms.debug_mode) {
+    switch (uniforms.debug_mode) {
         case DebugMode::Triangles:
             return colour_from_val(triangle_index);
         case DebugMode::Model:
@@ -137,6 +144,10 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
             return (base_normal + 1.0) / 2.0;
         case DebugMode::MapNormals:
             return (map_normal + 1.0) / 2.0;
+        case DebugMode::Metallic:
+            return is_metallic;
+        case DebugMode::Roughness:
+            return roughness;
     }
 
     return (factor * base_colour) + emission;

@@ -80,6 +80,9 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             radio_button(DebugMode::Normals);
             radio_button(DebugMode::BaseNormals);
             radio_button(DebugMode::MapNormals);
+            radio_button(DebugMode::Roughness);
+            radio_button(DebugMode::Metallic);
+            radio_button(DebugMode::RaytracedScene);
         });
         state
             .alloc_vis

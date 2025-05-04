@@ -35,17 +35,14 @@ import fallback_bindings;
     RayDesc desc;
     desc.Origin = world_space_pos.xyz;
     desc.Direction = SphericalDirectionalLightRayDirection(
-            uniforms.blue_noise.sample(thread, uniforms.frame_index),
-            sun,
-            0.01
-        );
+        uniforms.blue_noise.sample(thread, uniforms.frame_index),
+        sun,
+        0.01
+    );
     desc.TMax = 1e6f;
     desc.TMin = 20.0;
 
-    let in_shadow = trace_shadow_ray(
-        uniforms,
-        desc
-    );
+    let in_shadow = trace_shadow_ray(uniforms, desc);
 
     let ballot = WaveActiveBallot(in_shadow);
 
