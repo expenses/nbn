@@ -4,6 +4,16 @@ import prefix_sum;
 import shared.noise;
 import shared.util;
 
+enum DebugMode {
+    None,
+    Triangles,
+    Model,
+    BaseColour,
+    Normals,
+    BaseNormals,
+    MapNormals
+};
+
 struct UniformBuffer {
     float4x4 mat;
     float4x4 mat_inv;
@@ -27,9 +37,11 @@ struct UniformBuffer {
     uint hdrbuffer;
     uint hdrbuffer_sampled;
     uint depthbuffer;
+    uint prev_depthbuffer;
     uint swapchain_image;
     uint tonemap_lut_image;
     uint frame_index;
+    DebugMode debug_mode;
 
     PrefixSumValue* opaque_prefix_sum_values;
     PrefixSumValue* alpha_clip_prefix_sum_values;

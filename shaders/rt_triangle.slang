@@ -1,7 +1,6 @@
 import shared.colour;
 import shared.util;
-
-[vk::binding(1, 0)] __DynamicResource storage_images[];
+import fallback_bindings;
 
 struct PushConstants {
     float4x4 view_inv;

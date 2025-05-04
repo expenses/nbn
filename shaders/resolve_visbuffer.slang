@@ -1,15 +1,13 @@
-[vk::binding(0, 0)] __DynamicResource sampled_images[];
-[vk::binding(1, 0)] __DynamicResource storage_images[];
-
 import shared.constants;
 import shared.util;
 import shared.colour;
 import shared.barycentrics;
 import shared.derivatives;
 import shared.sampling;
-import shared.subops;
 import models;
 import uniforms;
+import raytracing;
+import fallback_bindings;
 
 float4 sample(uint index, WithDerivatives<float2> uv) {
     Sampler2D image = sampled_images[NonUniformResourceIndex(index)];
@@ -22,10 +20,9 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     let shadow_thread = thread / 2;
     let shadow_buffer_index = (shadow_thread.x / 8)
         + (shadow_thread.y / 4) * div_ceil(uniforms.half_extent.x, 8);
-    let is_shadows_val = float(!wave64_unpack_bools(
-        uniforms.half_size_shadow_buffer[shadow_buffer_index],
-        uint2(shadow_thread.x % 8, shadow_thread.y % 4)
-    ));
+    let packed_shadow_bits = uniforms.half_size_shadow_buffer[shadow_buffer_index];
+    let packed_bit_index = (shadow_thread.x % 8) + (shadow_thread.y % 4) * 8;
+    let is_shadows_val = float(!bool((packed_shadow_bits >> packed_bit_index) & 1));
 
     let val = input_image[thread];
 
@@ -87,6 +84,9 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     )
                                .val);
 
+    let base_normal = normal;
+    var map_normal = normal;
+
     var base_colour = float3(1);
     var roughness = 1.0;
     var is_metallic = 0.0;
@@ -95,9 +95,9 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
         let sampled_normal = sample(material.normal_image, uv).xyz;
 
         if (all(sampled_normal != float3(0.0))) {
-            let map_normal = sampled_normal * 255.0 / 127.0 - 128.0 / 127.0;
+            map_normal = sampled_normal * 255.0 / 127.0 - 128.0 / 127.0;
             normal = normalize(
-                mul(compute_cotangent_frame(normal, pos, uv), map_normal)
+                mul(map_normal, compute_cotangent_frame(normal, pos, uv))
             );
         }
     }
@@ -123,6 +123,21 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     var factor = dot(sun, normal) * is_shadows_val;
 
     factor = max(factor, .1);
+
+     switch (uniforms.debug_mode) {
+        case DebugMode::Triangles:
+            return colour_from_val(triangle_index);
+        case DebugMode::Model:
+            return colour_from_val(instance.model_index);
+        case DebugMode::BaseColour:
+            return base_colour;
+        case DebugMode::Normals:
+            return (normal + 1.0) / 2.0;
+        case DebugMode::BaseNormals:
+            return (base_normal + 1.0) / 2.0;
+        case DebugMode::MapNormals:
+            return (map_normal + 1.0) / 2.0;
+    }
 
     return (factor * base_colour) + emission;
 }
@@ -159,12 +174,14 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
     //     uniforms.near_plane
     //     );
 
-    let sample = input_image
+    var value = input_image
         [thread]; //.SampleLevel(thread_to_uv(thread, uniforms.extent), 0);
 
-    let value = tony_mc_mapface(lut, sample);
+    if (uniforms.debug_mode == DebugMode::None) {
+        value = tony_mc_mapface(lut, value);
+    }
 
-    output_image.Store(thread, float4(srgb_lin2encoded(sample), 1.0));
+    output_image.Store(thread, float4(srgb_lin2encoded(value), 1.0));
 }
 
 Optional<float3> trace(UniformBuffer* uniforms, float3 position, float3 dir) {
@@ -207,71 +224,4 @@ Optional<float3> trace(UniformBuffer* uniforms, float3 position, float3 dir) {
     } else {
         return none;
     }
-}
-
-bool trace_shadow_ray(
-    UniformBuffer* uniforms,
-    float3 position,
-    float3 sun_direction
-) {
-    RayDesc desc;
-    desc.Direction = sun_direction;
-    desc.Origin = position;
-    desc.TMax = 1e6f;
-    desc.TMin = 0.1f;
-
-    var query = RayQuery<
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
-        | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES>();
-    query.TraceRayInline(
-        uniforms.acceleration_structure,
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
-            | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES,
-        0xff,
-        desc
-    );
-    while (query.Proceed()) {
-        let base_colour = base_colour_from_ray(
-            uniforms,
-            query.CandidateTriangleBarycentrics(),
-            query.CandidateRayInstanceCustomIndex(),
-            query.CandidatePrimitiveIndex()
-        );
-
-        if (base_colour.a >= .5) {
-            query.CommitNonOpaqueTriangleHit();
-        }
-    }
-    return query.CommittedStatus() != COMMITTED_TRIANGLE_HIT;
-}
-
-float4 base_colour_from_ray(
-    UniformBuffer* uniforms,
-    float2 barycentrics,
-    uint model_index,
-    uint primitive_index,
-) {
-    let model = uniforms.models[model_index];
-
-    if (model.material.base_colour_image == MAX_UINT_VALUE) {
-        return float4(1.0);
-    }
-
-    let indices = uint3(
-        model.read_index(primitive_index * 3 + 0),
-        model.read_index(primitive_index * 3 + 1),
-        model.read_index(primitive_index * 3 + 2),
-    );
-
-    let uv = interpolate_ray_barycentrics(
-        model.uvs[indices.x],
-        model.uvs[indices.y],
-        model.uvs[indices.z],
-        barycentrics
-    );
-
-    Sampler2D image =
-        sampled_images[NonUniformResourceIndex(model.material.base_colour_image
-        )];
-    return image.SampleLevel(uv, 0);
 }

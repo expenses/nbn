@@ -13,9 +13,7 @@
 import uniforms;
 import shared.linalg;
 import shared.util;
-
-[vk::binding(0, 0)] __DynamicResource sampled_images[];
-[vk::binding(1, 0)] __DynamicResource storage_images[];
+import fallback_bindings;
 
 
 [[vk::push_constant]] uniform UniformBuffer* uniforms;
@@ -31,6 +29,7 @@ float2 InvBufferDimensions() {
 }
 
 float LoadDepth(int2 p) {
+    //printf("LoadDepth\n");
     let uv = thread_to_uv(p, uniforms.extent);
     Sampler2D<float> depthbuffer = sampled_images[uniforms.depthbuffer];
     return depthbuffer.SampleLevel(uv, 0);
@@ -59,10 +58,12 @@ FfxFloat32x3 Eye() {
 
 
 FfxFloat32 LoadHistory(FfxFloat32x2 p) {
+    printf("LoadHistory\n");
     return 1.0;
 }
 
 FfxFloat32 LoadPreviousDepth(FfxInt32x2 p) {
+    //printf("LoadPreviousDepth\n");
     return LoadDepth(p);
 }
 
@@ -72,14 +73,17 @@ bool IsFirstFrame() {
 
 
 float3 LoadNormals(int2 p) {
+    //printf("LoadNormals\n");
     return float3(0);
 }
 
 FfxFloat32x3 LoadPreviousMomentsBuffer(FfxInt32x2 p) {
+    //printf("LoadPreviousMomentsBuffer\n");
     return float3(0);
 }
 
 float16_t2 LoadFilterInput(int2 p) {
+    printf("LoadFilterInput\n");
     return float16_t2(0);
 }
 
@@ -94,11 +98,13 @@ FfxBoolean IsShadowReciever(FfxUInt32x2 p)
 }
 
 FfxUInt32 LoadTileMetaData(FfxUInt32 p) {
+    printf("LoadTileMetaData\n");
     return 0;
 }
 
 FfxUInt32 LoadRaytracedShadowMask(FfxUInt32 tile_index)
 {
+    //printf("LoadRaytracedShadowMask\n");
     return uniforms.half_size_shadow_buffer[tile_index];
 }
 
@@ -112,7 +118,8 @@ void StoreReprojectionResults(FfxUInt32x2 p, FfxFloat32x2 val){}
 
 void StoreMetadata(FfxUInt32 p, FfxUInt32 val) {}
 
-FfxFloat32x2 LoadVelocity(FfxInt32x2 p){
+FfxFloat32x2 LoadVelocity(FfxInt32x2 p) {
+    //printf("LoadVelocity\n");
     return float2(0);
 }
 

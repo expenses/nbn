@@ -69,6 +69,17 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
         egui::Window::new("Images").show(&egui_ctx, |ui| {
             ui.label(format!("{:?}", &device.descriptors.sampled_image_count));
             ui.label(format!("{:?}", &device.descriptors.storage_image_count));
+            let mut radio_button = |mode| {
+                ui.radio_value(&mut state.debug_mode, mode, format!("{:?}", &mode));
+            };
+
+            radio_button(DebugMode::None);
+            radio_button(DebugMode::Triangles);
+            radio_button(DebugMode::Model);
+            radio_button(DebugMode::BaseColour);
+            radio_button(DebugMode::Normals);
+            radio_button(DebugMode::BaseNormals);
+            radio_button(DebugMode::MapNormals);
         });
         state
             .alloc_vis
@@ -122,13 +133,14 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             alpha_clip_prefix_sum_values: *state.prefix_sum_values
                 + (8 * TOTAL_NUM_INSTANCES_OF_TYPE),
             tonemap_lut_image: *state.tonemap_lut,
-            depthbuffer: *state.framebuffers.depth_index,
+            depthbuffer: **state.framebuffers.depth,
+            prev_depthbuffer: **state.framebuffers.depth.other(),
             _acceleration_structure: *state.tlas,
             _blue_noise_sobol: *state.blue_noise.sobol,
             _blue_noise_scrambling_tile: *state.blue_noise.scrambling_tile,
             _blue_noise_ranking_tile: *state.blue_noise.ranking_tile,
-
             frame_index: state.frame_index,
+            debug_mode: state.debug_mode as u32,
             half_size_shadow_buffer: *state.framebuffers.half_size_shadow_buffer,
         };
 
@@ -195,7 +207,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: &state.framebuffers.depth,
+                    image: &state.framebuffers.depth.image,
                 }
                 .into(),
                 nbn::ImageBarrier2 {
@@ -226,7 +238,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                 .store_op(vk::AttachmentStoreOp::STORE)],
             Some(
                 &vk::RenderingAttachmentInfo::default()
-                    .image_view(*state.framebuffers.depth.view)
+                    .image_view(*state.framebuffers.depth.image.view)
                     .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
                     .load_op(vk::AttachmentLoadOp::CLEAR)
                     .store_op(vk::AttachmentStoreOp::STORE)
@@ -300,7 +312,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     discard_contents: false,
                     src_queue_family_index: device.graphics_queue.index,
                     dst_queue_family_index: device.graphics_queue.index,
-                    image: &state.framebuffers.depth,
+                    image: &state.framebuffers.depth.image,
                 }
                 .into(),
             ],
@@ -439,5 +451,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                     .image_indices(&[next_image]),
             )
             .unwrap();
+
+        state.framebuffers.depth.flip();
     }
 }

@@ -1,4 +1,4 @@
-use std::{ffi::CStr, io::Read};
+use std::{ffi::CStr, io::Read, ops::Deref};
 
 mod assets;
 mod rendering;
@@ -11,6 +11,17 @@ use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
 slang_struct::slang_include!("shaders/models.slang");
 slang_struct::slang_include!("shaders/uniforms.slang");
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum DebugMode {
+    None = 0,
+    Triangles = 1,
+    Model = 2,
+    BaseColour = 3,
+    Normals = 4,
+    BaseNormals = 5,
+    MapNormals = 6,
+}
 
 const TOTAL_NUM_INSTANCES_OF_TYPE: u64 = 10_000;
 const TOTAL_NUM_VISIBLE_MESHLETS: usize = 1_000_000;
@@ -83,41 +94,10 @@ struct KeyboardState {
     pub right: bool,
 }
 
-struct PingPong<T> {
-    items: [T; 2],
-    flipped: bool,
-}
-
-impl<T> PingPong<T> {
-    fn new(items: [T; 2]) -> Self {
-        Self {
-            items,
-            flipped: false,
-        }
-    }
-
-    fn flip(&mut self) {
-        self.flipped = !self.flipped;
-    }
-
-    fn other(&self) -> &T {
-        &self.items[(!self.flipped) as usize]
-    }
-}
-
-impl<T> std::ops::Deref for PingPong<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.items[self.flipped as usize]
-    }
-}
-
 struct Framebuffers {
     vis: nbn::Image,
     vis_index: nbn::ImageIndex,
-    depth: nbn::Image,
-    depth_index: nbn::ImageIndex,
+    depth: nbn::PingPong<nbn::IndexedImage>,
     hdr: nbn::Image,
     hdr_sampled_index: nbn::ImageIndex,
     hdr_storage_index: nbn::ImageIndex,
@@ -144,14 +124,24 @@ impl Framebuffers {
             mip_levels: 1,
         });
 
-        let depth = device.create_image(nbn::ImageDescriptor {
-            name: "depth_buffer",
-            format: vk::Format::D32_SFLOAT,
-            extent: extent.into(),
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-            aspect_mask: vk::ImageAspectFlags::DEPTH,
-            mip_levels: 1,
-        });
+        let depth = nbn::PingPong::new(std::array::from_fn(|i| {
+            let depth = device.create_image(nbn::ImageDescriptor {
+                name: &format!("depth_buffer {}", i),
+                format: vk::Format::D32_SFLOAT,
+                extent: extent.into(),
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                mip_levels: 1,
+            });
+
+            let index =
+                device.register_image_with_sampler(*depth.view, &device.samplers.clamp, false);
+
+            nbn::IndexedImage {
+                image: depth,
+                index,
+            }
+        }));
 
         let half_extent = vk::Extent2D {
             width: extent.width.div_ceil(2),
@@ -168,11 +158,7 @@ impl Framebuffers {
                 .unwrap(),
 
             vis_index: device.register_image(*vis.view, true),
-            depth_index: device.register_image_with_sampler(
-                *depth.view,
-                &device.samplers.clamp,
-                false,
-            ),
+
             hdr_sampled_index: device.register_image_with_sampler(
                 *hdr.view,
                 &device.samplers.clamp,
@@ -249,6 +235,7 @@ struct WindowState {
     tlas: nbn::AccelerationStructure,
     blue_noise: BlueNoiseBuffers,
     frame_index: u32,
+    debug_mode: DebugMode,
 }
 
 struct App {
@@ -368,6 +355,7 @@ impl winit::application::ApplicationHandler for App {
         let debugging_module = device.load_shader("shaders/compiled/debugging.spv");
 
         self.window_state = Some(WindowState {
+            debug_mode: DebugMode::None,
             tlas,
             blue_noise,
             tonemap_lut,

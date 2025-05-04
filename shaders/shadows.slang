@@ -4,10 +4,8 @@ import shared.constants;
 import shared.barycentrics;
 import shared.sampling;
 import shared.noise;
-import shared.subops;
-
-[vk::binding(0, 0)] __DynamicResource sampled_images[];
-[vk::binding(1, 0)] __DynamicResource storage_images[];
+import raytracing;
+import fallback_bindings;
 
 [shader("compute")][NumThreads(8, 8, 1)] void trace_shadow_rays(
     uint2 thread : SV_DispatchThreadID,
@@ -34,14 +32,19 @@ import shared.subops;
 
     let sun = normalize(float3(1.0, 2.0, 0.75));
 
-    let in_shadow = trace_shadow_ray(
-        uniforms,
-        world_space_pos.xyz,
-        SphericalDirectionalLightRayDirection(
+    RayDesc desc;
+    desc.Origin = world_space_pos.xyz;
+    desc.Direction = SphericalDirectionalLightRayDirection(
             uniforms.blue_noise.sample(thread, uniforms.frame_index),
             sun,
             0.01
-        )
+        );
+    desc.TMax = 1e6f;
+    desc.TMin = 20.0;
+
+    let in_shadow = trace_shadow_ray(
+        uniforms,
+        desc
     );
 
     let ballot = WaveActiveBallot(in_shadow);
@@ -54,71 +57,4 @@ import shared.subops;
         uniforms.half_size_shadow_buffer
             [group_id.x + (group_id.y * 2 + 1) * row_width] = ballot.y;
     }
-}
-
-bool trace_shadow_ray(
-    UniformBuffer* uniforms,
-    float3 position,
-    float3 sun_direction
-) {
-    RayDesc desc;
-    desc.Direction = sun_direction;
-    desc.Origin = position;
-    desc.TMax = 1e6f;
-    desc.TMin = 20.0;
-
-    var query = RayQuery<
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
-        | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES>();
-    query.TraceRayInline(
-        uniforms.acceleration_structure,
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
-            | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES,
-        0xff,
-        desc
-    );
-    while (query.Proceed()) {
-        let base_colour = base_colour_from_ray(
-            uniforms,
-            query.CandidateTriangleBarycentrics(),
-            query.CandidateRayInstanceCustomIndex(),
-            query.CandidatePrimitiveIndex()
-        );
-
-        if (base_colour.a >= .5) {
-            query.CommitNonOpaqueTriangleHit();
-        }
-    }
-    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
-}
-
-float4 base_colour_from_ray(
-    UniformBuffer* uniforms,
-    float2 barycentrics,
-    uint model_index,
-    uint primitive_index,
-) {
-    let model = uniforms.models[model_index];
-
-    if (model.material.base_colour_image == MAX_UINT_VALUE) {
-        return float4(1.0);
-    }
-
-    let indices = uint3(
-        model.read_index(primitive_index * 3 + 0),
-        model.read_index(primitive_index * 3 + 1),
-        model.read_index(primitive_index * 3 + 2),
-    );
-
-    let uv = interpolate_ray_barycentrics(
-        model.uvs[indices.x],
-        model.uvs[indices.y],
-        model.uvs[indices.z],
-        barycentrics
-    );
-
-    Sampler2D image =
-        sampled_images[NonUniformResourceIndex(model.material.base_colour_image
-        )];
-    return image.SampleLevel(uv, 0);
 }

@@ -33,6 +33,11 @@ pub(crate) unsafe extern "system" fn vulkan_debug_callback(
         level = log::Level::Debug;
     }
 
+    // Known error: https://github.com/shader-slang/slang/issues/6218
+    if message.contains("VUID-PrimitiveTriangleIndicesEXT-PrimitiveTriangleIndicesEXT-07054") {
+        level = log::Level::Debug;
+    }
+
     if message_id_name == "VVL-DEBUG-PRINTF" {
         if let Some((_, message)) = message.rsplit_once('|') {
             log::log!(target: "shader", log::Level::Warn, "{message}");
@@ -122,5 +127,35 @@ impl From<AccelerationStructureInstance> for vk::AccelerationStructureInstanceKH
                 instance.flags.as_raw() as _,
             ),
         }
+    }
+}
+
+pub struct PingPong<T> {
+    items: [T; 2],
+    flipped: bool,
+}
+
+impl<T> PingPong<T> {
+    pub fn new(items: [T; 2]) -> Self {
+        Self {
+            items,
+            flipped: false,
+        }
+    }
+
+    pub fn flip(&mut self) {
+        self.flipped = !self.flipped;
+    }
+
+    pub fn other(&self) -> &T {
+        &self.items[(!self.flipped) as usize]
+    }
+}
+
+impl<T> std::ops::Deref for PingPong<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.items[self.flipped as usize]
     }
 }
