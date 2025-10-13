@@ -732,17 +732,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc4feb366740ded31a004a0e4452fbf84e80ef432ecf8314c485210229672fd1"
 dependencies = [
  "bytemuck",
- "emath 0.31.1",
-]
-
-[[package]]
-name = "ecolor"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adf31f99fad93fe83c1055b92b5c1b135f1ecfa464789817c372000e768d4bd1"
-dependencies = [
- "bytemuck",
- "emath 0.33.0",
+ "emath",
 ]
 
 [[package]]
@@ -753,28 +743,11 @@ checksum = "25dd34cec49ab55d85ebf70139cb1ccd29c977ef6b6ba4fe85489d6877ee9ef3"
 dependencies = [
  "ahash",
  "bitflags 2.9.4",
- "emath 0.31.1",
- "epaint 0.31.1",
+ "emath",
+ "epaint",
  "log",
  "nohash-hasher",
  "profiling",
-]
-
-[[package]]
-name = "egui"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab9b5d3376c79439f53a78bf7da1e3c0b862ffa3e29f46ab0f3e107430f2e576"
-dependencies = [
- "ahash",
- "bitflags 2.9.4",
- "emath 0.33.0",
- "epaint 0.33.0",
- "log",
- "nohash-hasher",
- "profiling",
- "smallvec",
- "unicode-segmentation",
 ]
 
 [[package]]
@@ -786,29 +759,8 @@ dependencies = [
  "ahash",
  "arboard",
  "bytemuck",
- "egui 0.31.1",
+ "egui",
  "log",
- "profiling",
- "raw-window-handle",
- "smithay-clipboard",
- "web-time",
- "webbrowser",
- "winit",
-]
-
-[[package]]
-name = "egui-winit"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb4ea8cb063c00d8f23ce11279c01eb63a195a72be0e21d429148246dab7983e"
-dependencies = [
- "arboard",
- "bytemuck",
- "egui 0.33.0",
- "log",
- "objc2 0.5.2",
- "objc2-foundation 0.2.2",
- "objc2-ui-kit",
  "profiling",
  "raw-window-handle",
  "smithay-clipboard",
@@ -824,7 +776,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "624659a2e972a46f4d5f646557906c55f1cd5a0836eddbe610fdf1afba1b4226"
 dependencies = [
  "ahash",
- "egui 0.31.1",
+ "egui",
  "enum-map",
  "log",
  "profiling",
@@ -841,15 +793,6 @@ name = "emath"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e4cadcff7a5353ba72b7fea76bf2122b5ebdbc68e8155aa56dfdea90083fe1b"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
-name = "emath"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c615516cdceec867065f20d7db13d8eb8aedd65c9e32cc0c7c379380fa42e6e8"
 dependencies = [
  "bytemuck",
 ]
@@ -924,27 +867,9 @@ dependencies = [
  "ab_glyph",
  "ahash",
  "bytemuck",
- "ecolor 0.31.1",
- "emath 0.31.1",
- "epaint_default_fonts 0.31.1",
- "log",
- "nohash-hasher",
- "parking_lot",
- "profiling",
-]
-
-[[package]]
-name = "epaint"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9926b9500ccb917adb070207ec722dd8ea78b8321f94a85ebec776f501f2930c"
-dependencies = [
- "ab_glyph",
- "ahash",
- "bytemuck",
- "ecolor 0.33.0",
- "emath 0.33.0",
- "epaint_default_fonts 0.33.0",
+ "ecolor",
+ "emath",
+ "epaint_default_fonts",
  "log",
  "nohash-hasher",
  "parking_lot",
@@ -956,12 +881,6 @@ name = "epaint_default_fonts"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7e7a64c02cf7a5b51e745a9e45f60660a286f151c238b9d397b3e923f5082f"
-
-[[package]]
-name = "epaint_default_fonts"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66054d943c66715c6003a27a3dc152d87cadf714ef2597ccd79f550413009b97"
 
 [[package]]
 name = "equator"
@@ -1232,7 +1151,7 @@ version = "0.27.0"
 source = "git+https://github.com/expenses/gpu-allocator?branch=updates#c8e59b97bcc780c75363e29f8936bc731a9be58a"
 dependencies = [
  "ash",
- "egui 0.31.1",
+ "egui",
  "egui_extras",
  "log",
  "objc2 0.6.3",
@@ -1850,8 +1769,8 @@ dependencies = [
  "blue-noise-sampler",
  "ddsfile",
  "dolly",
- "egui 0.33.0",
- "egui-winit 0.33.0",
+ "egui",
+ "egui-winit",
  "env_logger",
  "glam 0.30.8",
  "goth-gltf",
@@ -1942,8 +1861,8 @@ dependencies = [
  "ash",
  "ash-window",
  "ddsfile",
- "egui 0.31.1",
- "egui-winit 0.31.1",
+ "egui",
+ "egui-winit",
  "env_logger",
  "fnv",
  "glam 0.30.8",
@@ -3031,7 +2950,7 @@ checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
 [[package]]
 name = "slang_struct"
 version = "0.0.2"
-source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#4ee1d5ac1f3c936cd713605e4baf39228d021e7e"
+source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#51c2e64692a9f0a01b1e5cd06506dfbd1fafe321"
 dependencies = [
  "logos",
  "proc-macro2",
