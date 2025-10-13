@@ -1,9 +1,7 @@
 use ash::prelude::VkResult;
 pub use ash::vk;
 use parking_lot::{Mutex, RwLock};
-use std::borrow::Cow;
 use std::collections::HashSet;
-use std::ffi::c_char;
 use std::ffi::{self, CStr};
 use std::io::Read;
 use std::mem::ManuallyDrop;
@@ -185,8 +183,6 @@ pub struct Samplers {
 pub struct Device {
     entry: ash::Entry,
     instance: ash::Instance,
-    debug_callback: vk::DebugUtilsMessengerEXT,
-    debug_utils_loader: ash::ext::debug_utils::Instance,
     surface_loader: ash::khr::surface::Instance,
     pub device: ash::Device,
     pub physical_device: vk::PhysicalDevice,
@@ -208,21 +204,6 @@ impl Device {
     pub fn new(window: Option<&Window>, enable_debug_printf: bool) -> Self {
         let entry = ash::Entry::linked();
 
-        let app_name = c"nbn";
-
-        let appinfo = vk::ApplicationInfo::default()
-            .application_name(app_name)
-            .application_version(0)
-            .engine_name(app_name)
-            .engine_version(0)
-            .api_version(vk::make_api_version(0, 1, 3, 0));
-
-        let layer_names = [c"VK_LAYER_KHRONOS_validation"];
-        let layers_names_raw: Vec<*const c_char> = layer_names
-            .iter()
-            .map(|raw_name| raw_name.as_ptr())
-            .collect();
-
         let mut required_instance_extensions = Vec::new();
         if let Some(window) = window {
             required_instance_extensions.extend_from_slice(
@@ -233,12 +214,6 @@ impl Device {
             );
         }
         required_instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
-        required_instance_extensions.push(ash::khr::surface::NAME.as_ptr());
-        if enable_debug_printf {
-            // Needed in order to direct debug printf statements to
-            // `vulkan_debug_callback`. Use `VK_LAYER_PRINTF_TO_STDOUT=1` otherwise.
-            required_instance_extensions.push(ash::ext::layer_settings::NAME.as_ptr());
-        }
 
         let available_instance_extensions =
             unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap();
@@ -247,22 +222,17 @@ impl Device {
             .filter_map(|ext| ext.extension_name_as_c_str().ok())
             .collect();
 
-        let create_flags = vk::InstanceCreateFlags::default();
-
-        let mut validation_features = vk::ValidationFeaturesEXT::default();
-        if enable_debug_printf {
-            validation_features = validation_features
-                .enabled_validation_features(&[vk::ValidationFeatureEnableEXT::DEBUG_PRINTF]);
-        }
-
-        let create_info = vk::InstanceCreateInfo::default()
-            .application_info(&appinfo)
-            .enabled_layer_names(&layers_names_raw)
-            .enabled_extension_names(&required_instance_extensions)
-            .flags(create_flags)
-            .push_next(&mut validation_features);
-
-        let instance: ash::Instance = match unsafe { entry.create_instance(&create_info, None) } {
+        let instance: ash::Instance = match unsafe {
+            entry.create_instance(
+                &vk::InstanceCreateInfo::default()
+                    .application_info(
+                        &vk::ApplicationInfo::default()
+                            .api_version(vk::make_api_version(0, 1, 3, 0)),
+                    )
+                    .enabled_extension_names(&required_instance_extensions),
+                None,
+            )
+        } {
             Ok(instance) => instance,
             Err(error) => {
                 for extension in required_instance_extensions {
@@ -273,27 +243,6 @@ impl Device {
                 }
                 panic!("Instance creation error: {}", error);
             }
-        };
-
-        let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
-            .message_severity(
-                vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE,
-            )
-            .message_type(
-                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-            )
-            .pfn_user_callback(Some(vulkan_debug_callback));
-
-        let debug_utils_loader = ash::ext::debug_utils::Instance::new(&entry, &instance);
-        let debug_callback = unsafe {
-            debug_utils_loader
-                .create_debug_utils_messenger(&debug_info, None)
-                .unwrap()
         };
 
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
@@ -563,8 +512,6 @@ impl Device {
             ),
             instance,
             entry,
-            debug_callback,
-            debug_utils_loader,
             surface_loader,
             pipeline_layout: ManuallyDrop::new(PipelineLayout::from_raw(pipeline_layout, &device)),
             descriptors,
@@ -1764,9 +1711,6 @@ impl Drop for Device {
             ManuallyDrop::drop(&mut self.samplers);
 
             self.device.destroy_device(None);
-
-            self.debug_utils_loader
-                .destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
         }
     }
