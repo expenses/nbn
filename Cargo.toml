@@ -13,7 +13,7 @@ winit = "0.30.12"
 presser = "0.3.1"
 vk-sync = { package = "vk-sync-fork", version = "0.5.2" }
 notify = "8.2.0"
-egui = "0.31.0"
+egui = "0.31.1"
 glam = "0.30.8"
 
 [dev-dependencies]
@@ -22,7 +22,7 @@ goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.2", 
 ] }
 env_logger = "0.11.8"
 gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "updates", features = ["visualizer"]}
-egui-winit = "0.31.0"
+egui-winit = "0.31.1"
 #tree64 = { git = "https://github.com/expenses/tree64" }
 #image = "0.25.8"
 #slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
