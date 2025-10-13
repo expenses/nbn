@@ -251,7 +251,7 @@ impl winit::application::ApplicationHandler for App {
         let window = event_loop
             .create_window(winit::window::WindowAttributes::default().with_resizable(true))
             .unwrap();
-        let device = nbn::Device::new(Some(&window), false);
+        let device = nbn::Device::new(Some(&window));
 
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Transfer);

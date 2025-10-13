@@ -201,7 +201,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn new(window: Option<&Window>, enable_debug_printf: bool) -> Self {
+    pub fn new(window: Option<&Window>) -> Self {
         let entry = ash::Entry::linked();
 
         let mut required_instance_extensions = Vec::new();

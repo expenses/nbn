@@ -49,7 +49,7 @@ impl winit::application::ApplicationHandler for App {
         let window = event_loop
             .create_window(winit::window::WindowAttributes::default().with_resizable(true))
             .unwrap();
-        let device = Arc::new(nbn::Device::new(Some(&window), false));
+        let device = Arc::new(nbn::Device::new(Some(&window)));
 
         let swapchain =
             device.create_swapchain(&window, vk::ImageUsageFlags::COLOR_ATTACHMENT, false);
