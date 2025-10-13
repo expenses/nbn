@@ -293,7 +293,7 @@ impl winit::application::ApplicationHandler for App {
                         (
                             view.inverse(),
                             proj.inverse(),
-                            *state.tlas._buffer,
+                            *state.tlas,
                             extent,
                             *state.swapchain_image_heap_indices[next_image as usize],
                         ),
