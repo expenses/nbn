@@ -19,3 +19,6 @@ perf.data*
 *.slang-module
 *.rdc
 *.cap
+FidelityFX-SDK
+smaa
+samplerBlueNoiseErrors2019_paper.pdf
