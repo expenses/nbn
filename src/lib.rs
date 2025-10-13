@@ -596,7 +596,7 @@ impl Device {
         this
     }
 
-    pub fn get_memory_budget(&self) -> vk::PhysicalDeviceMemoryBudgetPropertiesEXT {
+    pub fn get_memory_budget(&self) -> vk::PhysicalDeviceMemoryBudgetPropertiesEXT<'_> {
         let mut budget = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
         let mut props = vk::PhysicalDeviceMemoryProperties2::default().push_next(&mut budget);
         unsafe {

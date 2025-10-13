@@ -4,7 +4,7 @@ use std::sync::Arc;
 fn create_pipeline(
     device: &nbn::Device,
     shader: &nbn::ShaderModule,
-    swapchain: &nbn::Swapchain,
+    _swapchain: &nbn::Swapchain,
 ) -> nbn::Pipeline {
     device.create_compute_pipeline(shader, c"main")
 }
@@ -19,10 +19,10 @@ struct WindowState {
     egui_winit: egui_winit::State,
     egui_render: nbn::egui::Renderer,
     alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
-    data_buffer: nbn::Buffer,
-    instances_buffer: nbn::Buffer,
+    _data_buffer: nbn::Buffer,
+    _instances_buffer: nbn::Buffer,
     tlas: nbn::AccelerationStructure,
-    accel: nbn::AccelerationStructure,
+    _accel: nbn::AccelerationStructure,
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
 }
 
@@ -111,10 +111,10 @@ impl winit::application::ApplicationHandler for App {
         let egui_ctx = egui::Context::default();
 
         self.window_state = Some(WindowState {
-            accel,
-            data_buffer,
+            _accel: accel,
+            _data_buffer: data_buffer,
             tlas,
-            instances_buffer: instance_buffer,
+            _instances_buffer: instance_buffer,
             alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
             egui_render: nbn::egui::Renderer::new(
                 &device,

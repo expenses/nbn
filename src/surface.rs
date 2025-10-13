@@ -49,7 +49,7 @@ pub struct SyncResources {
 }
 
 impl SyncResources {
-    pub fn wait_for_frame(&mut self, device: &Device) -> CurrentFrame {
+    pub fn wait_for_frame(&mut self, device: &Device) -> CurrentFrame<'_> {
         let frame = &mut self.frames[self.current_frame];
 
         unsafe {

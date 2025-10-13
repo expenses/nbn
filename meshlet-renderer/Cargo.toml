@@ -8,16 +8,16 @@ nbn = {path = ".."}
 goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
     "primitive_reader",
 ] }
-env_logger = "0.11.6"
-glam = "0.29.2"
-slang_struct = { path = "../experiments/slang-struct-rs" }
+env_logger = "0.11.8"
+glam = "0.30.8"
+slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
 ddsfile = "0.5.2"
 ktx2 = "0.4.0"
 zstd = "0.13.3"
-winit = "0.30.8"
+winit = "0.30.12"
 dolly = "0.6.0"
-egui = "0.31.1"
-anyhow = "1.0.98"
+egui = "0.33.0"
+anyhow = "1.0.100"
 gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "updates", features = ["visualizer"]}
-egui-winit = "0.31.1"
+egui-winit = "0.33.0"
 blue-noise-sampler = "0.1.0"

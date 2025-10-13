@@ -7,33 +7,33 @@ edition = "2021"
 ash = { version = "0.38.0", features = ["linked"] }
 ash-window = "0.13.0"
 gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "updates", features = ["vulkan"]}
-log = "0.4.25"
-parking_lot = "0.12.3"
-winit = "0.30.8"
+log = "0.4.28"
+parking_lot = "0.12.5"
+winit = "0.30.12"
 presser = "0.3.1"
 vk-sync = { package = "vk-sync-fork", version = "0.5.2" }
-notify = "8.0.0"
-egui = "0.31.1"
-glam = "0.29.2"
+notify = "8.2.0"
+egui = "0.31.0"
+glam = "0.30.8"
 
 [dev-dependencies]
 goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
     "primitive_reader",
 ] }
-env_logger = "0.11.6"
+env_logger = "0.11.8"
 tree64 = { git = "https://github.com/expenses/tree64" }
-image = "0.25.5"
+image = "0.25.8"
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
-rayon = "1.10.0"
+rayon = "1.11.0"
 fnv = "1.0.7"
 radsort = "0.1.1"
 ddsfile = "0.5.2"
-indicatif = "0.17.11"
+indicatif = "0.18.0"
 ktx2 = "0.4.0"
 zstd = "0.13.3"
-egui = "0.31.1"
-anyhow = "1.0.98"
-egui-winit = "0.31.1"
+egui = "0.31.0"
+anyhow = "1.0.100"
+egui-winit = "0.31.0"
 gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "updates", features = ["visualizer"]}
 
 [workspace]
