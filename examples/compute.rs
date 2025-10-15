@@ -5,14 +5,11 @@ fn main() {
 
     let width = 512;
     let height = 512;
-    
+
     let image = device.create_image(nbn::ImageDescriptor {
         name: "render attachment",
         format: vk::Format::R8G8B8A8_UNORM,
-        extent: nbn::ImageExtent::D2 {
-            width,
-            height,
-        },
+        extent: nbn::ImageExtent::D2 { width, height },
         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
         aspect_mask: vk::ImageAspectFlags::COLOR,
         mip_levels: 1,
@@ -27,6 +24,26 @@ fn main() {
         .unwrap();
 
     let shader = device.load_shader("shaders/compiled/triangle.spv");
+
+    let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+        name: "triangle pipeline",
+        shaders: nbn::GraphicsPipelineShaders::Legacy {
+            vertex: nbn::ShaderDesc {
+                module: &shader,
+                entry_point: c"vertex",
+            },
+            fragment: nbn::ShaderDesc {
+                module: &shader,
+                entry_point: c"fragment",
+            },
+        },
+        color_attachment_formats: &[vk::Format::R8G8B8A8_UNORM],
+        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)],
+        conservative_rasterization: false,
+        depth: Default::default(),
+        cull_mode: Default::default(),
+    });
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
@@ -54,11 +71,13 @@ fn main() {
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .clear_value(vk::ClearValue {
                     color: vk::ClearColorValue {
-                        float32: [1.0, 0.1, 0.1, 1.0],
+                        float32: [0.2, 0.1, 0.1, 1.0],
                     },
                 })],
             None,
         );
+        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
+        device.cmd_draw(*command_buffer, 3, 1, 0, 0);
         device.cmd_end_rendering(*command_buffer);
         device.insert_image_barrier2(
             &command_buffer,
@@ -98,7 +117,7 @@ fn main() {
     }
 
     let slice = buffer.try_as_slice::<u8>().unwrap();
-    
+
     use std::io::Write;
     let mut output = std::io::BufWriter::new(std::fs::File::create("output.ppm").unwrap());
     write!(output, "P3 {} {} 255", width, height).unwrap();
