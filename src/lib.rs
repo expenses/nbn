@@ -1045,6 +1045,37 @@ impl Device {
         self.insert_pipeline_barrier(command_buffer, None, &[], &[barrier.into()]);
     }
 
+    pub fn insert_image_barrier2<T: Into<ImageInfo>>(
+        &self,
+        command_buffer: &CommandBuffer,
+        barrier: NewImageBarrier<T>,
+    ) {
+        let image = barrier.image.into();
+
+        let mut memory_barrier = vk::ImageMemoryBarrier2::default()
+            .image(image.image)
+            .subresource_range(image.subresource_range)
+            .dst_stage_mask(barrier.dst.stage_mask())
+            .dst_access_mask(barrier.dst.access_mask())
+            .src_queue_family_index(barrier.src_queue_family_index)
+            .dst_queue_family_index(barrier.dst_queue_family_index)
+            .new_layout(vk::ImageLayout::GENERAL);
+
+        if let Some(src) = barrier.src {
+            memory_barrier = memory_barrier
+                .src_stage_mask(src.stage_mask())
+                .src_access_mask(src.access_mask())
+                .old_layout(vk::ImageLayout::GENERAL);
+        }
+
+        unsafe {
+            self.cmd_pipeline_barrier2(
+                **command_buffer,
+                &vk::DependencyInfo::default().image_memory_barriers(&[memory_barrier]),
+            )
+        };
+    }
+
     pub fn bind_internal_descriptor_sets(
         &self,
         command_buffer: &CommandBuffer,
@@ -1932,6 +1963,18 @@ pub struct Image {
     pub subresource_range: vk::ImageSubresourceRange,
 }
 
+impl Image {
+    pub fn subresource_layers(&self) -> vk::ImageSubresourceLayers {
+        let range = self.subresource_range;
+
+        vk::ImageSubresourceLayers::default()
+            .aspect_mask(range.aspect_mask)
+            .mip_level(0)
+            .base_array_layer(range.base_array_layer)
+            .layer_count(range.layer_count)
+    }
+}
+
 impl std::ops::Deref for Image {
     type Target = WrappedImage;
 
@@ -2249,5 +2292,34 @@ impl Deref for AccelerationStructure {
 
     fn deref(&self) -> &Self::Target {
         &self.address
+    }
+}
+
+pub struct NewImageBarrier<T> {
+    pub image: T,
+    pub src: Option<BarrierOp>,
+    pub dst: BarrierOp,
+    pub src_queue_family_index: u32,
+    pub dst_queue_family_index: u32,
+}
+
+pub enum BarrierOp {
+    ColorAttachmentWrite,
+    TransferRead,
+}
+
+impl BarrierOp {
+    fn stage_mask(&self) -> vk::PipelineStageFlags2 {
+        match self {
+            Self::ColorAttachmentWrite => vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            Self::TransferRead => vk::PipelineStageFlags2::COPY,
+        }
+    }
+
+    fn access_mask(&self) -> vk::AccessFlags2 {
+        match self {
+            Self::ColorAttachmentWrite => vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            Self::TransferRead => vk::AccessFlags2::TRANSFER_READ,
+        }
     }
 }
