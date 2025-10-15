@@ -56,12 +56,13 @@
               shader-slang
               spirv-tools
               cargo-expand
-              linuxPackages_latest.perf
+              perf
               hotspot
               renderdoc
               gdb
               clang-tools
               ninja
+              eog
               (writeShellScriptBin "format-shaders" ''
                 ${clang-tools}/bin/clang-format -i shaders/**/*.slang shaders/*.slang
               '')
