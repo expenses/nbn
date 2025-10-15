@@ -213,6 +213,7 @@ impl Device {
                 .unwrap(),
             );
         }
+        required_instance_extensions.push(ash::khr::surface::NAME.as_ptr());
         required_instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
 
         let available_instance_extensions =
@@ -428,8 +429,6 @@ impl Device {
                         .enabled_extension_names(&[
                             ash::khr::swapchain::NAME.as_ptr(),
                             ash::ext::conservative_rasterization::NAME.as_ptr(),
-                            // Needed for debug printf.
-                            ash::khr::shader_non_semantic_info::NAME.as_ptr(),
                             // ;)
                             ash::ext::mesh_shader::NAME.as_ptr(),
                             ash::ext::mutable_descriptor_type::NAME.as_ptr(),
