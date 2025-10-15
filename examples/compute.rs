@@ -15,6 +15,15 @@ fn main() {
         mip_levels: 1,
     });
 
+    let depthbuffer = device.create_image(nbn::ImageDescriptor {
+        name: "depth attachment",
+        format: vk::Format::D32_SFLOAT,
+        extent: nbn::ImageExtent::D2 { width, height },
+        usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        aspect_mask: vk::ImageAspectFlags::DEPTH,
+        mip_levels: 1,
+    });
+
     let buffer = device
         .create_buffer(nbn::BufferDescriptor {
             name: "buffer",
@@ -23,7 +32,7 @@ fn main() {
         })
         .unwrap();
 
-    let shader = device.load_shader("shaders/compiled/triangle.spv");
+    let shader = device.load_shader("shaders/compiled/compute_example.spv");
 
     let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
         name: "triangle pipeline",
@@ -41,25 +50,69 @@ fn main() {
         blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)],
         conservative_rasterization: false,
-        depth: Default::default(),
+        depth: nbn::GraphicsPipelineDepthDesc {
+            write_enable: true,
+            test_enable: true,
+            compare_op: vk::CompareOp::GREATER,
+            format: vk::Format::D32_SFLOAT,
+        },
         cull_mode: Default::default(),
     });
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
+    let dragon = std::fs::File::open("dragon.bin").unwrap();
+    let dragon_size = dragon.metadata().unwrap().len();
+    let dragon_buffer = device.create_buffer_from_reader(dragon_size, "dragon", dragon);
+    let size = dragon_buffer.try_as_slice::<u32>().unwrap()[0];
+
+    let staging_buffer = device.create_buffer_with_data::<u32>(nbn::BufferInitDescriptor {
+        name: "staging buffer",
+        data: &[u32::from_le_bytes([200, 100, 70, 255]); 512 * 512],
+    });
+
     unsafe {
         device
             .begin_command_buffer(*command_buffer, &Default::default())
             .unwrap();
-        device.insert_image_barrier2(
-            &command_buffer,
-            nbn::NewImageBarrier {
-                image: &image,
-                src: None,
-                dst: nbn::BarrierOp::ColorAttachmentWrite,
-                src_queue_family_index: device.graphics_queue.index,
-                dst_queue_family_index: device.graphics_queue.index,
+
+        let image2 = device.create_image_with_data_in_command_buffer(
+            nbn::SampledImageDescriptor {
+                name: "img",
+                format: vk::Format::R8G8B8A8_UNORM,
+                extent: nbn::ImageExtent::D2 {
+                    width: 512,
+                    height: 512,
+                },
             },
+            &staging_buffer,
+            nbn::QueueType::Graphics,
+            &[0],
+            &command_buffer,
+        );
+
+        let index = device.register_image(*image2.view, false);
+
+        device.cmd_pipeline_barrier2(
+            *command_buffer,
+            &vk::DependencyInfo::default().image_memory_barriers(&[
+                nbn::NewImageBarrier::<_, nbn::BarrierOp, _> {
+                    image: &image,
+                    src: None,
+                    dst: nbn::BarrierOp::ColorAttachmentWrite,
+                    src_queue_family_index: device.graphics_queue.index,
+                    dst_queue_family_index: device.graphics_queue.index,
+                }
+                .into(),
+                nbn::NewImageBarrier::<_, nbn::BarrierOp, _> {
+                    image: &depthbuffer,
+                    src: None,
+                    dst: nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+                    src_queue_family_index: device.graphics_queue.index,
+                    dst_queue_family_index: device.graphics_queue.index,
+                }
+                .into(),
+            ]),
         );
         device.begin_rendering(
             &command_buffer,
@@ -74,20 +127,31 @@ fn main() {
                         float32: [0.2, 0.1, 0.1, 1.0],
                     },
                 })],
-            None,
+            Some(
+                &vk::RenderingAttachmentInfo::default()
+                    .image_view(*depthbuffer.view)
+                    .image_layout(vk::ImageLayout::GENERAL),
+            ),
         );
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
-        device.cmd_draw(*command_buffer, 3, 1, 0, 0);
+        device.bind_internal_descriptor_sets_to_all(&command_buffer);
+        device.push_constants::<(u64, u32)>(&command_buffer, (*dragon_buffer, *index));
+        device.cmd_draw(*command_buffer, size, 1, 0, 0);
         device.cmd_end_rendering(*command_buffer);
-        device.insert_image_barrier2(
-            &command_buffer,
-            nbn::NewImageBarrier {
+        device.cmd_pipeline_barrier2(
+            *command_buffer,
+            &vk::DependencyInfo::default().image_memory_barriers(&[nbn::NewImageBarrier::<
+                _,
+                nbn::BarrierOp,
+                _,
+            > {
                 image: &image,
                 src: Some(nbn::BarrierOp::ColorAttachmentWrite),
                 dst: nbn::BarrierOp::TransferRead,
                 src_queue_family_index: device.graphics_queue.index,
                 dst_queue_family_index: device.graphics_queue.index,
-            },
+            }
+            .into()]),
         );
         device.cmd_copy_image_to_buffer(
             *command_buffer,
@@ -100,7 +164,7 @@ fn main() {
                     height: 512,
                     depth: 1,
                 })
-                .image_subresource(image.subresource_layers())],
+                .image_subresource(image.subresource_layer())],
         );
         device.end_command_buffer(*command_buffer).unwrap();
 
