@@ -35,14 +35,18 @@ vertex(uint vertex_id : SV_VertexID, uniform Constants constants) {
     };
 }
 
-    [shader("fragment")] float4
-    fragment_srgb(Interp in, uniform Constants constants) {
+float4 fragment_srgb_inner(Interp in, uniform Constants constants) {
     let image = DescriptorHandle<Sampler2D>(constants.id);
     return in.colour * image.Sample(in.uv).x;
 }
 
+    [shader("fragment")] float4
+    fragment_srgb(Interp in, uniform Constants constants) {
+   return fragment_srgb_inner(in, constants);
+}
+
 [shader("fragment")] float4
 fragment_non_srgb(Interp in, uniform Constants constants) {
-    let output = fragment_srgb(in, constants);
+    let output = fragment_srgb_inner(in, constants);
     return float4(srgb_lin2encoded(output.rgb), output.a);
 }
