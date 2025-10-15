@@ -179,40 +179,52 @@ impl Renderer {
                 None => {
                     self.remove_texture(*id, current_frame);
 
-                    let (staging_buffer, image) = match &data.image {
-                        egui::ImageData::Color(image) => device
-                            .create_image_with_data_in_command_buffer(
-                                nbn::SampledImageDescriptor {
-                                    name: &format!("egui image ({:?}) (rgba8)", id),
-                                    format: vk::Format::R8G8B8A8_SRGB,
-                                    extent: vk::Extent2D {
-                                        width: image.width() as _,
-                                        height: image.height() as _,
-                                    }
-                                    .into(),
+                    let (staging_buffer, name, format, extent) = match &data.image {
+                        egui::ImageData::Color(image) => {
+                            let name = format!("egui image ({:?}) (rgba8)", id);
+
+                            (
+                                device.create_buffer_with_data(nbn::BufferInitDescriptor {
+                                    name: &name,
+                                    data: &image.pixels,
+                                }),
+                                name,
+                                vk::Format::R8G8B8A8_SRGB,
+                                vk::Extent2D {
+                                    width: image.width() as _,
+                                    height: image.height() as _,
                                 },
-                                nbn::cast_slice(&image.pixels),
-                                nbn::QueueType::Graphics,
-                                &[0],
-                                command_buffer,
-                            ),
-                        egui::ImageData::Font(image) => device
-                            .create_image_with_data_in_command_buffer(
-                                nbn::SampledImageDescriptor {
-                                    name: &format!("egui image ({:?}) (r32f)", id),
-                                    format: vk::Format::R32_SFLOAT,
-                                    extent: vk::Extent2D {
-                                        width: image.width() as _,
-                                        height: image.height() as _,
-                                    }
-                                    .into(),
+                            )
+                        }
+                        egui::ImageData::Font(image) => {
+                            let name = format!("egui image ({:?}) (r32f)", id);
+
+                            (
+                                device.create_buffer_with_data(nbn::BufferInitDescriptor {
+                                    name: &name,
+                                    data: &image.pixels,
+                                }),
+                                name,
+                                vk::Format::R32_SFLOAT,
+                                vk::Extent2D {
+                                    width: image.width() as _,
+                                    height: image.height() as _,
                                 },
-                                nbn::cast_slice(&image.pixels),
-                                nbn::QueueType::Graphics,
-                                &[0],
-                                command_buffer,
-                            ),
+                            )
+                        }
                     };
+
+                    let image = device.create_image_with_data_in_command_buffer(
+                        nbn::SampledImageDescriptor {
+                            name: &name,
+                            format,
+                            extent: extent.into(),
+                        },
+                        &staging_buffer,
+                        nbn::QueueType::Graphics,
+                        &[0],
+                        command_buffer,
+                    );
 
                     let registered_id = device.register_image_with_sampler(
                         *image.view,

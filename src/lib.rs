@@ -858,7 +858,7 @@ impl Device {
             }
         } else {
             let image_info = vk::DescriptorImageInfo::default()
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_layout(vk::ImageLayout::GENERAL)
                 .image_view(view)
                 .sampler(**sampler);
 
@@ -886,17 +886,13 @@ impl Device {
     pub fn create_image_with_data_in_command_buffer(
         &self,
         desc: SampledImageDescriptor,
-        bytes: &[u8],
+        buffer: &Buffer,
         transition_to: QueueType,
         lod_offsets: &[u64],
         command_buffer: &CommandBuffer,
-    ) -> (Buffer, Image) {
+    ) -> Image {
         let mip_levels = lod_offsets.len() as u32;
 
-        let buffer = self.create_buffer_with_data(BufferInitDescriptor {
-            name: desc.name,
-            data: bytes,
-        });
         let image = self.create_image(ImageDescriptor {
             name: desc.name,
             format: desc.format,
@@ -907,19 +903,20 @@ impl Device {
         });
 
         unsafe {
-            self.insert_pipeline_barrier(
-                command_buffer,
-                None,
-                &[],
-                &[ImageBarrier2 {
-                    previous_accesses: &[],
-                    next_accesses: &[AccessType::TransferWrite],
-                    discard_contents: true,
+            self.cmd_pipeline_barrier2(
+                **command_buffer,
+                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                    _,
+                    BarrierOp,
+                    _,
+                > {
                     image: &image,
+                    src: None,
+                    dst: BarrierOp::TransferWrite,
                     src_queue_family_index: command_buffer.queue_family_index,
                     dst_queue_family_index: command_buffer.queue_family_index,
                 }
-                .into()],
+                .into()]),
             );
 
             let copies: Vec<_> = lod_offsets
@@ -946,62 +943,28 @@ impl Device {
                 **command_buffer,
                 *buffer.buffer,
                 *image.image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::GENERAL,
                 &copies,
             );
 
-            self.insert_pipeline_barrier(
-                command_buffer,
-                None,
-                &[],
-                &[ImageBarrier2 {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
-                    discard_contents: false,
+            self.cmd_pipeline_barrier2(
+                **command_buffer,
+                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                    _,
+                    BarrierOp,
+                    _,
+                > {
                     image: &image,
+                    src: Some(BarrierOp::TransferWrite),
+                    dst: BarrierOp::AllCommandsSampledRead,
                     src_queue_family_index: command_buffer.queue_family_index,
                     dst_queue_family_index: self.get_queue(transition_to).index,
                 }
-                .into()],
+                .into()]),
             );
         }
 
-        (buffer, image)
-    }
-
-    pub fn create_sampled_image_with_data(
-        &self,
-        desc: SampledImageDescriptor,
-        bytes: &[u8],
-        transition_to: QueueType,
-        lod_offsets: &[u64],
-    ) -> PendingImageUpload {
-        let command_buffer = self.create_command_buffer(QueueType::Transfer);
-
-        unsafe {
-            self.begin_command_buffer(*command_buffer, &ash::vk::CommandBufferBeginInfo::default())
-                .unwrap();
-        }
-
-        let (buffer, image) = self.create_image_with_data_in_command_buffer(
-            desc,
-            bytes,
-            transition_to,
-            lod_offsets,
-            &command_buffer,
-        );
-
-        unsafe {
-            self.end_command_buffer(*command_buffer).unwrap();
-        }
-
-        let index = self.register_image(*image.view, false);
-
-        PendingImageUpload {
-            image: IndexedImage { image, index },
-            _upload_buffer: buffer,
-            command_buffer,
-        }
+        image
     }
 
     pub fn insert_pipeline_barrier(
@@ -1035,45 +998,6 @@ impl Device {
             &[],
             &[],
         );
-    }
-
-    pub fn insert_image_barrier<T: Into<ImageInfo> + Copy>(
-        &self,
-        command_buffer: &CommandBuffer,
-        barrier: ImageBarrier2<T>,
-    ) {
-        self.insert_pipeline_barrier(command_buffer, None, &[], &[barrier.into()]);
-    }
-
-    pub fn insert_image_barrier2<T: Into<ImageInfo>>(
-        &self,
-        command_buffer: &CommandBuffer,
-        barrier: NewImageBarrier<T>,
-    ) {
-        let image = barrier.image.into();
-
-        let mut memory_barrier = vk::ImageMemoryBarrier2::default()
-            .image(image.image)
-            .subresource_range(image.subresource_range)
-            .dst_stage_mask(barrier.dst.stage_mask())
-            .dst_access_mask(barrier.dst.access_mask())
-            .src_queue_family_index(barrier.src_queue_family_index)
-            .dst_queue_family_index(barrier.dst_queue_family_index)
-            .new_layout(vk::ImageLayout::GENERAL);
-
-        if let Some(src) = barrier.src {
-            memory_barrier = memory_barrier
-                .src_stage_mask(src.stage_mask())
-                .src_access_mask(src.access_mask())
-                .old_layout(vk::ImageLayout::GENERAL);
-        }
-
-        unsafe {
-            self.cmd_pipeline_barrier2(
-                **command_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[memory_barrier]),
-            )
-        };
     }
 
     pub fn bind_internal_descriptor_sets(
@@ -1964,12 +1888,11 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn subresource_layers(&self) -> vk::ImageSubresourceLayers {
+    pub fn subresource_layer(&self) -> vk::ImageSubresourceLayers {
         let range = self.subresource_range;
 
         vk::ImageSubresourceLayers::default()
             .aspect_mask(range.aspect_mask)
-            .mip_level(0)
             .base_array_layer(range.base_array_layer)
             .layer_count(range.layer_count)
     }
@@ -1988,18 +1911,6 @@ impl Drop for Image {
         let allocation = std::mem::take(&mut self.allocation);
         self.allocator.inner.write().free(allocation).unwrap();
         self.allocator.deallocation_notifier.notify_all();
-    }
-}
-
-pub struct PendingImageUpload {
-    _upload_buffer: Buffer,
-    pub command_buffer: CommandBuffer,
-    pub image: IndexedImage,
-}
-
-impl PendingImageUpload {
-    pub fn into_inner(self) -> IndexedImage {
-        self.image
     }
 }
 
@@ -2165,18 +2076,24 @@ impl StagingBuffer {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });
-        device.insert_image_barrier(
-            &self.command_buffer,
-            ImageBarrier2 {
-                image: &image,
-                previous_accesses: &[],
-                next_accesses: &[AccessType::TransferWrite],
-                discard_contents: true,
-                src_queue_family_index: device.get_queue(QueueType::Transfer).index,
-                dst_queue_family_index: device.get_queue(QueueType::Transfer).index,
-            },
-        );
+
         unsafe {
+            device.cmd_pipeline_barrier2(
+                *self.command_buffer,
+                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                    _,
+                    BarrierOp,
+                    _,
+                > {
+                    image: &image,
+                    src: None,
+                    dst: BarrierOp::TransferWrite,
+                    src_queue_family_index: device.get_queue(self.queue_type).index,
+                    dst_queue_family_index: device.get_queue(self.queue_type).index,
+                }
+                .into()]),
+            );
+
             let copies: Vec<_> = lod_offsets
                 .iter()
                 .enumerate()
@@ -2189,10 +2106,7 @@ impl StagingBuffer {
                             depth: image.extent.depth,
                         })
                         .image_subresource(
-                            vk::ImageSubresourceLayers::default()
-                                .layer_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .mip_level(i as _),
+                            image.subresource_layer().mip_level(i as _).layer_count(1),
                         )
                 })
                 .collect();
@@ -2201,22 +2115,27 @@ impl StagingBuffer {
                 *self.command_buffer,
                 *self.staging_buffer.buffer,
                 *image.image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::ImageLayout::GENERAL,
                 &copies,
+            );
+
+            device.cmd_pipeline_barrier2(
+                *self.command_buffer,
+                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                    _,
+                    BarrierOp,
+                    _,
+                > {
+                    image: &image,
+                    src: Some(BarrierOp::TransferWrite),
+                    dst: BarrierOp::AllCommandsSampledRead,
+                    src_queue_family_index: device.get_queue(self.queue_type).index,
+                    dst_queue_family_index: device.get_queue(transition_to).index,
+                }
+                .into()]),
             );
         }
 
-        device.insert_image_barrier(
-            &self.command_buffer,
-            ImageBarrier2 {
-                image: &image,
-                previous_accesses: &[AccessType::TransferWrite],
-                next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
-                discard_contents: false,
-                src_queue_family_index: self.command_buffer.queue_family_index,
-                dst_queue_family_index: device.get_queue(transition_to).index,
-            },
-        );
         image
     }
 }
@@ -2236,32 +2155,6 @@ impl From<&Image> for ImageInfo {
         Self {
             image: *image.image,
             subresource_range: image.subresource_range,
-        }
-    }
-}
-
-pub struct ImageBarrier2<'a, T> {
-    pub image: T,
-    pub previous_accesses: &'a [AccessType],
-    pub next_accesses: &'a [AccessType],
-    pub discard_contents: bool,
-    pub src_queue_family_index: u32,
-    pub dst_queue_family_index: u32,
-}
-
-impl<'a, T: Into<ImageInfo> + Copy> From<ImageBarrier2<'a, T>> for ImageBarrier<'a> {
-    fn from(barrier: ImageBarrier2<'a, T>) -> Self {
-        let image_info: ImageInfo = barrier.image.into();
-        Self {
-            image: image_info.image,
-            range: image_info.subresource_range,
-            discard_contents: barrier.discard_contents,
-            previous_accesses: barrier.previous_accesses,
-            next_accesses: barrier.next_accesses,
-            src_queue_family_index: barrier.src_queue_family_index,
-            dst_queue_family_index: barrier.dst_queue_family_index,
-            previous_layout: ImageLayout::Optimal,
-            next_layout: ImageLayout::Optimal,
         }
     }
 }
@@ -2295,24 +2188,29 @@ impl Deref for AccelerationStructure {
     }
 }
 
-pub struct NewImageBarrier<T> {
-    pub image: T,
-    pub src: Option<BarrierOp>,
-    pub dst: BarrierOp,
+pub struct NewImageBarrier<I, S = BarrierOp, D = BarrierOp> {
+    pub image: I,
+    pub src: Option<S>,
+    pub dst: D,
     pub src_queue_family_index: u32,
     pub dst_queue_family_index: u32,
 }
 
 pub enum BarrierOp {
     ColorAttachmentWrite,
+    DepthStencilAttachmentReadWrite,
     TransferRead,
+    TransferWrite,
+    AllCommandsSampledRead,
 }
 
 impl BarrierOp {
     fn stage_mask(&self) -> vk::PipelineStageFlags2 {
         match self {
             Self::ColorAttachmentWrite => vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            Self::TransferRead => vk::PipelineStageFlags2::COPY,
+            Self::DepthStencilAttachmentReadWrite => vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
+            Self::TransferRead | Self::TransferWrite => vk::PipelineStageFlags2::COPY,
+            Self::AllCommandsSampledRead => vk::PipelineStageFlags2::ALL_COMMANDS,
         }
     }
 
@@ -2320,6 +2218,49 @@ impl BarrierOp {
         match self {
             Self::ColorAttachmentWrite => vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
             Self::TransferRead => vk::AccessFlags2::TRANSFER_READ,
+            Self::TransferWrite => vk::AccessFlags2::TRANSFER_WRITE,
+            Self::AllCommandsSampledRead => vk::AccessFlags2::SHADER_SAMPLED_READ,
+            Self::DepthStencilAttachmentReadWrite => {
+                vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
+            }
         }
+    }
+}
+
+impl From<BarrierOp> for (vk::PipelineStageFlags2, vk::AccessFlags2) {
+    fn from(op: BarrierOp) -> Self {
+        (op.stage_mask(), op.access_mask())
+    }
+}
+
+impl<
+        I: Into<ImageInfo>,
+        S: Into<(vk::PipelineStageFlags2, vk::AccessFlags2)>,
+        D: Into<(vk::PipelineStageFlags2, vk::AccessFlags2)>,
+    > From<NewImageBarrier<I, S, D>> for vk::ImageMemoryBarrier2<'_>
+{
+    fn from(barrier: NewImageBarrier<I, S, D>) -> Self {
+        let image = barrier.image.into();
+        let (dst_stage_mask, dst_access_mask) = barrier.dst.into();
+
+        let mut memory_barrier = Self::default()
+            .image(image.image)
+            .subresource_range(image.subresource_range)
+            .dst_stage_mask(dst_stage_mask)
+            .dst_access_mask(dst_access_mask)
+            .src_queue_family_index(barrier.src_queue_family_index)
+            .dst_queue_family_index(barrier.dst_queue_family_index)
+            .new_layout(vk::ImageLayout::GENERAL);
+
+        if let Some(src) = barrier.src {
+            let (src_stage_mask, src_access_mask) = src.into();
+            memory_barrier = memory_barrier
+                .src_stage_mask(src_stage_mask)
+                .src_access_mask(src_access_mask)
+                .old_layout(vk::ImageLayout::GENERAL);
+        }
+
+        memory_barrier
     }
 }
