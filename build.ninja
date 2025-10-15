@@ -1,5 +1,5 @@
 rule slang
-    command = slangc $in -o $out -O3 -warnings-as-errors all  -IFidelityFX-SDK/sdk/include/FidelityFX/gpu
+    command = slangc $in -o $out -O3 -warnings-as-errors all 
 build shaders/compiled/compute.spv: slang shaders/compute.slang | shaders/models.slang shaders/uniforms.slang shaders/dispatches.slang shaders/prefix_sum.slang shaders/shared/noise.slang shaders/shared/util.slang shaders/shared/derivatives.slang
 build shaders/compiled/debugging.spv: slang shaders/debugging.slang | shaders/uniforms.slang shaders/models.slang shaders/dispatches.slang shaders/prefix_sum.slang shaders/shared/noise.slang shaders/shared/util.slang shaders/shared/derivatives.slang shaders/shared/constants.slang shaders/shared/colour.slang
 build shaders/compiled/egui.spv: slang shaders/egui.slang | shaders/shared/colour.slang
