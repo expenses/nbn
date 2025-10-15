@@ -24,6 +24,7 @@ impl CountTracker {
 
 pub type ImageCountTracker = Arc<parking_lot::Mutex<CountTracker>>;
 
+#[derive(Debug)]
 pub struct ImageIndex {
     index: u32,
     tracker: ImageCountTracker,
