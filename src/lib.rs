@@ -627,7 +627,11 @@ impl Device {
                     self,
                 );
 
-                SwapchainImage { image, view }
+                SwapchainImage {
+                    image,
+                    view,
+                    render_finished_semaphore: self.create_semaphore(),
+                }
             })
             .collect();
 
@@ -685,7 +689,11 @@ impl Device {
                     self,
                 );
 
-                SwapchainImage { image, view }
+                SwapchainImage {
+                    image,
+                    view,
+                    render_finished_semaphore: self.create_semaphore(),
+                }
             })
             .collect();
 

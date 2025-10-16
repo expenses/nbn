@@ -16,7 +16,12 @@ impl std::ops::Deref for CurrentFrame<'_> {
 }
 
 impl CurrentFrame<'_> {
-    pub fn submit(&mut self, device: &Device, command_buffers: &[vk::CommandBufferSubmitInfo]) {
+    pub fn submit(
+        &mut self,
+        device: &Device,
+        image: &SwapchainImage,
+        command_buffers: &[vk::CommandBufferSubmitInfo],
+    ) {
         self.frame.number += FRAMES_IN_FLIGHT as u64;
         unsafe {
             device.queue_submit2(
@@ -28,7 +33,7 @@ impl CurrentFrame<'_> {
                         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
                     .signal_semaphore_infos(&[
                         vk::SemaphoreSubmitInfo::default()
-                            .semaphore(*self.frame.render_finished_semaphore)
+                            .semaphore(*image.render_finished_semaphore)
                             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
                         vk::SemaphoreSubmitInfo::default()
                             .value(self.frame.number)
@@ -74,7 +79,6 @@ impl SyncResources {
 
 pub struct FrameResources {
     pub image_available_semaphore: Semaphore,
-    pub render_finished_semaphore: Semaphore,
     number: u64,
 }
 
@@ -83,7 +87,6 @@ impl FrameResources {
         Self {
             number,
             image_available_semaphore: device.create_semaphore(),
-            render_finished_semaphore: device.create_semaphore(),
         }
     }
 }
@@ -164,6 +167,7 @@ impl Drop for Swapchain {
 pub struct SwapchainImage {
     pub image: vk::Image,
     pub view: ImageView,
+    pub render_finished_semaphore: Semaphore,
 }
 
 impl From<&SwapchainImage> for ImageInfo {

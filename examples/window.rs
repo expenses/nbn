@@ -82,6 +82,7 @@ impl winit::application::ApplicationHandler for App {
                     height: new_size.height,
                 };
                 let device = self.device.as_ref().unwrap();
+                unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
                 device.recreate_swapchain(&mut window_state.swapchain);
             }
             winit::event::WindowEvent::RedrawRequested => {
@@ -116,6 +117,7 @@ impl winit::application::ApplicationHandler for App {
                                 &vk::CommandBufferBeginInfo::default(),
                             )
                             .unwrap();
+
                         vk_sync::cmd::pipeline_barrier(
                             device,
                             **command_buffer,
@@ -178,10 +180,12 @@ impl winit::application::ApplicationHandler for App {
                                     .aspect_mask(vk::ImageAspectFlags::COLOR),
                             }],
                         );
+
                         device.end_command_buffer(**command_buffer).unwrap();
 
                         frame.submit(
                             device,
+                            &image,
                             &[vk::CommandBufferSubmitInfo::default()
                                 .command_buffer(**command_buffer)],
                         );
@@ -190,7 +194,7 @@ impl winit::application::ApplicationHandler for App {
                             .queue_present(
                                 *device.graphics_queue,
                                 &vk::PresentInfoKHR::default()
-                                    .wait_semaphores(&[*frame.render_finished_semaphore])
+                                    .wait_semaphores(&[*image.render_finished_semaphore])
                                     .swapchains(&[*state.swapchain])
                                     .image_indices(&[next_image]),
                             )
