@@ -102,7 +102,10 @@ impl winit::application::ApplicationHandler for App {
         let swapchain = device.create_swapchain(
             &window,
             vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
-            true,
+            nbn::SurfaceSelectionCriteria {
+                write_via_compute: true,
+                desire_hdr: false,
+            },
         );
 
         let shader = device.load_reloadable_shader("shaders/compiled/rt_triangle.spv");
@@ -167,8 +170,8 @@ impl winit::application::ApplicationHandler for App {
                     height: new_size.height,
                 };
                 let device = self.device.as_ref().unwrap();
-                device.recreate_swapchain(&mut state.swapchain);
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
+                device.recreate_swapchain(&mut state.swapchain);
                 state.swapchain_image_heap_indices.clear();
                 state.swapchain_image_heap_indices.extend(
                     state
@@ -247,25 +250,18 @@ impl winit::application::ApplicationHandler for App {
                         &output.textures_delta,
                     );
 
-                    vk_sync::cmd::pipeline_barrier(
-                        device,
+                    device.cmd_pipeline_barrier2(
                         **command_buffer,
-                        None,
-                        &[],
-                        &[vk_sync::ImageBarrier {
-                            previous_accesses: &[vk_sync::AccessType::Present],
-                            next_accesses: &[vk_sync::AccessType::ComputeShaderWrite],
-                            previous_layout: vk_sync::ImageLayout::Optimal,
-                            next_layout: vk_sync::ImageLayout::Optimal,
-                            discard_contents: true,
-                            src_queue_family_index: device.graphics_queue.index,
-                            dst_queue_family_index: device.graphics_queue.index,
-                            image: image.image,
-                            range: vk::ImageSubresourceRange::default()
-                                .layer_count(1)
-                                .level_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR),
-                        }],
+                        &vk::DependencyInfo::default().image_memory_barriers(&[
+                            nbn::NewImageBarrier {
+                                image,
+                                src: Some(nbn::BarrierOp::Acquire),
+                                dst: nbn::BarrierOp::ComputeStorageWrite,
+                                src_queue_family_index: command_buffer.queue_family_index,
+                                dst_queue_family_index: command_buffer.queue_family_index,
+                            }
+                            .into(),
+                        ]),
                     );
                     let extent = state.swapchain.create_info.image_extent;
 
@@ -306,25 +302,18 @@ impl winit::application::ApplicationHandler for App {
                         1,
                     );
 
-                    vk_sync::cmd::pipeline_barrier(
-                        device,
+                    device.cmd_pipeline_barrier2(
                         **command_buffer,
-                        None,
-                        &[],
-                        &[vk_sync::ImageBarrier {
-                            previous_accesses: &[vk_sync::AccessType::ComputeShaderWrite],
-                            next_accesses: &[vk_sync::AccessType::ColorAttachmentReadWrite],
-                            previous_layout: vk_sync::ImageLayout::Optimal,
-                            next_layout: vk_sync::ImageLayout::Optimal,
-                            discard_contents: false,
-                            src_queue_family_index: device.graphics_queue.index,
-                            dst_queue_family_index: device.graphics_queue.index,
-                            image: image.image,
-                            range: vk::ImageSubresourceRange::default()
-                                .layer_count(1)
-                                .level_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR),
-                        }],
+                        &vk::DependencyInfo::default().image_memory_barriers(&[
+                            nbn::NewImageBarrier {
+                                image,
+                                src: Some(nbn::BarrierOp::ComputeStorageWrite),
+                                dst: nbn::BarrierOp::ColorAttachmentReadWrite,
+                                src_queue_family_index: command_buffer.queue_family_index,
+                                dst_queue_family_index: command_buffer.queue_family_index,
+                            }
+                            .into(),
+                        ]),
                     );
 
                     device.begin_rendering(
@@ -349,30 +338,24 @@ impl winit::application::ApplicationHandler for App {
 
                     device.cmd_end_rendering(**command_buffer);
 
-                    vk_sync::cmd::pipeline_barrier(
-                        device,
+                    device.cmd_pipeline_barrier2(
                         **command_buffer,
-                        None,
-                        &[],
-                        &[vk_sync::ImageBarrier {
-                            previous_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
-                            next_accesses: &[vk_sync::AccessType::Present],
-                            previous_layout: vk_sync::ImageLayout::Optimal,
-                            next_layout: vk_sync::ImageLayout::Optimal,
-                            discard_contents: false,
-                            src_queue_family_index: device.graphics_queue.index,
-                            dst_queue_family_index: device.graphics_queue.index,
-                            image: image.image,
-                            range: vk::ImageSubresourceRange::default()
-                                .layer_count(1)
-                                .level_count(1)
-                                .aspect_mask(vk::ImageAspectFlags::COLOR),
-                        }],
+                        &vk::DependencyInfo::default().image_memory_barriers(&[
+                            nbn::NewImageBarrier {
+                                image,
+                                src: Some(nbn::BarrierOp::ColorAttachmentWrite),
+                                dst: nbn::BarrierOp::Present,
+                                src_queue_family_index: command_buffer.queue_family_index,
+                                dst_queue_family_index: command_buffer.queue_family_index,
+                            }
+                            .into(),
+                        ]),
                     );
                     device.end_command_buffer(**command_buffer).unwrap();
 
                     frame.submit(
                         device,
+                        &image,
                         &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
                     );
                     device
@@ -380,7 +363,7 @@ impl winit::application::ApplicationHandler for App {
                         .queue_present(
                             *device.graphics_queue,
                             &vk::PresentInfoKHR::default()
-                                .wait_semaphores(&[*frame.render_finished_semaphore])
+                                .wait_semaphores(&[*image.render_finished_semaphore])
                                 .swapchains(&[*state.swapchain])
                                 .image_indices(&[next_image]),
                         )

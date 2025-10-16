@@ -2225,6 +2225,8 @@ pub struct NewImageBarrier<I, S = BarrierOp, D = BarrierOp> {
 
 pub enum BarrierOp {
     ColorAttachmentWrite,
+    ColorAttachmentReadWrite,
+    ComputeStorageWrite,
     DepthStencilAttachmentReadWrite,
     TransferRead,
     TransferWrite,
@@ -2236,7 +2238,10 @@ pub enum BarrierOp {
 impl BarrierOp {
     fn stage_mask(&self) -> vk::PipelineStageFlags2 {
         match self {
-            Self::ColorAttachmentWrite => vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            Self::ColorAttachmentWrite | Self::ColorAttachmentReadWrite => {
+                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
+            }
+            Self::ComputeStorageWrite => vk::PipelineStageFlags2::COMPUTE_SHADER,
             Self::DepthStencilAttachmentReadWrite => vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
             Self::TransferRead | Self::TransferWrite => vk::PipelineStageFlags2::COPY,
             Self::AllCommandsSampledRead => vk::PipelineStageFlags2::ALL_COMMANDS,
@@ -2246,7 +2251,11 @@ impl BarrierOp {
 
     fn access_mask(&self) -> vk::AccessFlags2 {
         match self {
+            Self::ColorAttachmentReadWrite => {
+                vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE
+            }
             Self::ColorAttachmentWrite => vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            Self::ComputeStorageWrite => vk::AccessFlags2::SHADER_WRITE,
             Self::TransferRead => vk::AccessFlags2::TRANSFER_READ,
             Self::TransferWrite => vk::AccessFlags2::TRANSFER_WRITE,
             Self::AllCommandsSampledRead => vk::AccessFlags2::SHADER_SAMPLED_READ,
