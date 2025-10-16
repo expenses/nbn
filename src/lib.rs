@@ -375,9 +375,7 @@ impl Device {
             .timeline_semaphore(true)
             .shader_buffer_int64_atomics(true)
             .shader_float16(true)
-            // Needed for debug printf.
-            .vulkan_memory_model(true)
-            .vulkan_memory_model_device_scope(true);
+            .storage_push_constant8(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
@@ -2306,6 +2304,7 @@ impl<
     }
 }
 
+#[derive(Clone, Copy, Default)]
 pub struct SurfaceSelectionCriteria {
     pub write_via_compute: bool,
     pub desire_hdr: bool,
