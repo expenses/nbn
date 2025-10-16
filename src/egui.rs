@@ -19,12 +19,6 @@ impl Renderer {
     ) -> Self {
         let egui_shader = device.load_shader("shaders/compiled/egui.spv");
 
-        let fragment_entry_point = match color_attachment_format {
-            vk::Format::B8G8R8A8_UNORM => c"fragment_non_srgb",
-            vk::Format::B8G8R8A8_SRGB => c"fragment_srgb",
-            other => todo!("{:?}", other),
-        };
-
         Self {
             buffer_section_size: initial_buffer_size,
             temporary_buffers: Default::default(),
@@ -38,7 +32,7 @@ impl Renderer {
                         module: &egui_shader,
                     },
                     fragment: nbn::ShaderDesc {
-                        entry_point: fragment_entry_point,
+                        entry_point: c"fragment",
                         module: &egui_shader,
                     },
                 },
@@ -255,6 +249,7 @@ impl Renderer {
         scale_factor: f32,
         extent: [u32; 2],
         frame_index: usize,
+        transfer_function: nbn::TransferFunction,
     ) {
         let buffer_ptr = *self.buffer + self.buffer_section_size * frame_index as u64;
         let slice: &mut [u8] = self.buffer.try_as_slice_mut().unwrap();
@@ -297,7 +292,9 @@ impl Renderer {
                 slice[offset..offset + indices_slice.len()].copy_from_slice(indices_slice);
                 offset += indices_slice.len();
 
-                device.push_constants::<(u64, u64, [u32; 2], f32, u32)>(
+                let (transfer_function_index, calibrated_nits) =
+                    transfer_function.as_push_constants();
+                device.push_constants::<(u64, u64, [u32; 2], f32, u32, u32, f32)>(
                     command_buffer,
                     (
                         buffer_ptr + vertices_offset as u64,
@@ -305,6 +302,8 @@ impl Renderer {
                         extent,
                         scale_factor,
                         **texture,
+                        transfer_function_index,
+                        calibrated_nits,
                     ),
                 );
                 device.cmd_draw(**command_buffer, mesh.indices.len() as _, 1, 0, 0);

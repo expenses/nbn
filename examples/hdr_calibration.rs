@@ -36,7 +36,9 @@ struct WindowState {
     shader: nbn::ReloadableShader,
     egui_winit: egui_winit::State,
     egui_render: nbn::egui::Renderer,
-    alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
+    white_triangle: bool,
+    is_hdr: bool,
+    calibrated_max_nits: f32,
 }
 
 struct App {
@@ -51,22 +53,27 @@ impl winit::application::ApplicationHandler for App {
             .unwrap();
         let device = Arc::new(nbn::Device::new(Some(&window)));
 
+        let is_hdr = std::env::var("NBN_HDR").is_ok();
+        dbg!(is_hdr);
+
         let swapchain = device.create_swapchain(
             &window,
             vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            Default::default(),
+            nbn::SurfaceSelectionCriteria {
+                desire_hdr: is_hdr,
+                write_via_compute: false,
+            },
         );
 
-        let shader = device.load_reloadable_shader("shaders/compiled/triangle.spv");
+        let shader = device.load_reloadable_shader("shaders/compiled/triangle_hdr.spv");
         let pipeline = create_pipeline(&device, &shader, &swapchain);
 
         let egui_ctx = egui::Context::default();
 
         self.window_state = Some(WindowState {
-            alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
             egui_render: nbn::egui::Renderer::new(
                 &device,
-                swapchain.create_info.image_format,
+                dbg!(swapchain.create_info.image_format),
                 16 * 1024 * 1024,
             ),
             per_frame_command_buffers: [
@@ -87,6 +94,9 @@ impl winit::application::ApplicationHandler for App {
                 None,
             ),
             window,
+            white_triangle: false,
+            is_hdr,
+            calibrated_max_nits: 400.0,
         });
         self.device = Some(device);
     }
@@ -125,18 +135,14 @@ impl winit::application::ApplicationHandler for App {
 
                 egui_ctx.begin_pass(raw_input);
                 {
-                    let allocator = device.allocator.inner.read();
-                    egui::Window::new("Memory Allocations").show(egui_ctx, |ui| {
-                        state.alloc_vis.render_breakdown_ui(ui, &allocator);
-                        ui.label(format!("{:?}", &device.descriptors.sampled_image_count));
-                        ui.label(format!("{:?}", &device.descriptors.storage_image_count));
+                    egui::Window::new("Hello World").show(egui_ctx, |ui| {
+                        ui.checkbox(&mut state.white_triangle, "white triangle");
+                        ui.add(egui::Slider::new(
+                            &mut state.calibrated_max_nits,
+                            0.0..=1500.0,
+                        ));
+                        //ui.slider(&mut state.calibrated_max_nits, "calibrated_max_nits");
                     });
-                    egui::Window::new("Memory Blocks").show(egui_ctx, |ui| {
-                        state.alloc_vis.render_memory_block_ui(ui, &allocator);
-                    });
-                    state
-                        .alloc_vis
-                        .render_memory_block_visualization_windows(egui_ctx, &allocator);
                 }
                 let output = egui_ctx.end_pass();
                 state
@@ -202,7 +208,7 @@ impl winit::application::ApplicationHandler for App {
                             .image_view(*image.view)
                             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                             .clear_value(vk::ClearValue {
-                                color: vk::ClearColorValue { float32: [1.0; 4] },
+                                color: vk::ClearColorValue { float32: [0.0; 4] },
                             })
                             .load_op(vk::AttachmentLoadOp::CLEAR)
                             .store_op(vk::AttachmentStoreOp::STORE)],
@@ -213,6 +219,13 @@ impl winit::application::ApplicationHandler for App {
                         vk::PipelineBindPoint::GRAPHICS,
                         *state.pipeline,
                     );
+                    device.push_constants::<(u32, f32)>(
+                        &command_buffer,
+                        (
+                            ((state.white_triangle as u32) << 1) | (state.is_hdr as u32),
+                            state.calibrated_max_nits,
+                        ),
+                    );
                     device.cmd_draw(**command_buffer, 3, 1, 0, 0);
 
                     state.egui_render.paint(
@@ -222,7 +235,11 @@ impl winit::application::ApplicationHandler for App {
                         state.window.scale_factor() as _,
                         [extent.width, extent.height],
                         current_frame,
-                        nbn::TransferFunction::Hardware
+                        if state.is_hdr {
+                            nbn::TransferFunction::Hdr(state.calibrated_max_nits)
+                        } else {
+                            nbn::TransferFunction::Hardware
+                        },
                     );
 
                     device.cmd_end_rendering(**command_buffer);

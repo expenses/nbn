@@ -759,7 +759,7 @@ impl Device {
             );
         } else {
             if formats.contains(&bgra_srgb) {
-                return bgra_unorm;
+                return bgra_srgb;
             }
 
             panic!("Unable to find suitable format:\n{:?}", formats);
@@ -2317,4 +2317,21 @@ impl<
 pub struct SurfaceSelectionCriteria {
     pub write_via_compute: bool,
     pub desire_hdr: bool,
+}
+
+#[derive(Clone, Copy)]
+pub enum TransferFunction {
+    Hardware,
+    Srgb,
+    Hdr(f32),
+}
+
+impl TransferFunction {
+    pub fn as_push_constants(&self) -> (u32, f32) {
+        match self {
+            Self::Hardware => (0, 0.0),
+            Self::Srgb => (1, 0.0),
+            Self::Hdr(calibrated_nits) => (2, *calibrated_nits),
+        }
+    }
 }

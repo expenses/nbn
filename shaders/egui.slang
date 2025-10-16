@@ -18,6 +18,8 @@ struct Constants {
     uint2 screen_size;
     float scale_factor;
     uint id;
+    uint transfer_function_index;
+    float calibrated_nits;
 };
 
 [shader("vertex")] Interp
@@ -34,19 +36,15 @@ vertex(uint vertex_id : SV_VertexID, uniform Constants constants) {
         float4(srgb_encoded2lin(colour.rgb), colour.a)
     };
 }
-
-float4 fragment_srgb_inner(Interp in, uniform Constants constants) {
-    let image = DescriptorHandle<Sampler2D>(constants.id);
-    return in.colour * image.Sample(in.uv).x;
-}
-
-    [shader("fragment")] float4
-    fragment_srgb(Interp in, uniform Constants constants) {
-   return fragment_srgb_inner(in, constants);
-}
-
 [shader("fragment")] float4
-fragment_non_srgb(Interp in, uniform Constants constants) {
-    let output = fragment_srgb_inner(in, constants);
-    return float4(srgb_lin2encoded(output.rgb), output.a);
+    fragment(Interp in, uniform Constants constants) {
+    let image = DescriptorHandle<Sampler2D>(constants.id);
+ 
+    var output = in.colour * image.Sample(in.uv).x;
+    
+    if (constants.transfer_function_index == 2) {
+        output.rgb = linear_to_hdr10(output.rgb, constants.calibrated_nits);
+    }
+ 
+    return output;
 }
