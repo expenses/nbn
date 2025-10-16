@@ -8,6 +8,7 @@ struct Interp {
 struct PushConstants {
     uint flags;
     float max_desired_brightness;
+    float exposure;
 };
 
 [shader("vertex")] Interp vertex(uniform PushConstants push_constants, uint vertex_id : SV_VertexID) {
@@ -32,7 +33,7 @@ struct PushConstants {
 [shader("pixel")] float4 fragment(
     uniform PushConstants push_constants,Interp in
 ) {
-    var output = in.col;
+    var output = in.col * pow(2, push_constants.exposure);
 
     let is_hdr = push_constants.flags & 1;
 

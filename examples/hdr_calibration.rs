@@ -39,6 +39,7 @@ struct WindowState {
     white_triangle: bool,
     is_hdr: bool,
     calibrated_max_nits: f32,
+    exposure: f32,
 }
 
 struct App {
@@ -96,6 +97,7 @@ impl winit::application::ApplicationHandler for App {
             white_triangle: false,
             is_hdr,
             calibrated_max_nits: 400.0,
+            exposure: 0.0,
         });
         self.device = Some(device);
     }
@@ -140,6 +142,7 @@ impl winit::application::ApplicationHandler for App {
                             &mut state.calibrated_max_nits,
                             0.0..=1500.0,
                         ));
+                        ui.add(egui::Slider::new(&mut state.exposure, -25.0..=10.0));
                         //ui.slider(&mut state.calibrated_max_nits, "calibrated_max_nits");
                     });
                 }
@@ -218,11 +221,12 @@ impl winit::application::ApplicationHandler for App {
                         vk::PipelineBindPoint::GRAPHICS,
                         *state.pipeline,
                     );
-                    device.push_constants::<(u32, f32)>(
+                    device.push_constants::<(u32, f32, f32)>(
                         &command_buffer,
                         (
                             ((state.white_triangle as u32) << 1) | (state.is_hdr as u32),
                             state.calibrated_max_nits,
+                            state.exposure,
                         ),
                     );
                     device.cmd_draw(**command_buffer, 3, 1, 0, 0);
