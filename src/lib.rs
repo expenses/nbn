@@ -215,7 +215,8 @@ impl Device {
         }
         required_instance_extensions.push(ash::khr::surface::NAME.as_ptr());
         required_instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
-
+        required_instance_extensions.push(ash::ext::swapchain_colorspace::NAME.as_ptr());
+        
         let available_instance_extensions =
             unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap();
         let available_instance_extensions: HashSet<_> = available_instance_extensions
@@ -568,11 +569,11 @@ impl Device {
         &self,
         window: &Window,
         image_usage: vk::ImageUsageFlags,
-        require_non_srgb: bool,
+        criteria: SurfaceSelectionCriteria,
     ) -> Swapchain {
         let surface = self.create_surface(window);
         let size = window.inner_size();
-        let surface_format = self.select_surface_format(*surface, require_non_srgb);
+        let surface_format = self.select_surface_format(*surface, criteria);
 
         let surface_caps = unsafe {
             self.surface_loader
@@ -722,30 +723,46 @@ impl Device {
     pub fn select_surface_format(
         &self,
         surface: vk::SurfaceKHR,
-        require_non_srgb: bool,
+       criteria: SurfaceSelectionCriteria,
     ) -> vk::SurfaceFormatKHR {
         let formats = unsafe {
             self.surface_loader
                 .get_physical_device_surface_formats(self.physical_device, surface)
         }
         .unwrap();
-
-        formats
-            .into_iter()
-            .filter(|format| format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
-            .max_by_key(|format| match format.format {
-                vk::Format::B8G8R8A8_SRGB => {
-                    if require_non_srgb {
-                        0
-                    } else {
-                        2
-                    }
-                }
-
-                vk::Format::B8G8R8A8_UNORM => 1,
-                _ => 0,
-            })
-            .unwrap()
+        
+        let ideal_hdr = vk::SurfaceFormatKHR {
+            color_space: vk::ColorSpaceKHR::HDR10_ST2084_EXT,
+            format: vk::Format::A2R10G10B10_UNORM_PACK32
+        };
+        
+        if criteria.desire_hdr && formats.contains(&ideal_hdr) {
+            return ideal_hdr;
+        }
+        
+        let bgra_srgb = vk::SurfaceFormatKHR {
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            format: vk::Format::B8G8R8A8_SRGB
+        };
+        
+        let bgra_unorm = vk::SurfaceFormatKHR {
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            format: vk::Format::B8G8R8A8_UNORM
+        };
+        
+        if criteria.write_via_compute {
+            if formats.contains(&bgra_unorm) {
+                return bgra_unorm;
+            }
+            
+            panic!("Unable to find suitable compute writeable format:\n{:?}", formats);
+        } else {
+            if formats.contains(&bgra_srgb) {
+                return bgra_unorm;
+            }
+            
+           panic!("Unable to find suitable format:\n{:?}", formats);
+        }
     }
 
     pub fn create_image(&self, desc: ImageDescriptor) -> Image {
@@ -2284,4 +2301,9 @@ impl<
 
         memory_barrier
     }
+}
+
+pub struct SurfaceSelectionCriteria {
+    pub write_via_compute: bool,
+    pub desire_hdr: bool,
 }

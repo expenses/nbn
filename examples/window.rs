@@ -48,7 +48,11 @@ impl winit::application::ApplicationHandler for App {
         let device = nbn::Device::new(Some(&window));
 
         let swapchain =
-            device.create_swapchain(&window, vk::ImageUsageFlags::COLOR_ATTACHMENT, false);
+            device.create_swapchain(&window, vk::ImageUsageFlags::COLOR_ATTACHMENT, nbn::SurfaceSelectionCriteria {
+                write_via_compute: false,
+                desire_hdr: false
+
+            });
         let shader = device.load_reloadable_shader("shaders/compiled/triangle.spv");
         let pipeline = create_pipeline(&device, &shader, &swapchain);
 
