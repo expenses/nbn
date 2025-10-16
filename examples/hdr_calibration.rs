@@ -54,7 +54,6 @@ impl winit::application::ApplicationHandler for App {
         let device = Arc::new(nbn::Device::new(Some(&window)));
 
         let is_hdr = std::env::var("NBN_HDR").is_ok();
-        dbg!(is_hdr);
 
         let swapchain = device.create_swapchain(
             &window,
@@ -73,7 +72,7 @@ impl winit::application::ApplicationHandler for App {
         self.window_state = Some(WindowState {
             egui_render: nbn::egui::Renderer::new(
                 &device,
-                dbg!(swapchain.create_info.image_format),
+                swapchain.create_info.image_format,
                 16 * 1024 * 1024,
             ),
             per_frame_command_buffers: [
