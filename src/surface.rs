@@ -1,5 +1,13 @@
 use crate::*;
 
+// We use: 3 frames in flight
+// FRAMES_IN_FLIGHT image_available_semaphores
+// <num swapchain images> render_finished_semaphores
+// and a timeline semaphore to sync everything up
+// 
+// Previously I was using FRAMES_IN_FLIGHT render_finished_semaphores
+// but I ran into new sync errors and got suggested to do this instead.
+
 pub const FRAMES_IN_FLIGHT: usize = 3;
 
 pub struct CurrentFrame<'a> {
