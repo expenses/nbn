@@ -2211,6 +2211,8 @@ pub enum BarrierOp {
     TransferRead,
     TransferWrite,
     AllCommandsSampledRead,
+    Present,
+    Acquire,
 }
 
 impl BarrierOp {
@@ -2220,6 +2222,7 @@ impl BarrierOp {
             Self::DepthStencilAttachmentReadWrite => vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
             Self::TransferRead | Self::TransferWrite => vk::PipelineStageFlags2::COPY,
             Self::AllCommandsSampledRead => vk::PipelineStageFlags2::ALL_COMMANDS,
+            Self::Present | Self::Acquire => vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
         }
     }
 
@@ -2233,25 +2236,34 @@ impl BarrierOp {
                 vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
                     | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
             }
+            Self::Present | Self::Acquire => Default::default(),
+        }
+    }
+
+    fn image_layout(&self) -> vk::ImageLayout {
+        match self {
+            Self::Present => vk::ImageLayout::PRESENT_SRC_KHR,
+            Self::Acquire => vk::ImageLayout::UNDEFINED,
+            _ => vk::ImageLayout::GENERAL,
         }
     }
 }
 
-impl From<BarrierOp> for (vk::PipelineStageFlags2, vk::AccessFlags2) {
+impl From<BarrierOp> for (vk::PipelineStageFlags2, vk::AccessFlags2, vk::ImageLayout) {
     fn from(op: BarrierOp) -> Self {
-        (op.stage_mask(), op.access_mask())
+        (op.stage_mask(), op.access_mask(), op.image_layout())
     }
 }
 
 impl<
         I: Into<ImageInfo>,
-        S: Into<(vk::PipelineStageFlags2, vk::AccessFlags2)>,
-        D: Into<(vk::PipelineStageFlags2, vk::AccessFlags2)>,
+        S: Into<(vk::PipelineStageFlags2, vk::AccessFlags2, vk::ImageLayout)>,
+        D: Into<(vk::PipelineStageFlags2, vk::AccessFlags2, vk::ImageLayout)>,
     > From<NewImageBarrier<I, S, D>> for vk::ImageMemoryBarrier2<'_>
 {
     fn from(barrier: NewImageBarrier<I, S, D>) -> Self {
         let image = barrier.image.into();
-        let (dst_stage_mask, dst_access_mask) = barrier.dst.into();
+        let (dst_stage_mask, dst_access_mask, new_layout) = barrier.dst.into();
 
         let mut memory_barrier = Self::default()
             .image(image.image)
@@ -2260,14 +2272,14 @@ impl<
             .dst_access_mask(dst_access_mask)
             .src_queue_family_index(barrier.src_queue_family_index)
             .dst_queue_family_index(barrier.dst_queue_family_index)
-            .new_layout(vk::ImageLayout::GENERAL);
+            .new_layout(new_layout);
 
         if let Some(src) = barrier.src {
-            let (src_stage_mask, src_access_mask) = src.into();
+            let (src_stage_mask, src_access_mask, old_layout) = src.into();
             memory_barrier = memory_barrier
                 .src_stage_mask(src_stage_mask)
                 .src_access_mask(src_access_mask)
-                .old_layout(vk::ImageLayout::GENERAL);
+                .old_layout(old_layout);
         }
 
         memory_barrier

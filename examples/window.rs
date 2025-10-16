@@ -117,27 +117,20 @@ impl winit::application::ApplicationHandler for App {
                                 &vk::CommandBufferBeginInfo::default(),
                             )
                             .unwrap();
-
-                        vk_sync::cmd::pipeline_barrier(
-                            device,
+                        device.cmd_pipeline_barrier2(
                             **command_buffer,
-                            None,
-                            &[],
-                            &[vk_sync::ImageBarrier {
-                                previous_accesses: &[vk_sync::AccessType::Present],
-                                next_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
-                                previous_layout: vk_sync::ImageLayout::Optimal,
-                                next_layout: vk_sync::ImageLayout::Optimal,
-                                discard_contents: true,
-                                src_queue_family_index: device.graphics_queue.index,
-                                dst_queue_family_index: device.graphics_queue.index,
-                                image: image.image,
-                                range: vk::ImageSubresourceRange::default()
-                                    .layer_count(1)
-                                    .level_count(1)
-                                    .aspect_mask(vk::ImageAspectFlags::COLOR),
-                            }],
+                            &vk::DependencyInfo::default().image_memory_barriers(&[
+                                nbn::NewImageBarrier {
+                                    image,
+                                    src: Some(nbn::BarrierOp::Acquire),
+                                    dst: nbn::BarrierOp::ColorAttachmentWrite,
+                                    src_queue_family_index: command_buffer.queue_family_index,
+                                    dst_queue_family_index: command_buffer.queue_family_index,
+                                }
+                                .into(),
+                            ]),
                         );
+
                         device.begin_rendering(
                             command_buffer,
                             state.swapchain.create_info.image_extent.width,
@@ -160,25 +153,18 @@ impl winit::application::ApplicationHandler for App {
                         device.cmd_draw(**command_buffer, 3, 1, 0, 0);
 
                         device.cmd_end_rendering(**command_buffer);
-                        vk_sync::cmd::pipeline_barrier(
-                            device,
+                        device.cmd_pipeline_barrier2(
                             **command_buffer,
-                            None,
-                            &[],
-                            &[vk_sync::ImageBarrier {
-                                previous_accesses: &[vk_sync::AccessType::ColorAttachmentWrite],
-                                next_accesses: &[vk_sync::AccessType::Present],
-                                previous_layout: vk_sync::ImageLayout::Optimal,
-                                next_layout: vk_sync::ImageLayout::Optimal,
-                                discard_contents: false,
-                                src_queue_family_index: device.graphics_queue.index,
-                                dst_queue_family_index: device.graphics_queue.index,
-                                image: image.image,
-                                range: vk::ImageSubresourceRange::default()
-                                    .layer_count(1)
-                                    .level_count(1)
-                                    .aspect_mask(vk::ImageAspectFlags::COLOR),
-                            }],
+                            &vk::DependencyInfo::default().image_memory_barriers(&[
+                                nbn::NewImageBarrier {
+                                    image,
+                                    src: Some(nbn::BarrierOp::ColorAttachmentWrite),
+                                    dst: nbn::BarrierOp::Present,
+                                    src_queue_family_index: command_buffer.queue_family_index,
+                                    dst_queue_family_index: command_buffer.queue_family_index,
+                                }
+                                .into(),
+                            ]),
                         );
 
                         device.end_command_buffer(**command_buffer).unwrap();
