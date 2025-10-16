@@ -724,6 +724,7 @@ impl Device {
 
         formats
             .into_iter()
+            .filter(|format| format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
             .max_by_key(|format| match format.format {
                 vk::Format::B8G8R8A8_SRGB => {
                     if require_non_srgb {
