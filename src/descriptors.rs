@@ -90,9 +90,9 @@ impl Descriptors {
                     .binding_flags(&[vk::DescriptorBindingFlags::UPDATE_AFTER_BIND; 2]);
 
                 let allowed_descriptor_types_per_binding = [
-                    vk::MutableDescriptorTypeListEXT::default(),
                     vk::MutableDescriptorTypeListEXT::default()
                         .descriptor_types(&[vk::DescriptorType::STORAGE_IMAGE]),
+                    vk::MutableDescriptorTypeListEXT::default(),
                 ];
 
                 let mut mutable_descriptor_create_info =
@@ -106,12 +106,12 @@ impl Descriptors {
                             vk::DescriptorSetLayoutBinding::default()
                                 .binding(0)
                                 .stage_flags(vk::ShaderStageFlags::ALL)
-                                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_type(vk::DescriptorType::MUTABLE_EXT)
                                 .descriptor_count(counts_of_each_descriptor_type),
                             vk::DescriptorSetLayoutBinding::default()
                                 .binding(1)
                                 .stage_flags(vk::ShaderStageFlags::ALL)
-                                .descriptor_type(vk::DescriptorType::MUTABLE_EXT)
+                                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                                 .descriptor_count(counts_of_each_descriptor_type),
                         ])
                         .push_next(&mut flags)

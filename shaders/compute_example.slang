@@ -1,5 +1,3 @@
-import fallback_bindings;
-
 struct Interp {
     float4 pos: SV_Position;
     float3 normal;
@@ -46,7 +44,7 @@ float4x4 look_at_rh(float3 eye, float3 center, float3 up) {
 [shader("vertex")]
 Interp vertex(uint* address, uniform uint image ,uint vertex_id : SV_VertexID) {
 
-    Sampler2D s_image = sampled_images[image];
+    let s_image = DescriptorHandle<Sampler2D>(image);
 
     let num_indices = address[0];
     let num_vertices = address[1];
@@ -57,7 +55,7 @@ Interp vertex(uint* address, uniform uint image ,uint vertex_id : SV_VertexID) {
     let index = indices[vertex_id];
     let position = positions[index];
     let normal = normals[index];
-    
+
     let proj = perspective_reversed_infinite_z_vk(1.0297443, 1.0, 0.001);
     let view = look_at_rh(float3(-12.0, 4.0, -12.0), float3(0.0), float3(0.0, 0.0, -1.0));
 

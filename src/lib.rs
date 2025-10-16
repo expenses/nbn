@@ -877,7 +877,7 @@ impl Device {
                 self.device.update_descriptor_sets(
                     &[vk::WriteDescriptorSet::default()
                         .dst_set(self.descriptors.set)
-                        .dst_binding(1)
+                        .dst_binding(0)
                         .dst_array_element(*index)
                         .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                         .descriptor_count(1)
@@ -895,7 +895,7 @@ impl Device {
                 self.device.update_descriptor_sets(
                     &[vk::WriteDescriptorSet::default()
                         .dst_set(self.descriptors.set)
-                        .dst_binding(0)
+                        .dst_binding(1)
                         .dst_array_element(*index)
                         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                         .descriptor_count(1)
