@@ -216,7 +216,7 @@ impl Device {
         required_instance_extensions.push(ash::khr::surface::NAME.as_ptr());
         required_instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
         required_instance_extensions.push(ash::ext::swapchain_colorspace::NAME.as_ptr());
-        
+
         let available_instance_extensions =
             unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap();
         let available_instance_extensions: HashSet<_> = available_instance_extensions
@@ -723,45 +723,48 @@ impl Device {
     pub fn select_surface_format(
         &self,
         surface: vk::SurfaceKHR,
-       criteria: SurfaceSelectionCriteria,
+        criteria: SurfaceSelectionCriteria,
     ) -> vk::SurfaceFormatKHR {
         let formats = unsafe {
             self.surface_loader
                 .get_physical_device_surface_formats(self.physical_device, surface)
         }
         .unwrap();
-        
+
         let ideal_hdr = vk::SurfaceFormatKHR {
             color_space: vk::ColorSpaceKHR::HDR10_ST2084_EXT,
-            format: vk::Format::A2R10G10B10_UNORM_PACK32
+            format: vk::Format::A2R10G10B10_UNORM_PACK32,
         };
-        
+
         if criteria.desire_hdr && formats.contains(&ideal_hdr) {
             return ideal_hdr;
         }
-        
+
         let bgra_srgb = vk::SurfaceFormatKHR {
             color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            format: vk::Format::B8G8R8A8_SRGB
+            format: vk::Format::B8G8R8A8_SRGB,
         };
-        
+
         let bgra_unorm = vk::SurfaceFormatKHR {
             color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            format: vk::Format::B8G8R8A8_UNORM
+            format: vk::Format::B8G8R8A8_UNORM,
         };
-        
+
         if criteria.write_via_compute {
             if formats.contains(&bgra_unorm) {
                 return bgra_unorm;
             }
-            
-            panic!("Unable to find suitable compute writeable format:\n{:?}", formats);
+
+            panic!(
+                "Unable to find suitable compute writeable format:\n{:?}",
+                formats
+            );
         } else {
             if formats.contains(&bgra_srgb) {
                 return bgra_unorm;
             }
-            
-           panic!("Unable to find suitable format:\n{:?}", formats);
+
+            panic!("Unable to find suitable format:\n{:?}", formats);
         }
     }
 
