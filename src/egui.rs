@@ -240,7 +240,7 @@ impl Renderer {
         }
     }
 
-    #[allow(clippy::missing_safety_doc)]
+    #[allow(clippy::missing_safety_doc, clippy::too_many_arguments)]
     pub unsafe fn paint(
         &mut self,
         device: &nbn::Device,

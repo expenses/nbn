@@ -42,7 +42,9 @@ vertex(uint vertex_id : SV_VertexID, uniform Constants constants) {
  
     var output = in.colour * image.Sample(in.uv).x;
     
-    if (constants.transfer_function_index == 2) {
+    if (constants.transfer_function_index == 1) {
+        output.rgb = srgb_lin2encoded(output.rgb);
+    } else if (constants.transfer_function_index == 2) {
         output.rgb = linear_to_hdr10(output.rgb, constants.calibrated_nits);
     }
  
