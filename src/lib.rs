@@ -729,40 +729,26 @@ impl Device {
         }
         .unwrap();
 
-        let ideal_hdr = vk::SurfaceFormatKHR {
-            color_space: vk::ColorSpaceKHR::HDR10_ST2084_EXT,
-            format: vk::Format::A2R10G10B10_UNORM_PACK32,
-        };
+        let try_format = |format| Some(format).filter(|_| formats.contains(&format));
 
-        if criteria.desire_hdr && formats.contains(&ideal_hdr) {
-            return ideal_hdr;
-        }
-
-        let bgra_srgb = vk::SurfaceFormatKHR {
-            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            format: vk::Format::B8G8R8A8_SRGB,
-        };
-
-        let bgra_unorm = vk::SurfaceFormatKHR {
-            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            format: vk::Format::B8G8R8A8_UNORM,
-        };
-
-        if criteria.write_via_compute {
-            if formats.contains(&bgra_unorm) {
-                return bgra_unorm;
-            }
-
-            panic!(
-                "Unable to find suitable compute writeable format:\n{:?}",
-                formats
-            );
+        if criteria.desire_hdr {
+            try_format(vk::SurfaceFormatKHR {
+                color_space: vk::ColorSpaceKHR::HDR10_ST2084_EXT,
+                format: vk::Format::A2R10G10B10_UNORM_PACK32,
+            })
+            .unwrap()
+        } else if criteria.write_via_compute {
+            try_format(vk::SurfaceFormatKHR {
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+                format: vk::Format::B8G8R8A8_UNORM,
+            })
+            .unwrap()
         } else {
-            if formats.contains(&bgra_srgb) {
-                return bgra_srgb;
-            }
-
-            panic!("Unable to find suitable format:\n{:?}", formats);
+            try_format(vk::SurfaceFormatKHR {
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+                format: vk::Format::B8G8R8A8_SRGB,
+            })
+            .unwrap()
         }
     }
 
