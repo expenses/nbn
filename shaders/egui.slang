@@ -1,4 +1,5 @@
 import shared.colour;
+import shared.hdr10;
 
 struct Vertex {
     float2 pos;
@@ -45,7 +46,7 @@ vertex(uint vertex_id : SV_VertexID, uniform Constants constants) {
     if (constants.transfer_function_index == 1) {
         output.rgb = srgb_lin2encoded(output.rgb);
     } else if (constants.transfer_function_index == 2) {
-        output.rgb = linear_to_hdr10(output.rgb, constants.calibrated_nits);
+        output.rgb = ConvertToHDR10(output.rgb, constants.calibrated_nits);
     }
  
     return output;

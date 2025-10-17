@@ -25,6 +25,7 @@ goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.2", 
 env_logger = "0.11.8"
 gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "updates", features = ["visualizer"]}
 egui-winit = "0.31.1"
+image = { version = "0.25.8", default-features = false, features = ["exr"] }
 
 [features]
 default = ["image_loading", "egui"]

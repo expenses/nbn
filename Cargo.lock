@@ -1805,6 +1805,7 @@ dependencies = [
  "glam 0.30.8",
  "goth-gltf",
  "gpu-allocator",
+ "image 0.25.8",
  "ktx2",
  "log",
  "notify",

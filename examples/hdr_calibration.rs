@@ -1,30 +1,44 @@
 use ash::vk;
 use std::sync::Arc;
 
-fn create_pipeline(
+fn create_pipelines(
     device: &nbn::Device,
     shader: &nbn::ShaderModule,
     swapchain: &nbn::Swapchain,
-) -> nbn::Pipeline {
-    device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        name: "triangle pipeline",
-        shaders: nbn::GraphicsPipelineShaders::Legacy {
-            vertex: nbn::ShaderDesc {
-                module: shader,
-                entry_point: c"vertex",
+) -> (nbn::Pipeline, nbn::Pipeline) {
+    let create_pipeline = |vertex, fragment| {
+        device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+            name: "triangle pipeline",
+            shaders: nbn::GraphicsPipelineShaders::Legacy {
+                vertex: nbn::ShaderDesc {
+                    module: shader,
+                    entry_point: vertex,
+                },
+                fragment: nbn::ShaderDesc {
+                    module: shader,
+                    entry_point: fragment,
+                },
             },
-            fragment: nbn::ShaderDesc {
-                module: shader,
-                entry_point: c"fragment",
-            },
-        },
-        color_attachment_formats: &[swapchain.create_info.image_format],
-        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA)],
-        conservative_rasterization: false,
-        depth: Default::default(),
-        cull_mode: Default::default(),
-    })
+            color_attachment_formats: &[swapchain.create_info.image_format],
+            blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+                .color_write_mask(vk::ColorComponentFlags::RGBA)],
+            conservative_rasterization: false,
+            depth: Default::default(),
+            cull_mode: Default::default(),
+        })
+    };
+
+    (
+        create_pipeline(c"vertex", c"fragment"),
+        create_pipeline(c"fullscreen_tri", c"fragment_2"),
+    )
+}
+
+#[derive(PartialEq)]
+enum TriangleState {
+    Rgb,
+    White,
+    Off,
 }
 
 struct WindowState {
@@ -32,17 +46,20 @@ struct WindowState {
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
-    pipeline: nbn::Pipeline,
+    tri_pipeline: nbn::Pipeline,
+    image_pipeline: nbn::Pipeline,
     shader: nbn::ReloadableShader,
     egui_winit: egui_winit::State,
     egui_render: nbn::egui::Renderer,
-    white_triangle: bool,
     is_hdr: bool,
     calibrated_max_nits: f32,
     exposure: f32,
     clamp_before_transfer_function: bool,
     tonemap: bool,
     tonemapping_image: nbn::IndexedImage,
+    exr: Option<nbn::IndexedImage>,
+    draw_background: bool,
+    triangle_state: TriangleState,
 }
 
 struct App {
@@ -69,7 +86,7 @@ impl winit::application::ApplicationHandler for App {
         );
 
         let shader = device.load_reloadable_shader("shaders/compiled/triangle_hdr.spv");
-        let pipeline = create_pipeline(&device, &shader, &swapchain);
+        let (tri_pipeline, image_pipeline) = create_pipelines(&device, &shader, &swapchain);
 
         let egui_ctx = egui::Context::default();
 
@@ -81,6 +98,29 @@ impl winit::application::ApplicationHandler for App {
             "shaders/tony-mc-mapface/shader/tony_mc_mapface.dds",
             nbn::QueueType::Graphics,
         );
+
+        let exr = std::env::args().nth(1).map(|filename| {
+            let exr = image::open(filename).unwrap().into_rgba32f();
+            let exr = staging_buffer.create_sampled_image(
+                &device,
+                nbn::SampledImageDescriptor {
+                    name: "exr",
+                    extent: nbn::ImageExtent::D2 {
+                        width: exr.width(),
+                        height: exr.height(),
+                    },
+                    format: vk::Format::R32G32B32A32_SFLOAT,
+                },
+                nbn::cast_slice::<f32, _>(exr.as_flat_samples().as_slice()),
+                nbn::QueueType::Graphics,
+                &[0],
+            );
+            nbn::IndexedImage {
+                index: device.register_image_with_sampler(*exr.view, &device.samplers.clamp, false),
+                image: exr,
+            }
+        });
+
         staging_buffer.finish(&device);
 
         self.window_state = Some(WindowState {
@@ -92,6 +132,12 @@ impl winit::application::ApplicationHandler for App {
                 ),
                 image,
             },
+            triangle_state: if exr.is_some() {
+                TriangleState::Off
+            } else {
+                TriangleState::Rgb
+            },
+            exr,
             egui_render: nbn::egui::Renderer::new(
                 &device,
                 swapchain.create_info.image_format,
@@ -104,7 +150,8 @@ impl winit::application::ApplicationHandler for App {
             ],
             sync_resources: device.create_sync_resources(),
             swapchain,
-            pipeline,
+            tri_pipeline,
+            image_pipeline,
             shader,
             egui_winit: egui_winit::State::new(
                 egui_ctx.clone(),
@@ -115,12 +162,12 @@ impl winit::application::ApplicationHandler for App {
                 None,
             ),
             window,
-            white_triangle: false,
             is_hdr,
             calibrated_max_nits: 400.0,
             exposure: 0.0,
-            clamp_before_transfer_function: true,
+            clamp_before_transfer_function: is_hdr,
             tonemap: true,
+            draw_background: true,
         });
         self.device = Some(device);
     }
@@ -150,7 +197,10 @@ impl winit::application::ApplicationHandler for App {
 
                 if state.shader.try_reload(device) {
                     unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
-                    state.pipeline = create_pipeline(device, &state.shader, &state.swapchain);
+                    let (tri_pipeline, image_pipeline) =
+                        create_pipelines(device, &state.shader, &state.swapchain);
+                    state.tri_pipeline = tri_pipeline;
+                    state.image_pipeline = image_pipeline
                 }
 
                 let raw_input = state.egui_winit.take_egui_input(&state.window);
@@ -159,17 +209,30 @@ impl winit::application::ApplicationHandler for App {
 
                 egui_ctx.begin_pass(raw_input);
                 {
-                    egui::Window::new("Hello World").show(egui_ctx, |ui| {
-                        ui.checkbox(&mut state.white_triangle, "white triangle");
-                        ui.checkbox(
-                            &mut state.clamp_before_transfer_function,
-                            "clamp_before_transfer_function",
+                    egui::Window::new("Settings").show(egui_ctx, |ui| {
+                        ui.selectable_value(&mut state.triangle_state, TriangleState::Off, "off");
+                        ui.selectable_value(&mut state.triangle_state, TriangleState::Rgb, "rgb");
+                        ui.selectable_value(
+                            &mut state.triangle_state,
+                            TriangleState::White,
+                            "white",
+                        );
+                        ui.add_enabled(
+                            state.is_hdr,
+                            egui::Checkbox::new(
+                                &mut state.clamp_before_transfer_function,
+                                "clamp_before_transfer_function",
+                            ),
                         );
                         ui.checkbox(&mut state.tonemap, "tonemap");
-                        ui.add(egui::Slider::new(
-                            &mut state.calibrated_max_nits,
-                            0.0..=1500.0,
-                        ));
+                        ui.add_enabled(
+                            state.exr.is_some(),
+                            egui::Checkbox::new(&mut state.draw_background, "draw_background"),
+                        );
+                        ui.add_enabled(
+                            state.is_hdr,
+                            egui::Slider::new(&mut state.calibrated_max_nits, 0.0..=1500.0),
+                        );
                         ui.add(egui::Slider::new(&mut state.exposure, -25.0..=10.0));
                     });
                 }
@@ -243,25 +306,36 @@ impl winit::application::ApplicationHandler for App {
                             .store_op(vk::AttachmentStoreOp::STORE)],
                         None,
                     );
-                    device.cmd_bind_pipeline(
-                        **command_buffer,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        *state.pipeline,
-                    );
                     device.bind_internal_descriptor_sets_to_all(&command_buffer);
-                    device.push_constants::<(u32, f32, f32, u32)>(
+                    device.push_constants::<(u32, f32, f32, u32, u32)>(
                         &command_buffer,
                         (
                             ((state.tonemap as u32) << 3)
                                 | ((state.clamp_before_transfer_function as u32) << 2)
-                                | ((state.white_triangle as u32) << 1)
+                                | (((state.triangle_state == TriangleState::White) as u32) << 1)
                                 | (state.is_hdr as u32),
                             state.calibrated_max_nits,
                             state.exposure,
                             *state.tonemapping_image,
+                            state.exr.as_deref().copied().unwrap_or_default(),
                         ),
                     );
-                    device.cmd_draw(**command_buffer, 3, 1, 0, 0);
+                    if state.exr.is_some() && state.draw_background {
+                        device.cmd_bind_pipeline(
+                            **command_buffer,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            *state.image_pipeline,
+                        );
+                        device.cmd_draw(**command_buffer, 3, 1, 0, 0);
+                    }
+                    if state.triangle_state != TriangleState::Off {
+                        device.cmd_bind_pipeline(
+                            **command_buffer,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            *state.tri_pipeline,
+                        );
+                        device.cmd_draw(**command_buffer, 3, 1, 0, 0);
+                    }
 
                     state.egui_render.paint(
                         device,
