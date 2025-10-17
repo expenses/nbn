@@ -106,30 +106,30 @@ impl Renderer {
                             data,
                         });
 
-                    device.insert_pipeline_barrier(
+                    /*device.insert_pipeline_barrier(
                         command_buffer,
                         None,
                         &[],
-                        &[nbn::ImageBarrier {
+                        &[vk_sync::ImageBarrier {
                             previous_accesses: &[
-                                nbn::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer,
+                                vk_sync::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer,
                             ],
-                            next_accesses: &[nbn::AccessType::TransferWrite],
-                            previous_layout: nbn::ImageLayout::Optimal,
-                            next_layout: nbn::ImageLayout::Optimal,
+                            next_accesses: &[vk_sync::AccessType::TransferWrite],
+                            previous_layout: vk_sync::ImageLayout::Optimal,
+                            next_layout: vk_sync::ImageLayout::Optimal,
                             discard_contents: false,
                             src_queue_family_index: device.graphics_queue.index,
                             dst_queue_family_index: device.graphics_queue.index,
                             image: *texture.image.image,
                             range: texture.image.subresource_range,
                         }],
-                    );
+                    );*/
                     unsafe {
                         device.cmd_copy_buffer_to_image(
                             **command_buffer,
                             *staging_buffer.buffer,
                             *texture.image.image,
-                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                            vk::ImageLayout::GENERAL,
                             &[vk::BufferImageCopy::default()
                                 .buffer_offset(0)
                                 .image_offset(vk::Offset3D {
@@ -149,24 +149,24 @@ impl Renderer {
                                 )],
                         )
                     }
-                    device.insert_pipeline_barrier(
+                    /*device.insert_pipeline_barrier(
                         command_buffer,
                         None,
                         &[],
-                        &[nbn::ImageBarrier {
-                            previous_accesses: &[nbn::AccessType::TransferWrite],
+                        &[vk_sync::ImageBarrier {
+                            previous_accesses: &[vk_sync::AccessType::TransferWrite],
                             next_accesses: &[
-                                nbn::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer,
+                                vk_sync::AccessType::FragmentShaderReadSampledImageOrUniformTexelBuffer,
                             ],
-                            previous_layout: nbn::ImageLayout::Optimal,
-                            next_layout: nbn::ImageLayout::Optimal,
+                            previous_layout: vk_sync::ImageLayout::Optimal,
+                            next_layout: vk_sync::ImageLayout::Optimal,
                             discard_contents: false,
                             src_queue_family_index: device.graphics_queue.index,
                             dst_queue_family_index: device.graphics_queue.index,
                             image: *texture.image.image,
                             range: texture.image.subresource_range,
                         }],
-                    );
+                    );*/
 
                     self.temporary_buffers[current_frame].push(staging_buffer);
                 }

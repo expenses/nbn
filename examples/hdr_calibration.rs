@@ -218,7 +218,7 @@ impl winit::application::ApplicationHandler for App {
                     device.cmd_pipeline_barrier2(
                         **command_buffer,
                         &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::NewImageBarrier {
+                            nbn::ImageBarrier {
                                 image,
                                 src: Some(nbn::BarrierOp::Acquire),
                                 dst: nbn::BarrierOp::ColorAttachmentWrite,
@@ -235,7 +235,7 @@ impl winit::application::ApplicationHandler for App {
                         extent.height,
                         &[vk::RenderingAttachmentInfo::default()
                             .image_view(*image.view)
-                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .image_layout(vk::ImageLayout::GENERAL)
                             .clear_value(vk::ClearValue {
                                 color: vk::ClearColorValue { float32: [0.0; 4] },
                             })
@@ -282,7 +282,7 @@ impl winit::application::ApplicationHandler for App {
                     device.cmd_pipeline_barrier2(
                         **command_buffer,
                         &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::NewImageBarrier {
+                            nbn::ImageBarrier {
                                 image,
                                 src: Some(nbn::BarrierOp::ColorAttachmentWrite),
                                 dst: nbn::BarrierOp::Present,

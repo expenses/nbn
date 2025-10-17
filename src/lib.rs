@@ -9,9 +9,6 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-pub use vk_sync::{
-    cmd::pipeline_barrier, AccessType, BufferBarrier, GlobalBarrier, ImageBarrier, ImageLayout,
-};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
@@ -922,7 +919,7 @@ impl Device {
         unsafe {
             self.cmd_pipeline_barrier2(
                 **command_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                &vk::DependencyInfo::default().image_memory_barriers(&[ImageBarrier::<
                     _,
                     BarrierOp,
                     _,
@@ -966,7 +963,7 @@ impl Device {
 
             self.cmd_pipeline_barrier2(
                 **command_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                &vk::DependencyInfo::default().image_memory_barriers(&[ImageBarrier::<
                     _,
                     BarrierOp,
                     _,
@@ -982,39 +979,6 @@ impl Device {
         }
 
         image
-    }
-
-    pub fn insert_pipeline_barrier(
-        &self,
-        command_buffer: &CommandBuffer,
-        global_barrier: Option<GlobalBarrier>,
-        buffer_barriers: &[BufferBarrier],
-        image_barriers: &[ImageBarrier],
-    ) {
-        vk_sync::cmd::pipeline_barrier(
-            self,
-            **command_buffer,
-            global_barrier,
-            buffer_barriers,
-            image_barriers,
-        );
-    }
-
-    pub fn insert_global_barrier(
-        &self,
-        command_buffer: &CommandBuffer,
-        previous_accesses: &[vk_sync::AccessType],
-        next_accesses: &[vk_sync::AccessType],
-    ) {
-        self.insert_pipeline_barrier(
-            command_buffer,
-            Some(vk_sync::GlobalBarrier {
-                previous_accesses,
-                next_accesses,
-            }),
-            &[],
-            &[],
-        );
     }
 
     pub fn bind_internal_descriptor_sets(
@@ -1617,11 +1581,11 @@ impl Device {
                 );
         }
 
-        self.insert_global_barrier(
-            &staging_buffer.command_buffer,
-            &[AccessType::AccelerationStructureBuildWrite],
-            &[AccessType::AccelerationStructureBuildRead],
-        );
+        //self.insert_global_barrier(
+        //    &staging_buffer.command_buffer,
+        //    &[vk_sync::AccessType::AccelerationStructureBuildWrite],
+        //    &[vk_sync::AccessType::AccelerationStructureBuildRead],
+        //);
 
         AccelerationStructure {
             address: unsafe {
@@ -2097,7 +2061,7 @@ impl StagingBuffer {
         unsafe {
             device.cmd_pipeline_barrier2(
                 *self.command_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                &vk::DependencyInfo::default().image_memory_barriers(&[ImageBarrier::<
                     _,
                     BarrierOp,
                     _,
@@ -2138,7 +2102,7 @@ impl StagingBuffer {
 
             device.cmd_pipeline_barrier2(
                 *self.command_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[NewImageBarrier::<
+                &vk::DependencyInfo::default().image_memory_barriers(&[ImageBarrier::<
                     _,
                     BarrierOp,
                     _,
@@ -2205,7 +2169,7 @@ impl Deref for AccelerationStructure {
     }
 }
 
-pub struct NewImageBarrier<I, S = BarrierOp, D = BarrierOp> {
+pub struct ImageBarrier<I, S = BarrierOp, D = BarrierOp> {
     pub image: I,
     pub src: Option<S>,
     pub dst: D,
@@ -2276,9 +2240,9 @@ impl<
         I: Into<ImageInfo>,
         S: Into<(vk::PipelineStageFlags2, vk::AccessFlags2, vk::ImageLayout)>,
         D: Into<(vk::PipelineStageFlags2, vk::AccessFlags2, vk::ImageLayout)>,
-    > From<NewImageBarrier<I, S, D>> for vk::ImageMemoryBarrier2<'_>
+    > From<ImageBarrier<I, S, D>> for vk::ImageMemoryBarrier2<'_>
 {
-    fn from(barrier: NewImageBarrier<I, S, D>) -> Self {
+    fn from(barrier: ImageBarrier<I, S, D>) -> Self {
         let image = barrier.image.into();
         let (dst_stage_mask, dst_access_mask, new_layout) = barrier.dst.into();
 

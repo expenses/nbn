@@ -96,7 +96,7 @@ fn main() {
         device.cmd_pipeline_barrier2(
             *command_buffer,
             &vk::DependencyInfo::default().image_memory_barriers(&[
-                nbn::NewImageBarrier::<_, nbn::BarrierOp, _> {
+                nbn::ImageBarrier::<_, nbn::BarrierOp, _> {
                     image: &image,
                     src: None,
                     dst: nbn::BarrierOp::ColorAttachmentWrite,
@@ -104,7 +104,7 @@ fn main() {
                     dst_queue_family_index: device.graphics_queue.index,
                 }
                 .into(),
-                nbn::NewImageBarrier::<_, nbn::BarrierOp, _> {
+                nbn::ImageBarrier::<_, nbn::BarrierOp, _> {
                     image: &depthbuffer,
                     src: None,
                     dst: nbn::BarrierOp::DepthStencilAttachmentReadWrite,
@@ -140,7 +140,7 @@ fn main() {
         device.cmd_end_rendering(*command_buffer);
         device.cmd_pipeline_barrier2(
             *command_buffer,
-            &vk::DependencyInfo::default().image_memory_barriers(&[nbn::NewImageBarrier::<
+            &vk::DependencyInfo::default().image_memory_barriers(&[nbn::ImageBarrier::<
                 _,
                 nbn::BarrierOp,
                 _,
