@@ -6,7 +6,8 @@ enum Flags {
     IsHdr,
     WhiteTriangle,
     ClampBeforeTransferFunction,
-    Tonemap
+    Tonemap,
+    BarelyVisibleTriangle,
 };
 
 
@@ -16,18 +17,25 @@ struct Interp {
 };
 
 struct PushConstants {
-    Flags flags;
     float max_desired_brightness;
     float exposure;
     uint tonemapping_lut;
     uint background_image;
+    uint8_t flags;
 };
 
 [shader("vertex")] Interp vertex(uniform PushConstants push_constants, uint vertex_id : SV_VertexID) {
     Interp interp;
 
-    interp.col = float3(push_constants.flags & Flags::WhiteTriangle);
-    interp.col[vertex_id] = 1.0;
+    let flags = Flags(push_constants.flags);
+
+    if (flags & Flags::BarelyVisibleTriangle) {
+        interp.col = float3(1.0 / pow(2, 16));
+    } else {
+        interp.col = float3(bool(Flags(push_constants.flags) & Flags::WhiteTriangle));
+        interp.col[vertex_id] = 1.0;
+    }
+
     interp.pos = float4(0.0, 0.5, 0.0, 1.0);
     if (vertex_id == 0) {
         interp.pos.y = -0.5;
@@ -43,15 +51,17 @@ struct PushConstants {
 float4 handle_output(float3 col, PushConstants push_constants) {
     var output = col * pow(2, push_constants.exposure);
 
-    if (push_constants.flags & Flags::Tonemap) {
+    Flags flags = Flags(push_constants.flags);
+
+    if (flags & Flags::Tonemap) {
         output = tony_mc_mapface(DescriptorHandle<Sampler3D<float3>>(push_constants.tonemapping_lut), output);
     }
 
-    if (push_constants.flags & Flags::ClampBeforeTransferFunction) {
+    if (flags & Flags::ClampBeforeTransferFunction) {
         output = min(output, float3(1));
     }
 
-    if (push_constants.flags & Flags::IsHdr) {
+    if (flags & Flags::IsHdr) {
         output = ConvertToHDR10(output, push_constants.max_desired_brightness);
     }
 

@@ -38,6 +38,7 @@ fn create_pipelines(
 enum TriangleState {
     Rgb,
     White,
+    BarelyVisible,
     Off,
 }
 
@@ -60,6 +61,7 @@ struct WindowState {
     exr: Option<nbn::IndexedImage>,
     draw_background: bool,
     triangle_state: TriangleState,
+    ui_nits: f32,
 }
 
 struct App {
@@ -164,6 +166,7 @@ impl winit::application::ApplicationHandler for App {
             window,
             is_hdr,
             calibrated_max_nits: 400.0,
+            ui_nits: 203.0,
             exposure: 0.0,
             clamp_before_transfer_function: is_hdr,
             tonemap: true,
@@ -217,6 +220,11 @@ impl winit::application::ApplicationHandler for App {
                             TriangleState::White,
                             "white",
                         );
+                        ui.selectable_value(
+                            &mut state.triangle_state,
+                            TriangleState::BarelyVisible,
+                            "barely visible",
+                        );
                         ui.add_enabled(
                             state.is_hdr,
                             egui::Checkbox::new(
@@ -233,7 +241,21 @@ impl winit::application::ApplicationHandler for App {
                             state.is_hdr,
                             egui::Slider::new(&mut state.calibrated_max_nits, 0.0..=1500.0),
                         );
+                        ui.add_enabled(
+                            state.is_hdr,
+                            egui::Slider::new(&mut state.ui_nits, 0.0..=1500.0),
+                        );
                         ui.add(egui::Slider::new(&mut state.exposure, -25.0..=10.0));
+                        ui.horizontal(|ui| {
+                            if ui.button("-").clicked() {
+                                state.calibrated_max_nits /= 2.0;
+                                state.exposure += 1.0;
+                            }
+                            if ui.button("+").clicked() {
+                                state.calibrated_max_nits *= 2.0;
+                                state.exposure -= 1.0;
+                            }
+                        });
                     });
                 }
                 let output = egui_ctx.end_pass();
@@ -307,17 +329,18 @@ impl winit::application::ApplicationHandler for App {
                         None,
                     );
                     device.bind_internal_descriptor_sets_to_all(&command_buffer);
-                    device.push_constants::<(u32, f32, f32, u32, u32)>(
+                    device.push_constants::<(f32, f32, u32, u32, u8)>(
                         &command_buffer,
                         (
-                            ((state.tonemap as u32) << 3)
-                                | ((state.clamp_before_transfer_function as u32) << 2)
-                                | (((state.triangle_state == TriangleState::White) as u32) << 1)
-                                | (state.is_hdr as u32),
                             state.calibrated_max_nits,
                             state.exposure,
                             *state.tonemapping_image,
                             state.exr.as_deref().copied().unwrap_or_default(),
+                            (((state.triangle_state == TriangleState::BarelyVisible) as u8) << 4)
+                                | ((state.tonemap as u8) << 3)
+                                | ((state.clamp_before_transfer_function as u8) << 2)
+                                | (((state.triangle_state == TriangleState::White) as u8) << 1)
+                                | (state.is_hdr as u8),
                         ),
                     );
                     if state.exr.is_some() && state.draw_background {
@@ -345,7 +368,7 @@ impl winit::application::ApplicationHandler for App {
                         [extent.width, extent.height],
                         current_frame,
                         if state.is_hdr {
-                            nbn::TransferFunction::Hdr(state.calibrated_max_nits)
+                            nbn::TransferFunction::Hdr(state.ui_nits)
                         } else {
                             nbn::TransferFunction::Hardware
                         },
