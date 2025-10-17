@@ -40,6 +40,9 @@ struct WindowState {
     is_hdr: bool,
     calibrated_max_nits: f32,
     exposure: f32,
+    clamp_before_transfer_function: bool,
+    tonemap: bool,
+    tonemapping_image: nbn::IndexedImage,
 }
 
 struct App {
@@ -70,7 +73,25 @@ impl winit::application::ApplicationHandler for App {
 
         let egui_ctx = egui::Context::default();
 
+        let mut staging_buffer =
+            nbn::StagingBuffer::new(&device, 1024 * 1024 * 16, nbn::QueueType::Transfer);
+        let image = nbn::image_loading::create_image(
+            &device,
+            &mut staging_buffer,
+            "shaders/tony-mc-mapface/shader/tony_mc_mapface.dds",
+            nbn::QueueType::Graphics,
+        );
+        staging_buffer.finish(&device);
+
         self.window_state = Some(WindowState {
+            tonemapping_image: nbn::IndexedImage {
+                index: device.register_image_with_sampler(
+                    *image.view,
+                    &device.samplers.clamp,
+                    false,
+                ),
+                image,
+            },
             egui_render: nbn::egui::Renderer::new(
                 &device,
                 swapchain.create_info.image_format,
@@ -98,6 +119,8 @@ impl winit::application::ApplicationHandler for App {
             is_hdr,
             calibrated_max_nits: 400.0,
             exposure: 0.0,
+            clamp_before_transfer_function: true,
+            tonemap: true,
         });
         self.device = Some(device);
     }
@@ -138,12 +161,16 @@ impl winit::application::ApplicationHandler for App {
                 {
                     egui::Window::new("Hello World").show(egui_ctx, |ui| {
                         ui.checkbox(&mut state.white_triangle, "white triangle");
+                        ui.checkbox(
+                            &mut state.clamp_before_transfer_function,
+                            "clamp_before_transfer_function",
+                        );
+                        ui.checkbox(&mut state.tonemap, "tonemap");
                         ui.add(egui::Slider::new(
                             &mut state.calibrated_max_nits,
                             0.0..=1500.0,
                         ));
                         ui.add(egui::Slider::new(&mut state.exposure, -25.0..=10.0));
-                        //ui.slider(&mut state.calibrated_max_nits, "calibrated_max_nits");
                     });
                 }
                 let output = egui_ctx.end_pass();
@@ -221,12 +248,17 @@ impl winit::application::ApplicationHandler for App {
                         vk::PipelineBindPoint::GRAPHICS,
                         *state.pipeline,
                     );
-                    device.push_constants::<(u32, f32, f32)>(
+                    device.bind_internal_descriptor_sets_to_all(&command_buffer);
+                    device.push_constants::<(u32, f32, f32, u32)>(
                         &command_buffer,
                         (
-                            ((state.white_triangle as u32) << 1) | (state.is_hdr as u32),
+                            ((state.tonemap as u32) << 3)
+                                | ((state.clamp_before_transfer_function as u32) << 2)
+                                | ((state.white_triangle as u32) << 1)
+                                | (state.is_hdr as u32),
                             state.calibrated_max_nits,
                             state.exposure,
+                            *state.tonemapping_image,
                         ),
                     );
                     device.cmd_draw(**command_buffer, 3, 1, 0, 0);
