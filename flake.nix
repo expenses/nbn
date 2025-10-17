@@ -61,6 +61,7 @@
               renderdoc
               gdb
               clang-tools
+              cargo-udeps
               ninja
               eog
               (writeShellScriptBin "format-shaders" ''
