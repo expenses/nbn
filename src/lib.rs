@@ -15,8 +15,12 @@ pub use vk_sync::{
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
-pub mod descriptors;
+#[cfg(feature = "egui")]
 pub mod egui;
+#[cfg(feature = "image_loading")]
+pub mod image_loading;
+
+pub mod descriptors;
 mod hot_reloading;
 mod surface;
 mod util;

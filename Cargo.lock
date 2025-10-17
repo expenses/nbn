@@ -1798,18 +1798,21 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "ash-window",
+ "ddsfile",
  "egui",
  "egui-winit",
  "env_logger",
  "glam 0.30.8",
  "goth-gltf",
  "gpu-allocator",
+ "ktx2",
  "log",
  "notify",
  "parking_lot",
  "presser",
  "vk-sync-fork",
  "winit",
+ "zstd",
 ]
 
 [[package]]
