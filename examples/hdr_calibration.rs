@@ -237,21 +237,23 @@ impl winit::application::ApplicationHandler for App {
                             state.exr.is_some(),
                             egui::Checkbox::new(&mut state.draw_background, "draw_background"),
                         );
+                        let max_nits = 1600.0;
+                        let max_exposure = 10.0;
                         ui.add_enabled(
                             state.is_hdr,
-                            egui::Slider::new(&mut state.calibrated_max_nits, 0.0..=1500.0),
+                            egui::Slider::new(&mut state.calibrated_max_nits, 0.0..=max_nits),
                         );
                         ui.add_enabled(
                             state.is_hdr,
-                            egui::Slider::new(&mut state.ui_nits, 0.0..=1500.0),
+                            egui::Slider::new(&mut state.ui_nits, 0.0..=max_nits),
                         );
-                        ui.add(egui::Slider::new(&mut state.exposure, -25.0..=10.0));
+                        ui.add(egui::Slider::new(&mut state.exposure, -25.0..=max_exposure));
                         ui.horizontal(|ui| {
-                            if ui.button("-").clicked() {
+                            if ui.button("-").clicked() && state.exposure != max_exposure {
                                 state.calibrated_max_nits /= 2.0;
                                 state.exposure += 1.0;
                             }
-                            if ui.button("+").clicked() {
+                            if ui.button("+").clicked() && state.calibrated_max_nits != max_nits {
                                 state.calibrated_max_nits *= 2.0;
                                 state.exposure -= 1.0;
                             }
