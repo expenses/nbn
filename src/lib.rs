@@ -981,6 +981,30 @@ impl Device {
         image
     }
 
+    // Note: is not capable of switching images between queue
+    // family indices.
+    pub fn insert_image_pipeline_barrier(
+        &self,
+        command_buffer: &CommandBuffer,
+        image: impl Into<ImageInfo>,
+        src: Option<BarrierOp>,
+        dst: BarrierOp,
+    ) {
+        unsafe {
+            self.cmd_pipeline_barrier2(
+                **command_buffer,
+                &vk::DependencyInfo::default().image_memory_barriers(&[ImageBarrier {
+                    image,
+                    src,
+                    dst,
+                    src_queue_family_index: command_buffer.queue_family_index,
+                    dst_queue_family_index: command_buffer.queue_family_index,
+                }
+                .into()]),
+            );
+        }
+    }
+
     pub fn bind_internal_descriptor_sets(
         &self,
         command_buffer: &CommandBuffer,
