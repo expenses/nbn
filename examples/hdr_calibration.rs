@@ -302,18 +302,11 @@ impl winit::application::ApplicationHandler for App {
                         &output.textures_delta,
                     );
 
-                    device.cmd_pipeline_barrier2(
-                        **command_buffer,
-                        &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::ImageBarrier {
-                                image,
-                                src: Some(nbn::BarrierOp::Acquire),
-                                dst: nbn::BarrierOp::ColorAttachmentWrite,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                        ]),
+                    device.insert_image_pipeline_barrier(
+                        command_buffer,
+                        image,
+                        Some(nbn::BarrierOp::Acquire),
+                        nbn::BarrierOp::ColorAttachmentWrite,
                     );
                     let extent = state.swapchain.create_info.image_extent;
                     device.begin_rendering(
@@ -378,18 +371,11 @@ impl winit::application::ApplicationHandler for App {
 
                     device.cmd_end_rendering(**command_buffer);
 
-                    device.cmd_pipeline_barrier2(
-                        **command_buffer,
-                        &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::ImageBarrier {
-                                image,
-                                src: Some(nbn::BarrierOp::ColorAttachmentWrite),
-                                dst: nbn::BarrierOp::Present,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                        ]),
+                    device.insert_image_pipeline_barrier(
+                        command_buffer,
+                        image,
+                        Some(nbn::BarrierOp::ColorAttachmentWrite),
+                        nbn::BarrierOp::Present,
                     );
                     device.end_command_buffer(**command_buffer).unwrap();
 
