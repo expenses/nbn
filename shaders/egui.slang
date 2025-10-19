@@ -19,8 +19,8 @@ struct Constants {
     uint2 screen_size;
     float scale_factor;
     uint id;
-    uint transfer_function_index;
     float calibrated_nits;
+    uint8_t transfer_function_index;
 };
 
 [shader("vertex")] Interp
@@ -43,9 +43,9 @@ vertex(uint vertex_id : SV_VertexID, uniform Constants constants) {
  
     var output = in.colour * image.Sample(in.uv).x;
     
-    if (constants.transfer_function_index == 1) {
+    if (constants.transfer_function_index == 0) {
         output.rgb = srgb_lin2encoded(output.rgb);
-    } else if (constants.transfer_function_index == 2) {
+    } else {
         output.rgb = ConvertToHDR10(output.rgb, constants.calibrated_nits);
     }
  

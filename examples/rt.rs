@@ -103,7 +103,7 @@ impl winit::application::ApplicationHandler for App {
             &window,
             vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
             nbn::SurfaceSelectionCriteria {
-                write_via_compute: true,
+                force_8_bit: false,
                 desire_hdr: false,
             },
         );

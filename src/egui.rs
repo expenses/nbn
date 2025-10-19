@@ -294,7 +294,7 @@ impl Renderer {
 
                 let (transfer_function_index, calibrated_nits) =
                     transfer_function.as_push_constants();
-                device.push_constants::<(u64, u64, [u32; 2], f32, u32, u32, f32)>(
+                device.push_constants::<(u64, u64, [u32; 2], f32, u32, f32, u8)>(
                     command_buffer,
                     (
                         buffer_ptr + vertices_offset as u64,
@@ -302,8 +302,8 @@ impl Renderer {
                         extent,
                         scale_factor,
                         **texture,
-                        transfer_function_index,
                         calibrated_nits,
+                        transfer_function_index,
                     ),
                 );
                 device.cmd_draw(**command_buffer, mesh.indices.len() as _, 1, 0, 0);

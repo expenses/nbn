@@ -222,7 +222,7 @@ impl winit::application::ApplicationHandler for App {
                         state.window.scale_factor() as _,
                         [extent.width, extent.height],
                         current_frame,
-                        nbn::TransferFunction::Hardware,
+                        nbn::TransferFunction::Srgb,
                     );
 
                     device.cmd_end_rendering(**command_buffer);

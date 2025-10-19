@@ -735,20 +735,24 @@ impl Device {
         if criteria.desire_hdr {
             try_format(vk::SurfaceFormatKHR {
                 color_space: vk::ColorSpaceKHR::HDR10_ST2084_EXT,
-                format: vk::Format::A2R10G10B10_UNORM_PACK32,
-            })
-            .unwrap()
-        } else if criteria.write_via_compute {
-            try_format(vk::SurfaceFormatKHR {
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-                format: vk::Format::B8G8R8A8_UNORM,
+                format: vk::Format::A2B10G10R10_UNORM_PACK32,
             })
             .unwrap()
         } else {
+            let fallback = try_format(vk::SurfaceFormatKHR {
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+                format: vk::Format::B8G8R8A8_UNORM,
+            });
+
+            if criteria.force_8_bit {
+                return fallback.unwrap();
+            }
+
             try_format(vk::SurfaceFormatKHR {
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-                format: vk::Format::B8G8R8A8_SRGB,
+                format: vk::Format::A2B10G10R10_UNORM_PACK32,
             })
+            .or(fallback)
             .unwrap()
         }
     }
@@ -2293,23 +2297,21 @@ impl<
 
 #[derive(Clone, Copy, Default)]
 pub struct SurfaceSelectionCriteria {
-    pub write_via_compute: bool,
+    pub force_8_bit: bool,
     pub desire_hdr: bool,
 }
 
 #[derive(Clone, Copy)]
 pub enum TransferFunction {
-    Hardware,
     Srgb,
     Hdr(f32),
 }
 
 impl TransferFunction {
-    pub fn as_push_constants(&self) -> (u32, f32) {
+    pub fn as_push_constants(&self) -> (u8, f32) {
         match self {
-            Self::Hardware => (0, 0.0),
-            Self::Srgb => (1, 0.0),
-            Self::Hdr(calibrated_nits) => (2, *calibrated_nits),
+            Self::Srgb => (0, 0.0),
+            Self::Hdr(calibrated_nits) => (1, *calibrated_nits),
         }
     }
 }

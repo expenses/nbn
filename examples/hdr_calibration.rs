@@ -83,7 +83,7 @@ impl winit::application::ApplicationHandler for App {
             vk::ImageUsageFlags::COLOR_ATTACHMENT,
             nbn::SurfaceSelectionCriteria {
                 desire_hdr: is_hdr,
-                write_via_compute: false,
+                force_8_bit: false,
             },
         );
 
@@ -372,7 +372,7 @@ impl winit::application::ApplicationHandler for App {
                         if state.is_hdr {
                             nbn::TransferFunction::Hdr(state.ui_nits)
                         } else {
-                            nbn::TransferFunction::Hardware
+                            nbn::TransferFunction::Srgb
                         },
                     );
 

@@ -51,7 +51,7 @@ impl winit::application::ApplicationHandler for App {
             &window,
             vk::ImageUsageFlags::COLOR_ATTACHMENT,
             nbn::SurfaceSelectionCriteria {
-                write_via_compute: false,
+                force_8_bit: false,
                 desire_hdr: false,
             },
         );

@@ -63,6 +63,8 @@ float4 handle_output(float3 col, PushConstants push_constants) {
 
     if (flags & Flags::IsHdr) {
         output = ConvertToHDR10(output, push_constants.max_desired_brightness);
+    } else {
+        output = srgb_lin2encoded(output);
     }
 
     return float4(output, 1.0);

@@ -1,3 +1,5 @@
+import shared.colour;
+
 struct Interp {
     float4 pos: SV_Position;
     float3 col;
@@ -20,5 +22,5 @@ struct Interp {
 }
 
     [shader("pixel")] float4 fragment(Interp in) {
-    return float4(in.col, 1.0);
+    return float4(srgb_lin2encoded(in.col), 1.0);
 }
