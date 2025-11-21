@@ -1,6 +1,6 @@
-use ash::vk;
+use nbn::vk;
 use indicatif::ProgressIterator;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 slang_struct::slang_include!("shaders/gltf.slang");
 
@@ -23,53 +23,6 @@ struct PackedMaterial {
     ty_and_aux_value: u8,
 }
 
-fn create_image(
-    device: &nbn::Device,
-    filename: &str,
-    format: vk::Format,
-    transition_to: nbn::QueueType,
-) -> nbn::PendingImageUpload {
-    if filename.ends_with(".dds") {
-        let dds = ddsfile::Dds::read(std::fs::File::open(filename).unwrap()).unwrap();
-
-        let format = match dds.get_dxgi_format().unwrap() {
-            ddsfile::DxgiFormat::BC1_UNorm_sRGB => vk::Format::BC1_RGB_SRGB_BLOCK,
-            ddsfile::DxgiFormat::BC3_UNorm_sRGB => vk::Format::BC3_SRGB_BLOCK,
-            ddsfile::DxgiFormat::BC5_UNorm => vk::Format::BC5_UNORM_BLOCK,
-            other => panic!("{:?}", other),
-        };
-        device.create_sampled_image_with_data(
-            nbn::SampledImageDescriptor {
-                name: filename,
-                extent: vk::Extent3D {
-                    width: dds.get_width(),
-                    height: dds.get_height(),
-                    depth: 1,
-                },
-                format,
-            },
-            &dds.get_data(0).unwrap(),
-            transition_to,
-        )
-    } else {
-        let image_data = image::open(filename).unwrap().to_rgba8();
-
-        device.create_sampled_image_with_data(
-            nbn::SampledImageDescriptor {
-                name: filename,
-                extent: vk::Extent3D {
-                    width: image_data.width(),
-                    height: image_data.height(),
-                    depth: 1,
-                },
-                format,
-            },
-            &image_data,
-            transition_to,
-        )
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Voxelization {
@@ -86,7 +39,7 @@ struct Voxelization {
 fn main() {
     env_logger::init();
 
-    let base = "models/bi/Bistro_v5_2";
+    let base = "../models/Bistro_v5_2";
 
     let bytes = std::fs::read(&format!("{}/bistro_combined.gltf", base)).unwrap();
     let (gltf, buffer): (
@@ -109,13 +62,49 @@ fn main() {
 
     let device = nbn::Device::new(None);
 
+    let mut staging_buffer =
+        nbn::StagingBuffer::new(&device, 1024 * 1024 * 16, nbn::QueueType::Transfer);
+
     let images = gltf
         .images
         .par_iter()
-        .zip(&image_formats)
-        .map(|(image, format)| {
+        .map(|image| {
+            let mut image_data = None;
             let path = format!("{}/{}", base, image.uri.as_ref().unwrap());
-            create_image(&device, &path, *format, nbn::QueueType::Compute)
+            if !path.ends_with(".dds") {
+                image_data = Some(image::open(&path).unwrap().to_rgba8());                
+            }
+            (image_data, path)
+        })
+        .collect::<Vec<_>>();
+
+    let images = images
+        .iter()
+        .zip(&image_formats)
+        .map(|((image, filename), &format)| {
+            
+            
+            let image = if let Some(image) = image {staging_buffer.create_sampled_image(
+                &device,
+                nbn::SampledImageDescriptor {
+                    name: filename,
+                    extent: vk::Extent3D {
+                        width: image.width(),
+                        height: image.height(),
+                        depth: 1,
+                    }.into(),
+                    format,
+                },
+                &image,
+                nbn::QueueType::Compute,
+                &[0]
+            )} else {
+                nbn::image_loading::create_image(&device, &mut staging_buffer, &filename, nbn::QueueType::Compute)
+            };
+            nbn::IndexedImage {
+                index: device.register_image(*image.view, false),
+                image
+            }
         })
         .collect::<Vec<_>>();
 
@@ -134,6 +123,7 @@ fn main() {
             positions: primitive.attributes.position.unwrap() as u32,
             uvs: primitive.attributes.texcoord_0.unwrap() as u32,
             material: primitive.material.unwrap() as u32,
+            normals: 0
         })
         .collect();
 
@@ -145,20 +135,21 @@ fn main() {
                 .pbr_metallic_roughness
                 .base_color_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
                 .unwrap_or(u32::MAX),
             metallic_roughness_image: material
                 .pbr_metallic_roughness
                 .metallic_roughness_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
                 .unwrap_or(u32::MAX),
             emissive_image: material
                 .emissive_texture
                 .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()].image)
+                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
                 .unwrap_or(u32::MAX),
             flags: matches!(material.alpha_mode, goth_gltf::AlphaMode::Mask) as u32,
+            normal_image: 0,
         })
         .collect();
 
@@ -222,17 +213,22 @@ fn main() {
         }],
     });
 
-    let voxelization_shader = device.load_shader("shaders/compiled/voxelize.spv");
+    let voxelization_shader = device.load_shader("../shaders/compiled/voxelize.spv");
 
     let voxelization_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        vertex: nbn::ShaderDesc {
-            module: &voxelization_shader,
-            entry_point: c"vertex",
+        name: "shader",
+        shaders: nbn::GraphicsPipelineShaders::Legacy {
+            vertex: nbn::ShaderDesc {
+                module: &voxelization_shader,
+                entry_point: c"vertex",
+            },
+            fragment: nbn::ShaderDesc {
+                module: &voxelization_shader,
+                entry_point: c"fragment",
+            },
         },
-        fragment: nbn::ShaderDesc {
-            module: &voxelization_shader,
-            entry_point: c"fragment",
-        },
+        cull_mode: Default::default(),
+        blend_attachments: &[],
         color_attachment_formats: &[],
         conservative_rasterization: true,
         depth: Default::default(),
@@ -244,26 +240,7 @@ fn main() {
     let scale = 7500.0;
     let num_tiles_on_side = dbg!(total_size / dim_size);
 
-    let transfer_fence = device.create_fence();
-
-    let transfer_command_buffers: Vec<vk::CommandBuffer> =
-        images.iter().map(|image| *image.command_buffer).collect();
-
-    unsafe {
-        device
-            .queue_submit(
-                *device.transfer_queue,
-                &[vk::SubmitInfo::default().command_buffers(&transfer_command_buffers)],
-                *transfer_fence,
-            )
-            .unwrap();
-
-        device
-            .wait_for_fences(&[*transfer_fence], true, !0)
-            .unwrap();
-    }
-
-    let images: Vec<_> = images.into_iter().map(|image| image.into_inner()).collect();
+    staging_buffer.finish(&device);
 
     let max_outputs = output_buffer_size / 2 / std::mem::size_of::<(u32, u32, u32)>() as u64;
 
@@ -276,7 +253,7 @@ fn main() {
         .create_buffer(nbn::BufferDescriptor {
             name: "outputs",
             size: output_buffer_size,
-            ty: nbn::BufferType::Download,
+            ty: nbn::MemoryLocation::GpuToCpu,
         })
         .unwrap();
 
@@ -323,7 +300,7 @@ fn main() {
                 vk::PipelineBindPoint::GRAPHICS,
                 *voxelization_pipeline,
             );
-            device.bind_internal_descriptor_sets(&command_buffer);
+            device.bind_internal_descriptor_sets_to_all(&command_buffer);
 
             device.push_constants(
                 &command_buffer,

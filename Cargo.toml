@@ -33,4 +33,4 @@ image_loading = ["dep:zstd", "dep:ktx2", "dep:ddsfile"]
 egui = ["dep:egui"]
 
 [workspace]
-members = [".", "gltf-compress", "gltf-meshlets", "meshlet-renderer"]
+members = [".", "gltf-compress", "gltf-meshlets", "meshlet-renderer", "voxelizer"]
