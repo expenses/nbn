@@ -4,6 +4,19 @@ use winit::event::ElementState;
 use winit::keyboard::KeyCode;
 use winit::window::CursorGrabMode;
 
+#[derive(Clone, Copy)]
+struct Uniforms {
+    view_inv: glam::Mat4,
+    proj_inv: glam::Mat4,
+    proj_view: glam::Mat4,
+    tlas: u64,
+    models: u64,
+    lights: u64,
+    blue_noise_sobol: u64,
+    blue_noise_ranking_tile: u64,
+    blue_noise_scrambling_tile: u64,
+}
+
 slang_struct::slang_include!("shaders/thief_models.slang");
 
 fn create_hdr(device: &nbn::Device, extent: vk::Extent2D) -> nbn::IndexedImage {
@@ -162,7 +175,7 @@ impl winit::application::ApplicationHandler for App {
             combined_uniform_buffer: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "combined_uniform_buffer",
-                    size: (std::mem::size_of::<[glam::Mat4; 3]>() * nbn::FRAMES_IN_FLIGHT) as _,
+                    size: (std::mem::size_of::<Uniforms>() * nbn::FRAMES_IN_FLIGHT) as _,
                     ty: nbn::MemoryLocation::CpuToGpu,
                 })
                 .unwrap(),
@@ -189,8 +202,11 @@ impl winit::application::ApplicationHandler for App {
             ),
             window,
             camera_rig: dolly::rig::CameraRig::builder()
-                .with(dolly::drivers::Position::new([0.0, 0.0, 2.5]))
-                .with(dolly::drivers::YawPitch::new())
+                .with(dolly::drivers::Position::new([-22.8, 62.0, 46.0]))
+                .with(dolly::drivers::YawPitch {
+                    pitch_degrees: -45.0,
+                    yaw_degrees: -60.0
+                })
                 .with(dolly::drivers::Smooth::new_position_rotation(1.0, 1.0))
                 .build(),
             cursor_grabbed: false,
@@ -341,7 +357,7 @@ impl winit::application::ApplicationHandler for App {
                         );
 
                     let transform = state.camera_rig.update(1.0 / 60.0);
-
+                    
                     let view = glam::Mat4::look_to_rh(
                         glam::Vec3::from_array(transform.position.into()),
                         glam::Vec3::from_array(transform.forward()),
@@ -355,21 +371,25 @@ impl winit::application::ApplicationHandler for App {
 
                     let uniforms = state
                         .combined_uniform_buffer
-                        .try_as_slice_mut::<[glam::Mat4; 3]>()
+                        .try_as_slice_mut::<Uniforms>()
                         .unwrap();
 
-                    uniforms[current_frame] = [view.inverse(), proj.inverse(), (proj * view)];
+                    uniforms[current_frame] = Uniforms {
+                        view_inv: view.inverse(),
+                        proj_inv: proj.inverse(),
+                        proj_view: (proj * view),
+                        tlas: *state.tlas,
+                        models: *state.model_buffer,
+                        lights: *state.lights,
+                        blue_noise_sobol: *state.blue_noise_buffers.sobol,
+                        blue_noise_ranking_tile: *state.blue_noise_buffers.ranking_tile,
+                        blue_noise_scrambling_tile: *state.blue_noise_buffers.scrambling_tile,
+                    };
 
                     let uniforms_ptr = *state.combined_uniform_buffer
-                        + (std::mem::size_of::<[glam::Mat4; 3]>() * current_frame) as u64;
+                        + (std::mem::size_of::<Uniforms>() * current_frame) as u64;
 
                     device.push_constants::<(
-                        u64,
-                        u64,
-                        u64,
-                        u64,
-                        u64,
-                        u64,
                         u64,
                         vk::Extent2D,
                         u32,
@@ -381,12 +401,7 @@ impl winit::application::ApplicationHandler for App {
                         command_buffer,
                         (
                             uniforms_ptr,
-                            *state.tlas,
-                            *state.model_buffer,
-                            *state.lights,
-                            *state.blue_noise_buffers.sobol,
-                            *state.blue_noise_buffers.ranking_tile,
-                            *state.blue_noise_buffers.scrambling_tile,
+                           
                             extent,
                             *state.hdr,
                             *state.swapchain_image_heap_indices[next_image as usize],

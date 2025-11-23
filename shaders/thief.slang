@@ -9,42 +9,43 @@ struct Uniforms {
     float4x4 view_inv;
     float4x4 proj_inv;
     float4x4 proj_view;
-};
-
-struct PushConstants {
-    Uniforms* uniforms;
-    uint64_t as;
+    uint64_t tlas;
     Model* models;
     float* light_values;
     int* _blue_noise_sobol;
     int* _blue_noise_ranking_tile;
     int* _blue_noise_scrambling_tile;
+};
+
+struct PushConstants {
+    Uniforms* uniforms;
+
     uint2 extent;
     uint image;
     uint swapchain_image;
     uint num_lights;
     uint accum_index;
     uint frame_index;
-    
+
     property BlueNoiseData blue_noise {
         get {
             BlueNoiseData data;
-            data.sobol = _blue_noise_sobol;
-            data.scrambling_tile = _blue_noise_scrambling_tile;
-            data.ranking_tile = _blue_noise_ranking_tile;
+            data.sobol = uniforms._blue_noise_sobol;
+            data.scrambling_tile = uniforms._blue_noise_scrambling_tile;
+            data.ranking_tile = uniforms._blue_noise_ranking_tile;
             return data;
         }
     }
-    
+
     Light get_light(uint index) {
         Light light;
-        light.position[0] = light_values[index * 7 + 0];
-        light.position[1] = light_values[index * 7 + 1];
-        light.position[2] = light_values[index * 7 + 2];
-        light.color[0] = light_values[index * 7 + 3];
-        light.color[1] = light_values[index * 7 + 4];
-        light.color[2] = light_values[index * 7 + 5];
-        light.intensity = light_values[index * 7 + 6];
+        light.position[0] = uniforms.light_values[index * 7 + 0];
+        light.position[1] = uniforms.light_values[index * 7 + 1];
+        light.position[2] = uniforms.light_values[index * 7 + 2];
+        light.color[0] = uniforms.light_values[index * 7 + 3];
+        light.color[1] = uniforms.light_values[index * 7 + 4];
+        light.color[2] = uniforms.light_values[index * 7 + 5];
+        light.intensity = uniforms.light_values[index * 7 + 6];
         return light;
     }
 }
@@ -55,7 +56,7 @@ struct PushConstants {
         return;
     }
 
-    let as = RaytracingAccelerationStructure(constants.as);
+    let as = RaytracingAccelerationStructure(constants.uniforms.tlas);
 
     let d = thread_to_clip(thread, constants.extent);
     let origin = mul(constants.uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -93,7 +94,7 @@ float3 handle_hit(uint2 thread, RayQuery query, PushConstants constants) {
     let barycentrics = query.CommittedTriangleBarycentrics();
     let model_index = query.CommittedRayInstanceId();
     let primitive_index = query.CommittedRayPrimitiveIndex();
-    let model = constants.models[model_index];
+    let model = constants.uniforms.models[model_index];
 
 
     let indices = uint3(
@@ -115,11 +116,16 @@ float3 handle_hit(uint2 thread, RayQuery query, PushConstants constants) {
     let f = abs(dot(normal,l));
 
     let col = val;//colour_from_val(image_index) + (uv.xyy %1) * 0.1;
-    return col * calculate_lighting(thread, constants,position, normal);
+    return col * calculate_lighting_ris(thread, constants,position, normal);
 }
 
+float3 calculate_lighting(uint2 thread, PushConstants constants, float3 position, float3 normal) {
+    let rand = constants.blue_noise.sample(thread, constants.frame_index, 0);
 
-float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 normal, RaytracingAccelerationStructure tlas) {
+    let light_index = uint(rand * constants.num_lights);
+    let pdf = 1.0 / float(constants.num_lights);
+
+    let light = constants.get_light(light_index);
     let vector = light.position - position;
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
@@ -134,7 +140,7 @@ float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 no
     var query = RayQuery<
         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
     query.TraceRayInline(
-        tlas,
+        RaytracingAccelerationStructure(constants.uniforms.tlas),
         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
         0xff,
         desc
@@ -145,15 +151,67 @@ float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 no
     return visibility * light.color * light.intensity / distance_sq * abs(dot(normal, direction)) / pdf;
 }
 
-float3 calculate_lighting(uint2 thread, PushConstants constants, float3 position, float3 normal) {
-    let rand = constants.blue_noise.sample(thread, constants.frame_index, 0);
 
-    let light_index = uint(rand * constants.num_lights);
-    let pdf = 1.0 / float(constants.num_lights);
+float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 position, float3 normal) {
+    uint[20] light_indices;
+    float[20] weights;
+    float total_weight = 0.0;
+    for (uint i = 0; i < 20; i++) {
+        uint light_index = uint(constants.blue_noise.sample(thread, constants.frame_index, i) * constants.num_lights);
+        Light light = constants.get_light(light_index);
+        let vector = position - light.position;
+        let distance_sq = dot(vector,vector);
+        let distance = sqrt(distance_sq);
 
-    let light = constants.get_light(light_index);
-    return calculate_lighting_raw(light, pdf, position, normal, RaytracingAccelerationStructure(constants.as));
+        let direction = vector / distance;
+
+        weights[i] = light.intensity * max(dot(normal, direction),0.0) / distance_sq;
+        total_weight += weights[i];
+        light_indices[i] = light_index;
+    }
+    
+    if (total_weight == 0.0) {
+        return float3(0);
+    }
+
+    let value = constants.blue_noise.sample(thread, constants.frame_index, 0) * total_weight;
+    
+    float cumulative = 0.0;
+    uint i;
+    for (i = 0; i < 20; i++) {
+        cumulative += weights[i];
+        if (cumulative >= value) {
+            break;
+        }
+    } 
+    let light = constants.get_light(light_indices[i]);
+    let pdf = (weights[i] / total_weight) * (20.0/float(constants.num_lights));
+    
+    let vector = light.position - position;
+    let distance_sq = dot(vector,vector);
+    let distance = sqrt(distance_sq);
+
+    let direction = vector / distance;
+
+    RayDesc desc;
+    desc.Origin = position;
+    desc.Direction = direction;
+    desc.TMin = 1e-3f;
+    desc.TMax = distance;
+    var query = RayQuery<
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+    query.TraceRayInline(
+        RaytracingAccelerationStructure(constants.uniforms.tlas),
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        0xff,
+        desc
+    );
+    query.Proceed();
+    let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
+
+    return weights[i] * visibility * light.color / pdf;
 }
+
 
 bool trace_shadow_ray(RayDesc desc, RaytracingAccelerationStructure tlas) {
     var query = RayQuery<
@@ -197,4 +255,14 @@ struct LightInterp {
 
     WTexture2D<float4> output = storage_images[constants.swapchain_image];
     output.Store(thread, float4(srgb_lin2encoded(input[thread]), 1));
+}
+
+uint linear_search(float[] values, float target) {
+    uint i;
+    while(true) {
+        if (target < values[i]) {
+            return i;
+        }
+        i++;
+    }
 }
