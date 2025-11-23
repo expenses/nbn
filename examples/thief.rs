@@ -28,12 +28,11 @@ struct WindowState {
     _instances_buffer: nbn::Buffer,
     model_buffer: nbn::Buffer,
     tlas: nbn::AccelerationStructure,
-    _accel: Vec<(nbn::AccelerationStructure, Model)>,
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
     camera_rig: dolly::rig::CameraRig,
     cursor_grabbed: bool,
     keyboard: KeyboardState,
-    gltf_data: nbn::Buffer,
+    gltf_data: CombinedModel,
 }
 
 struct App {
@@ -61,17 +60,19 @@ impl winit::application::ApplicationHandler for App {
             data: &data,
         });
 
-        let (accel, gltf_data) = load_gltf(
+        let (gltf_data, model) = load_gltf(
             &device,
             &mut staging_buffer,
             &std::path::Path::new("./models/export/training.gltf"),
         );
 
-        let (instances, models): (Vec<_>, Vec<Model>) = accel
+        let models = vec![model];
+
+        let (instances): Vec<_> = [&gltf_data.acceleration_structure]
             .iter()
             .enumerate()
-            .map(|(i, (accel, model))| {
-                (
+            .map(|(i, accel)| {
+                //(
                     vk::AccelerationStructureInstanceKHR {
                         transform: vk::TransformMatrixKHR {
                             matrix: glam::Mat4::IDENTITY.transpose().to_cols_array()[..12]
@@ -84,11 +85,11 @@ impl winit::application::ApplicationHandler for App {
                             ash::vk::GeometryInstanceFlagsKHR::default().as_raw() as _,
                         ),
                         acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-                            device_handle: **accel,
+                            device_handle: ***accel,
                         },
-                    },
-                    model,
-                )
+                    }
+                    //model,
+                    //)
             })
             .collect();
 
@@ -133,7 +134,6 @@ impl winit::application::ApplicationHandler for App {
         let egui_ctx = egui::Context::default();
 
         self.window_state = Some(WindowState {
-            _accel: accel,
             _data_buffer: data_buffer,
             tlas,
             _instances_buffer: instance_buffer,
@@ -519,7 +519,7 @@ pub fn load_gltf(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
     path: &std::path::Path,
-) -> (Vec<(nbn::AccelerationStructure, Model)>, nbn::Buffer) {
+) -> (CombinedModel, Model) {
     let bytes = std::fs::read(path).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
@@ -528,25 +528,49 @@ pub fn load_gltf(
     assert!(buffer.is_none());
     dbg!(gltf.meshes.len(), gltf.meshes[0].primitives.len());
 
-    let mut image_formats = vec![vk::Format::R8G8B8A8_UNORM; gltf.images.len()];
+    let images: Vec<_> = gltf.images.iter().map(|image| {
+        let path = path.with_file_name(image.uri.as_ref().unwrap());
+        image::open(&path).unwrap().to_rgba8()
+    }).collect();
+    
+    let images = gltf.images.iter().zip(&images)
+        .map(|(image, data)| {
+            let path = path.with_file_name(image.uri.as_ref().unwrap());
+            let image =staging_buffer.create_sampled_image(
+                &device,
+                nbn::SampledImageDescriptor {
+                    name: image.uri.as_ref().unwrap(),
+                    extent: vk::Extent3D {
+                        width: data.width(),
+                        height: data.height(),
+                        depth: 1,
+                    }
+                    .into(),
+                    format: vk::Format::R8G8B8A8_SRGB,
+                },
+                &data,
+                nbn::QueueType::Compute,
+                &[0],
+            );
+            nbn::IndexedImage {
+                index: device.register_image(*image.view, false),
+                image,
+            }
+        })
+        .collect::<Vec<_>>();
+    
+    let mut material_to_image: Vec<u32> = gltf.materials.iter().map(|mat| {
+        let texture_index = mat.pbr_metallic_roughness.base_color_texture.as_ref().unwrap().index;
+        *images[gltf.textures[texture_index].source.unwrap()].index
+    }).collect();
 
-    for material in &gltf.materials {
-        if let Some(tex) = &material.emissive_texture {
-            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
-        }
-        if let Some(tex) = &material.pbr_metallic_roughness.base_color_texture {
-            image_formats[gltf.textures[tex.index].source.unwrap()] = vk::Format::R8G8B8A8_SRGB;
-        }
-    }
+    let buffer = std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
 
-    let buffer_file =
-        std::fs::File::open(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
-    let buffer = staging_buffer.create_buffer(
-        device,
-        &format!("{} buffer", path.display()),
-        buffer_file.metadata().unwrap().len() as _,
-        buffer_file,
-    );
+    fn get_slice<'a, T: bytemuck::Pod>(buffer: &'a [u8], gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>, accessor: &goth_gltf::Accessor) -> &'a [T] {
+        let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
+        assert_eq!(bv.byte_stride, None);
+        &bytemuck::cast_slice(&buffer[bv.byte_offset + accessor.byte_offset..])
+    };
 
     /*let images = gltf
         .images
@@ -601,99 +625,93 @@ pub fn load_gltf(
         })
         .collect();*/
 
-    let get_buffer_offset = |accessor: &goth_gltf::Accessor| {
-        let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
-        assert_eq!(bv.byte_stride, None);
-        (*buffer) + bv.byte_offset as u64 + accessor.byte_offset as u64
-    };
-
-    let mut meshes = Vec::new();
+    //let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+    let mut positions = Vec::new();
+    let mut uvs = Vec::new();
+    let mut normals = Vec::new();
+    let mut image_indices = Vec::new();
+    //let mut meshes = Vec::new();
 
     for (mesh_index, mesh) in gltf.meshes.iter().enumerate() {
         for (primitive_index, (primitive)) in mesh.primitives.iter().enumerate() {
-            let material_index = primitive.material.unwrap();
-            //let material = materials[primitive.material.unwrap()];
+            let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
+            assert_eq!(indices_accessor.component_type, goth_gltf::ComponentType::UnsignedShort);
+            let prim_indices = &get_slice::<u16>(&buffer, &gltf, &indices_accessor)[..indices_accessor.count];
+            indices.extend(prim_indices.iter().map(|&index| positions.len() as u32 /3 + index as u32));
 
-            let get = |accessor_index: Option<usize>| {
+            let get = |accessor_index: Option<usize>,size:usize| {
                 let accessor = &gltf.accessors[accessor_index.unwrap()];
                 assert_eq!(accessor.component_type, goth_gltf::ComponentType::Float);
-                get_buffer_offset(accessor)
+                &get_slice::<f32>(&buffer, &gltf, accessor)[..accessor.count*size]
             };
 
-            let indices = &gltf.accessors[primitive.indices.unwrap()];
-            let is_32_bit = match indices.component_type {
-                goth_gltf::ComponentType::UnsignedShort => false,
-                goth_gltf::ComponentType::UnsignedInt => true,
-                other => unimplemented!("{:?}", other),
-            };
+            let positions_slice = get(primitive.attributes.position,3);
+            positions.extend_from_slice(positions_slice);
+            uvs.extend_from_slice(get(primitive.attributes.texcoord_0,2));
+            normals.extend_from_slice(get(primitive.attributes.normal,3));
+            
+            let material_index = primitive.material.unwrap();
 
-            let positions_accessor = &gltf.accessors[primitive.attributes.position.unwrap()];
-
-            let positions = get(primitive.attributes.position);
-            let indices_address = get_buffer_offset(indices);
-
-            let acceleration_structure = device.create_acceleration_structure(
-                &format!(
-                    "{} mesh {} primitive {} acceleration structure",
-                    path.display(),
-                    mesh_index,
-                    primitive_index
-                ),
-                nbn::AccelerationStructureData::Triangles {
-                    index_type: if is_32_bit {
-                        vk::IndexType::UINT32
-                    } else {
-                        vk::IndexType::UINT16
-                    },
-                    opaque: true,
-                    vertices_buffer_address: positions,
-                    indices_buffer_address: indices_address,
-                    num_vertices: positions_accessor.count as _,
-                    num_indices: indices.count as _,
-                },
-                staging_buffer,
-            );
-
-            meshes.push(/*GltfModel*/ {
-                (
-                    acceleration_structure,
-                    Model {
-                        flags: is_32_bit as _,
-                        positions,
-                        indices: indices_address,
-                        uvs: get(primitive.attributes.texcoord_0),
-                        image: material_index as _,
-                        normals: get(primitive.attributes.normal),
-                        num_indices: indices.count as _,
-                    },
-                )
-                /*,
-                model: Model {
-                    material,
-                    positions,
-                    uvs: get(primitive.attributes.texcoord_0),
-                    normals: get(primitive.attributes.normal),
-                    indices: get_buffer_offset(indices),
-                    meshlets: *meshlets_buffer + meshlets_offset as u64,
-                    triangles: *meshlets_buffer + triangles_offset as u64,
-                    vertices: *meshlets_buffer + vertices_offset as u64,
-                    flags: is_32_bit as u32,
-                    num_meshlets,
-                    num_indices: indices.count as u32,
-                },
-                //meshlets: nbn::cast_slice::<_, Meshlet>(&meshlets.data[meshlets_offset as usize..])
-                //    [..num_meshlets as usize]
-                //    .to_vec(), */
-            });
+            image_indices.extend((0..prim_indices.len()/3).map(|_| material_to_image[material_index]));
+            
+            
         }
     }
 
-    //dbg!(&materials.len());
+    let num_vertices = positions.len()/3;
+    let num_indices = indices.len();
+    let indices = staging_buffer.create_buffer_from_slice(device, "indices", bytemuck::cast_slice(&indices));
+    let positions = staging_buffer.create_buffer_from_slice(device, "positions", bytemuck::cast_slice(&positions));
+    dbg!(image_indices.len());
+    
+    let acceleration_structure = device.create_acceleration_structure(
+        &format!(
+            "{} acceleration structure",
+            path.display(),
+        ),
+        nbn::AccelerationStructureData::Triangles {
+            index_type: vk::IndexType::UINT32,
+            opaque: true,
+            vertices_buffer_address: *positions,
+            indices_buffer_address: *indices,
+            num_vertices: num_vertices as _,
+            num_indices: num_indices as _,
+        },
+        staging_buffer,
+    );
+    
+    let uvs = staging_buffer.create_buffer_from_slice(device, "uvs", bytemuck::cast_slice(&uvs));
+    let normals = staging_buffer.create_buffer_from_slice(device, "normals", bytemuck::cast_slice(&normals));
+    let image_indices = staging_buffer.create_buffer_from_slice(device, "image_indices", bytemuck::cast_slice(&image_indices));
 
-    (meshes, buffer) //GltfData {
-                     //    _images: images,
-                     //    _buffer: buffer,
-                     //    _meshlets_buffer: meshlets_buffer,
-                     //    meshes,
-                     //}
+
+    let model = Model {
+        positions: *positions,
+        uvs: *uvs,
+        normals: *normals,
+        indices: *indices,
+        image_indices: *image_indices,
+        flags: 1,
+        num_indices: num_indices as _
+    };
+
+    (CombinedModel {
+        acceleration_structure,
+        positions,
+        indices,
+        uvs,normals,image_indices,
+        images
+
+    },model)
+}
+
+struct CombinedModel {
+    acceleration_structure: nbn::AccelerationStructure,
+    positions: nbn::Buffer,
+    indices: nbn::Buffer,
+    uvs: nbn::Buffer,
+    normals: nbn::Buffer,
+    image_indices: nbn::Buffer,
+    images: Vec<nbn::IndexedImage>,
 }

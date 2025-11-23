@@ -58,6 +58,7 @@ float3 handle_hit(RayQuery query, PushConstants constants) {
     let model_index = query.CommittedRayInstanceId();
     let primitive_index = query.CommittedRayPrimitiveIndex();
     let model = constants.models[model_index];
+    
 
     let indices = uint3(
         model.read_index(primitive_index * 3 + 0),
@@ -66,12 +67,17 @@ float3 handle_hit(RayQuery query, PushConstants constants) {
     );
 
     let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
-    let normal = interpolate_from_buffer(model.normals, indices, barycentrics);
+    let normal = model.normals[indices.x];
     let position = interpolate_from_buffer(model.positions, indices, barycentrics);
+    let image_index = model.image_indices[primitive_index];
+    
+    Sampler2D<float3> img = sampled_images[NonUniformResourceIndex(image_index)];
+    
+    let val = img.SampleLevel(uv, 0);
 
     let l = normalize(float3(1,5,2));
     let f = abs(dot(normal,l));
 
-    let col = colour_from_val(model.image) + (uv.xyy %1) * 0.1;
-    return f *col;
+    let col = val;//colour_from_val(image_index) + (uv.xyy %1) * 0.1;
+    return f*col;
 }

@@ -10,11 +10,10 @@ public struct Model {
     float3* normals;
   public
     uint* indices;
-
+  public
+    uint* image_indices;
   public
     ModelFlags flags;
-  public
-    uint image;
   public
     uint num_indices;
 
