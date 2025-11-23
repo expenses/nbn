@@ -29,6 +29,7 @@ gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "up
 egui-winit = "0.31.1"
 image = { version = "0.25.8", default-features = false, features = ["exr"] }
 dolly = "0.6.0"
+slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
 
 [features]
 default = ["image_loading", "egui"]

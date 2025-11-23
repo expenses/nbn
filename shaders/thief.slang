@@ -1,14 +1,16 @@
 import shared.colour;
 import shared.util;
 import fallback_bindings;
+import thief_models;
+import shared.barycentrics;
 
 struct PushConstants {
     float4x4 view_inv;
     float4x4 proj_inv;
     uint64_t as;
+    Model* models;
     uint2 extent;
     uint image;
-
 }
 
     [shader("compute")][NumThreads(8, 8, 1)] void
@@ -44,11 +46,49 @@ struct PushConstants {
     var value = float3(0.0);
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        let barycentrics = query.CommittedTriangleBarycentrics();
-        let col = colour_from_val(query.CommittedRayInstanceCustomIndex());
-        value = col;//float3(1.0 - barycentrics.x - barycentrics.y, barycentrics);
+        value = handle_hit(query, constants);
     }
 
     WTexture2D<float4> output = storage_images[constants.image];
     output.Store(thread, float4(srgb_lin2encoded(value), 1));
+}
+
+float3 handle_hit(RayQuery query, PushConstants constants) {
+    let barycentrics = query.CommittedTriangleBarycentrics();
+    let model_index = query.CommittedRayInstanceId();
+    let primitive_index = query.CommittedRayPrimitiveIndex();
+    let model = constants.models[model_index];
+
+    let indices = uint3(
+        model.read_index(primitive_index * 3 + 0),
+        model.read_index(primitive_index * 3 + 1),
+        model.read_index(primitive_index * 3 + 2),
+    );
+
+    let uv = interpolate_ray_barycentrics(
+        model.uvs[indices.x],
+        model.uvs[indices.y],
+        model.uvs[indices.z],
+        barycentrics
+    );
+
+    let normal = interpolate_ray_barycentrics(
+        model.normals[indices.x],
+        model.normals[indices.y],
+        model.normals[indices.z],
+        barycentrics
+    );
+    
+    let position = interpolate_ray_barycentrics(
+        model.positions[indices.x],
+        model.positions[indices.y],
+        model.positions[indices.z],
+        barycentrics
+    );
+
+    let l = normalize(float3(1,5,2));
+    let f = abs(dot(normal,l));
+
+    let col = colour_from_val(model.image) + (uv.xyy %1) * 0.1;
+    return f *col;
 }

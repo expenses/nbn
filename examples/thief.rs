@@ -4,6 +4,8 @@ use winit::event::ElementState;
 use winit::keyboard::KeyCode;
 use winit::window::CursorGrabMode;
 
+slang_struct::slang_include!("shaders/thief_models.slang");
+
 fn create_pipeline(
     device: &nbn::Device,
     shader: &nbn::ShaderModule,
@@ -24,12 +26,14 @@ struct WindowState {
     alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
     _data_buffer: nbn::Buffer,
     _instances_buffer: nbn::Buffer,
+    model_buffer: nbn::Buffer,
     tlas: nbn::AccelerationStructure,
-    _accel: Vec<(nbn::AccelerationStructure, u32)>,
+    _accel: Vec<(nbn::AccelerationStructure, Model)>,
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
     camera_rig: dolly::rig::CameraRig,
     cursor_grabbed: bool,
     keyboard: KeyboardState,
+    gltf_data: nbn::Buffer,
 }
 
 struct App {
@@ -57,32 +61,35 @@ impl winit::application::ApplicationHandler for App {
             data: &data,
         });
 
-        let (accel, temp_buffer) = load_gltf(
+        let (accel, gltf_data) = load_gltf(
             &device,
             &mut staging_buffer,
             &std::path::Path::new("./models/export/training.gltf"),
         );
 
-        let instances: Vec<_> = accel
+        let (instances, models): (Vec<_>, Vec<Model>) = accel
             .iter()
-            .map(
-                |(accel, material_index)| vk::AccelerationStructureInstanceKHR {
-                    transform: vk::TransformMatrixKHR {
-                        matrix: glam::Mat4::IDENTITY.transpose().to_cols_array()[..12]
-                            .try_into()
-                            .unwrap(),
+            .enumerate()
+            .map(|(i, (accel, model))| {
+                (
+                    vk::AccelerationStructureInstanceKHR {
+                        transform: vk::TransformMatrixKHR {
+                            matrix: glam::Mat4::IDENTITY.transpose().to_cols_array()[..12]
+                                .try_into()
+                                .unwrap(),
+                        },
+                        instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
+                        instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
+                            0,
+                            ash::vk::GeometryInstanceFlagsKHR::default().as_raw() as _,
+                        ),
+                        acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
+                            device_handle: **accel,
+                        },
                     },
-                    instance_custom_index_and_mask: vk::Packed24_8::new(*material_index, 0xff),
-                    instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
-                        0,
-                        ash::vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw()
-                            as _,
-                    ),
-                    acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-                        device_handle: **accel,
-                    },
-                },
-            )
+                    model,
+                )
+            })
             .collect();
 
         //let instances = &[];
@@ -95,6 +102,11 @@ impl winit::application::ApplicationHandler for App {
             data: &instances,
         });
 
+        let model_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
+            name: "models",
+            data: &models,
+        });
+
         let tlas = device.create_acceleration_structure(
             "tlas",
             nbn::AccelerationStructureData::Instances {
@@ -105,8 +117,6 @@ impl winit::application::ApplicationHandler for App {
         );
 
         staging_buffer.finish(&device);
-
-        drop(temp_buffer);
 
         let swapchain = device.create_swapchain(
             &window,
@@ -148,7 +158,7 @@ impl winit::application::ApplicationHandler for App {
             swapchain,
             pipeline,
             shader,
-
+            model_buffer,
             egui_winit: egui_winit::State::new(
                 egui_ctx.clone(),
                 egui::ViewportId::ROOT,
@@ -165,6 +175,7 @@ impl winit::application::ApplicationHandler for App {
                 .build(),
             cursor_grabbed: false,
             keyboard: Default::default(),
+            gltf_data,
         });
         self.device = Some(device);
     }
@@ -317,12 +328,13 @@ impl winit::application::ApplicationHandler for App {
                         0.001,
                     );
 
-                    device.push_constants::<(glam::Mat4, glam::Mat4, u64, vk::Extent2D, u32)>(
+                    device.push_constants::<(glam::Mat4, glam::Mat4, u64, u64, vk::Extent2D, u32)>(
                         command_buffer,
                         (
                             view.inverse(),
                             proj.inverse(),
                             *state.tlas,
+                            *state.model_buffer,
                             extent,
                             *state.swapchain_image_heap_indices[next_image as usize],
                         ),
@@ -507,7 +519,7 @@ pub fn load_gltf(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
     path: &std::path::Path,
-) -> (Vec<(nbn::AccelerationStructure, u32)>, nbn::Buffer) {
+) -> (Vec<(nbn::AccelerationStructure, Model)>, nbn::Buffer) {
     let bytes = std::fs::read(path).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
@@ -618,6 +630,7 @@ pub fn load_gltf(
             let positions_accessor = &gltf.accessors[primitive.attributes.position.unwrap()];
 
             let positions = get(primitive.attributes.position);
+            let indices_address = get_buffer_offset(indices);
 
             let acceleration_structure = device.create_acceleration_structure(
                 &format!(
@@ -634,7 +647,7 @@ pub fn load_gltf(
                     },
                     opaque: true,
                     vertices_buffer_address: positions,
-                    indices_buffer_address: get_buffer_offset(indices),
+                    indices_buffer_address: indices_address,
                     num_vertices: positions_accessor.count as _,
                     num_indices: indices.count as _,
                 },
@@ -642,23 +655,35 @@ pub fn load_gltf(
             );
 
             meshes.push(/*GltfModel*/ {
-                (acceleration_structure, material_index as u32) /*,
-                                                                model: Model {
-                                                                    material,
-                                                                    positions,
-                                                                    uvs: get(primitive.attributes.texcoord_0),
-                                                                    normals: get(primitive.attributes.normal),
-                                                                    indices: get_buffer_offset(indices),
-                                                                    meshlets: *meshlets_buffer + meshlets_offset as u64,
-                                                                    triangles: *meshlets_buffer + triangles_offset as u64,
-                                                                    vertices: *meshlets_buffer + vertices_offset as u64,
-                                                                    flags: is_32_bit as u32,
-                                                                    num_meshlets,
-                                                                    num_indices: indices.count as u32,
-                                                                },
-                                                                //meshlets: nbn::cast_slice::<_, Meshlet>(&meshlets.data[meshlets_offset as usize..])
-                                                                //    [..num_meshlets as usize]
-                                                                //    .to_vec(), */
+                (
+                    acceleration_structure,
+                    Model {
+                        flags: is_32_bit as _,
+                        positions,
+                        indices: indices_address,
+                        uvs: get(primitive.attributes.texcoord_0),
+                        image: material_index as _,
+                        normals: get(primitive.attributes.normal),
+                        num_indices: indices.count as _,
+                    },
+                )
+                /*,
+                model: Model {
+                    material,
+                    positions,
+                    uvs: get(primitive.attributes.texcoord_0),
+                    normals: get(primitive.attributes.normal),
+                    indices: get_buffer_offset(indices),
+                    meshlets: *meshlets_buffer + meshlets_offset as u64,
+                    triangles: *meshlets_buffer + triangles_offset as u64,
+                    vertices: *meshlets_buffer + vertices_offset as u64,
+                    flags: is_32_bit as u32,
+                    num_meshlets,
+                    num_indices: indices.count as u32,
+                },
+                //meshlets: nbn::cast_slice::<_, Meshlet>(&meshlets.data[meshlets_offset as usize..])
+                //    [..num_meshlets as usize]
+                //    .to_vec(), */
             });
         }
     }
