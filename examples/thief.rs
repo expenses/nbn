@@ -117,7 +117,7 @@ impl winit::application::ApplicationHandler for App {
             },
         );
 
-        let shader = device.load_reloadable_shader("shaders/compiled/rt_triangle.spv");
+        let shader = device.load_reloadable_shader("shaders/compiled/thief.spv");
         let pipeline = create_pipeline(&device, &shader, &swapchain);
 
         let egui_ctx = egui::Context::default();
@@ -212,17 +212,17 @@ impl winit::application::ApplicationHandler for App {
                 egui_ctx.begin_pass(raw_input);
                 {
                     let allocator = device.allocator.inner.read();
-                    egui::Window::new("Memory Allocations").show(egui_ctx, |ui| {
-                        state.alloc_vis.render_breakdown_ui(ui, &allocator);
-                        ui.label(format!("{:?}", &device.descriptors.sampled_image_count));
-                        ui.label(format!("{:?}", &device.descriptors.storage_image_count));
-                    });
-                    egui::Window::new("Memory Blocks").show(egui_ctx, |ui| {
-                        state.alloc_vis.render_memory_block_ui(ui, &allocator);
-                    });
-                    state
-                        .alloc_vis
-                        .render_memory_block_visualization_windows(egui_ctx, &allocator);
+                    //egui::Window::new("Memory Allocations").show(egui_ctx, |ui| {
+                    //    state.alloc_vis.render_breakdown_ui(ui, &allocator);
+                    //    ui.label(format!("{:?}", &device.descriptors.sampled_image_count));
+                    //    ui.label(format!("{:?}", &device.descriptors.storage_image_count));
+                    //});
+                    //egui::Window::new("Memory Blocks").show(egui_ctx, |ui| {
+                    //    state.alloc_vis.render_memory_block_ui(ui, &allocator);
+                    //});
+                    //state
+                    //    .alloc_vis
+                    //    .render_memory_block_visualization_windows(egui_ctx, &allocator);
                 }
                 let output = egui_ctx.end_pass();
                 state
