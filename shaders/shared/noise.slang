@@ -16,7 +16,7 @@ struct BlueNoiseData {
     int* scrambling_tile;
   public
     int* ranking_tile;
-
+  public
     float sample(int2 pixel, int sampleIndex, int sampleDimension) {
         // wrap arguments
         pixel.x = pixel.x & 127;

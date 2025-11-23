@@ -12,6 +12,8 @@ use std::sync::Arc;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
+#[cfg(feature = "blue_noise")]
+pub mod blue_noise;
 #[cfg(feature = "egui")]
 pub mod egui;
 #[cfg(feature = "image_loading")]

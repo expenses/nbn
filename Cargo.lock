@@ -1911,6 +1911,7 @@ dependencies = [
  "ash",
  "ash-window",
  "bitflags 2.10.0",
+ "blue-noise-sampler",
  "ddsfile",
  "egui",
  "egui-winit",
