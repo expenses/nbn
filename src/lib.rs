@@ -1565,7 +1565,7 @@ impl Device {
             + staging_buffer.allocate_with_alignment(
                 self,
                 size_info.build_scratch_size as _,
-                BufferAlignmentType::Address(128),
+                BufferAlignmentType::Address(256),
             ) as u64;
 
         let buffer = self
@@ -1598,6 +1598,17 @@ impl Device {
             .scratch_data(vk::DeviceOrHostAddressKHR {
                 device_address: scratch_data_offset,
             });
+
+        unsafe {
+            self.cmd_pipeline_barrier2(
+                *staging_buffer.command_buffer,
+                &vk::DependencyInfo::default().memory_barriers(&[vk::MemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)]),
+            );
+        }
 
         unsafe {
             self.acceleration_structure_loader
