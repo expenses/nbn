@@ -30,7 +30,6 @@ struct WindowState {
     egui_winit: egui_winit::State,
     egui_render: nbn::egui::Renderer,
     alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
-    _data_buffer: nbn::Buffer,
     _instances_buffer: nbn::Buffer,
     model_buffer: nbn::Buffer,
     tlas: nbn::AccelerationStructure,
@@ -47,6 +46,8 @@ struct WindowState {
     frame_index: u32,
     accum_index: u32,
     accum: bool,
+    blue_noise_buffers: nbn::blue_noise::BlueNoiseBuffers,
+    combined_uniform_buffer: nbn::Buffer,
 }
 
 struct App {
@@ -64,16 +65,6 @@ impl winit::application::ApplicationHandler for App {
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 16 * 1024 * 1024, nbn::QueueType::Compute);
 
-        let indices = [0_u16, 1, 2];
-        let triangle = [1.0_f32, 1.0, 0.0, -1.0, 1.0, 0.0, 0.0, -1.0, 0.0];
-
-        let mut data = nbn::cast_slice::<_, u8>(&triangle).to_vec();
-        data.extend_from_slice(nbn::cast_slice(&indices));
-        let data_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-            name: "data",
-            data: &data,
-        });
-
         let (gltf_data, model, lights) = load_gltf(
             &device,
             &mut staging_buffer,
@@ -82,14 +73,12 @@ impl winit::application::ApplicationHandler for App {
 
         let num_lights = dbg!(lights.len());
 
-        let lights = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-            name: "lights",
-            data: &lights,
-        });
+        let lights = staging_buffer.create_buffer_from_slice(&device, "lights", &lights);
 
-        let instance_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-            name: "Instances",
-            data: &[vk::AccelerationStructureInstanceKHR {
+        let instance_buffer = staging_buffer.create_buffer_from_slice(
+            &device,
+            "Instances",
+            &[vk::AccelerationStructureInstanceKHR {
                 transform: vk::TransformMatrixKHR {
                     matrix: glam::Mat4::IDENTITY.transpose().to_cols_array()[..12]
                         .try_into()
@@ -104,12 +93,9 @@ impl winit::application::ApplicationHandler for App {
                     device_handle: *gltf_data.acceleration_structure,
                 },
             }],
-        });
+        );
 
-        let model_buffer = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-            name: "models",
-            data: &[model],
-        });
+        let model_buffer = staging_buffer.create_buffer_from_slice(&device, "models", &[model]);
 
         let tlas = device.create_acceleration_structure(
             "tlas",
@@ -119,6 +105,9 @@ impl winit::application::ApplicationHandler for App {
             },
             &mut staging_buffer,
         );
+
+        let blue_noise_buffers =
+            nbn::blue_noise::BlueNoiseBuffers::new(&device, &mut staging_buffer);
 
         staging_buffer.finish(&device);
 
@@ -157,7 +146,6 @@ impl winit::application::ApplicationHandler for App {
         let egui_ctx = egui::Context::default();
 
         self.window_state = Some(WindowState {
-            _data_buffer: data_buffer,
             tlas,
             _instances_buffer: instance_buffer,
             alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
@@ -171,6 +159,13 @@ impl winit::application::ApplicationHandler for App {
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
             ],
+            combined_uniform_buffer: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "combined_uniform_buffer",
+                    size: (std::mem::size_of::<[glam::Mat4; 3]>() * nbn::FRAMES_IN_FLIGHT) as _,
+                    ty: nbn::MemoryLocation::CpuToGpu,
+                })
+                .unwrap(),
             sync_resources: device.create_sync_resources(),
             swapchain_image_heap_indices: swapchain
                 .images
@@ -181,6 +176,7 @@ impl winit::application::ApplicationHandler for App {
             resolve_pipeline: device.create_compute_pipeline(&shader, c"resolve"),
             swapchain,
             pipeline,
+            blue_noise_buffers,
             lights_pipeline,
             model_buffer,
             egui_winit: egui_winit::State::new(
@@ -248,10 +244,12 @@ impl winit::application::ApplicationHandler for App {
                 egui_ctx.begin_pass(raw_input);
                 {
                     let allocator = device.allocator.inner.read();
-                    egui::Window::new("Memory Allocations").show(egui_ctx, |ui| {
+                    egui::Window::new(".").show(egui_ctx, |ui| {
                         ui.checkbox(&mut state.accum, "accum");
+                        //state.alloc_vis.render_memory_block_ui(ui, &allocator);
+                        //state.alloc_vis.render_breakdown_ui(ui, &allocator);
                     });
-                    //    state.alloc_vis.render_breakdown_ui(ui, &allocator);
+                    //
                     //    ui.label(format!("{:?}", &device.descriptors.sampled_image_count));
                     //    ui.label(format!("{:?}", &device.descriptors.storage_image_count));
                     //});
@@ -355,10 +353,21 @@ impl winit::application::ApplicationHandler for App {
                         0.001,
                     );
 
+                    let uniforms = state
+                        .combined_uniform_buffer
+                        .try_as_slice_mut::<[glam::Mat4; 3]>()
+                        .unwrap();
+
+                    uniforms[current_frame] = [view.inverse(), proj.inverse(), (proj * view)];
+
+                    let uniforms_ptr = *state.combined_uniform_buffer
+                        + (std::mem::size_of::<[glam::Mat4; 3]>() * current_frame) as u64;
+
                     device.push_constants::<(
-                        glam::Mat4,
-                        glam::Mat4,
-                        glam::Mat4,
+                        u64,
+                        u64,
+                        u64,
+                        u64,
                         u64,
                         u64,
                         u64,
@@ -371,12 +380,13 @@ impl winit::application::ApplicationHandler for App {
                     )>(
                         command_buffer,
                         (
-                            view.inverse(),
-                            proj.inverse(),
-                            (proj * view),
+                            uniforms_ptr,
                             *state.tlas,
                             *state.model_buffer,
                             *state.lights,
+                            *state.blue_noise_buffers.sobol,
+                            *state.blue_noise_buffers.ranking_tile,
+                            *state.blue_noise_buffers.scrambling_tile,
                             extent,
                             *state.hdr,
                             *state.swapchain_image_heap_indices[next_image as usize],
@@ -587,7 +597,7 @@ struct KeyboardState {
     pub right: bool,
 }
 
-pub fn load_gltf(
+fn load_gltf(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
     path: &std::path::Path,
@@ -655,7 +665,7 @@ pub fn load_gltf(
         })
         .collect::<Vec<_>>();
 
-    let mut material_to_image: Vec<u32> = gltf
+    let material_to_image: Vec<u32> = gltf
         .materials
         .iter()
         .map(|mat| {
@@ -671,79 +681,24 @@ pub fn load_gltf(
 
     let buffer = std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
 
-    fn get_slice<'a, T: bytemuck::Pod>(
+    fn get_slice<'a, T: Copy>(
         buffer: &'a [u8],
         gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         accessor: &goth_gltf::Accessor,
     ) -> &'a [T] {
         let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
         assert_eq!(bv.byte_stride, None);
-        &bytemuck::cast_slice(&buffer[bv.byte_offset + accessor.byte_offset..])
-    };
+        &nbn::cast_slice(&buffer[bv.byte_offset + accessor.byte_offset..])
+    }
 
-    /*let images = gltf
-        .images
-        .iter()
-        .zip(&image_formats)
-        .map(|(image, _format)| {
-            let image = create_image(
-                device,
-                staging_buffer,
-                path.with_file_name(image.uri.as_ref().unwrap())
-                    .to_str()
-                    .unwrap(),
-                nbn::QueueType::Graphics,
-            );
-
-            nbn::IndexedImage {
-                index: device.register_image(*image.view, false),
-                image,
-            }
-        })
-        .collect::<Vec<_>>();
-
-    dbg!(images.len());
-
-    let materials: Vec<Material> = gltf
-        .materials
-        .iter()
-        .map(|material| Material {
-            base_colour_image: material
-                .pbr_metallic_roughness
-                .base_color_texture
-                .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
-                .unwrap_or(u32::MAX),
-            metallic_roughness_image: material
-                .pbr_metallic_roughness
-                .metallic_roughness_texture
-                .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
-                .unwrap_or(u32::MAX),
-            normal_image: material
-                .normal_texture
-                .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
-                .unwrap_or(u32::MAX),
-            emissive_image: material
-                .emissive_texture
-                .as_ref()
-                .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
-                .unwrap_or(u32::MAX),
-            flags: !matches!(material.alpha_mode, goth_gltf::AlphaMode::Opaque) as u32,
-        })
-        .collect();*/
-
-    //let mut uvs = Vec::new();
     let mut indices = Vec::new();
     let mut positions = Vec::new();
     let mut uvs = Vec::new();
     let mut normals = Vec::new();
     let mut image_indices = Vec::new();
-    //let mut meshes = Vec::new();
 
-    for (mesh_index, mesh) in gltf.meshes.iter().enumerate() {
-        for (primitive_index, (primitive)) in mesh.primitives.iter().enumerate() {
+    for mesh in gltf.meshes.iter() {
+        for primitive in mesh.primitives.iter() {
             let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
             assert_eq!(
                 indices_accessor.component_type,
@@ -777,13 +732,8 @@ pub fn load_gltf(
 
     let num_vertices = positions.len() / 3;
     let num_indices = indices.len();
-    let indices =
-        staging_buffer.create_buffer_from_slice(device, "indices", bytemuck::cast_slice(&indices));
-    let positions = staging_buffer.create_buffer_from_slice(
-        device,
-        "positions",
-        bytemuck::cast_slice(&positions),
-    );
+    let indices = staging_buffer.create_buffer_from_slice(device, "indices", &indices);
+    let positions = staging_buffer.create_buffer_from_slice(device, "positions", &positions);
     dbg!(image_indices.len());
 
     let acceleration_structure = device.create_acceleration_structure(
@@ -799,14 +749,10 @@ pub fn load_gltf(
         staging_buffer,
     );
 
-    let uvs = staging_buffer.create_buffer_from_slice(device, "uvs", bytemuck::cast_slice(&uvs));
-    let normals =
-        staging_buffer.create_buffer_from_slice(device, "normals", bytemuck::cast_slice(&normals));
-    let image_indices = staging_buffer.create_buffer_from_slice(
-        device,
-        "image_indices",
-        bytemuck::cast_slice(&image_indices),
-    );
+    let uvs = staging_buffer.create_buffer_from_slice(device, "uvs", &uvs);
+    let normals = staging_buffer.create_buffer_from_slice(device, "normals", &normals);
+    let image_indices =
+        staging_buffer.create_buffer_from_slice(device, "image_indices", &image_indices);
 
     let model = Model {
         positions: *positions,

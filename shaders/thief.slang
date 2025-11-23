@@ -3,20 +3,38 @@ import shared.util;
 import fallback_bindings;
 import thief_models;
 import shared.barycentrics;
+import shared.noise;
 
-struct PushConstants {
+struct Uniforms {
     float4x4 view_inv;
     float4x4 proj_inv;
     float4x4 proj_view;
+};
+
+struct PushConstants {
+    Uniforms* uniforms;
     uint64_t as;
     Model* models;
     float* light_values;
+    int* _blue_noise_sobol;
+    int* _blue_noise_ranking_tile;
+    int* _blue_noise_scrambling_tile;
     uint2 extent;
     uint image;
     uint swapchain_image;
     uint num_lights;
     uint accum_index;
     uint frame_index;
+    
+    property BlueNoiseData blue_noise {
+        get {
+            BlueNoiseData data;
+            data.sobol = _blue_noise_sobol;
+            data.scrambling_tile = _blue_noise_scrambling_tile;
+            data.ranking_tile = _blue_noise_ranking_tile;
+            return data;
+        }
+    }
     
     Light get_light(uint index) {
         Light light;
@@ -40,10 +58,10 @@ struct PushConstants {
     let as = RaytracingAccelerationStructure(constants.as);
 
     let d = thread_to_clip(thread, constants.extent);
-    let origin = mul(constants.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
-    let temp = mul(constants.proj_inv, float4(d.x, d.y, 1.0, 1.0));
+    let origin = mul(constants.uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    let temp = mul(constants.uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
     let direction =
-        mul(constants.view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
+        mul(constants.uniforms.view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
 
     RayDesc desc;
     desc.Direction = direction;
@@ -64,14 +82,14 @@ struct PushConstants {
     var value = float3(0.0);
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        value = handle_hit(query, constants);
+        value = handle_hit(thread, query, constants);
     }
 
     RWTexture2D<float3> output = storage_images[constants.image];
     output[thread] = lerp(output[thread], value, 1.0/float(constants.accum_index+1));
 }
 
-float3 handle_hit(RayQuery query, PushConstants constants) {
+float3 handle_hit(uint2 thread, RayQuery query, PushConstants constants) {
     let barycentrics = query.CommittedTriangleBarycentrics();
     let model_index = query.CommittedRayInstanceId();
     let primitive_index = query.CommittedRayPrimitiveIndex();
@@ -97,7 +115,7 @@ float3 handle_hit(RayQuery query, PushConstants constants) {
     let f = abs(dot(normal,l));
 
     let col = val;//colour_from_val(image_index) + (uv.xyy %1) * 0.1;
-    return col * calculate_lighting(constants,position, normal);
+    return col * calculate_lighting(thread, constants,position, normal);
 }
 
 
@@ -111,7 +129,7 @@ float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 no
     RayDesc desc;
     desc.Origin = position;
     desc.Direction = direction;
-    desc.TMin = 1e-4f;
+    desc.TMin = 1e-3f;
     desc.TMax = distance;
     var query = RayQuery<
         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
@@ -127,8 +145,10 @@ float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 no
     return visibility * light.color * light.intensity / distance_sq * abs(dot(normal, direction)) / pdf;
 }
 
-float3 calculate_lighting(PushConstants constants, float3 position, float3 normal) {
-    let light_index = constants.frame_index % constants.num_lights;
+float3 calculate_lighting(uint2 thread, PushConstants constants, float3 position, float3 normal) {
+    let rand = constants.blue_noise.sample(thread, constants.frame_index, 0);
+
+    let light_index = uint(rand * constants.num_lights);
     let pdf = 1.0 / float(constants.num_lights);
 
     let light = constants.get_light(light_index);
@@ -148,19 +168,6 @@ bool trace_shadow_ray(RayDesc desc, RaytracingAccelerationStructure tlas) {
     return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
 }
 
-float3 calculate_lighting2(PushConstants constants, float3 position, float3 normal) {
-    let pdf = 1.0;
-
-    var sum = float3(0.0);
-
-    for (uint i = 0; i < constants.num_lights; i++) {
-        let light = constants.get_light(i);
-        sum += calculate_lighting_raw(light, pdf, position, normal, RaytracingAccelerationStructure(constants.as));
-    }
-
-    return sum;
-}
-
 struct LightInterp {
     float4 pos: SV_Position;
     float3 col;
@@ -172,7 +179,7 @@ struct LightInterp {
 
     LightInterp output;
     output.col = light.color * light.intensity;
-    output.pos = mul(constants.proj_view, float4(light.position, 1.0));
+    output.pos = mul(constants.uniforms.proj_view, float4(light.position, 1.0));
     output.point_size = 2.0;
     return output;
 }

@@ -1895,7 +1895,6 @@ dependencies = [
  "ash-window",
  "bitflags 2.10.0",
  "blue-noise-sampler",
- "bytemuck",
  "ddsfile",
  "dolly",
  "egui",
