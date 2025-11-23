@@ -65,26 +65,9 @@ float3 handle_hit(RayQuery query, PushConstants constants) {
         model.read_index(primitive_index * 3 + 2),
     );
 
-    let uv = interpolate_ray_barycentrics(
-        model.uvs[indices.x],
-        model.uvs[indices.y],
-        model.uvs[indices.z],
-        barycentrics
-    );
-
-    let normal = interpolate_ray_barycentrics(
-        model.normals[indices.x],
-        model.normals[indices.y],
-        model.normals[indices.z],
-        barycentrics
-    );
-    
-    let position = interpolate_ray_barycentrics(
-        model.positions[indices.x],
-        model.positions[indices.y],
-        model.positions[indices.z],
-        barycentrics
-    );
+    let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
+    let normal = interpolate_from_buffer(model.normals, indices, barycentrics);
+    let position = interpolate_from_buffer(model.positions, indices, barycentrics);
 
     let l = normalize(float3(1,5,2));
     let f = abs(dot(normal,l));
