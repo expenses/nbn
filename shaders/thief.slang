@@ -7,10 +7,16 @@ import shared.barycentrics;
 struct PushConstants {
     float4x4 view_inv;
     float4x4 proj_inv;
+    float4x4 proj_view;
     uint64_t as;
     Model* models;
+    Light* lights;
     uint2 extent;
     uint image;
+    uint swapchain_image;
+    uint num_lights;
+    uint accum_index;
+    uint frame_index;
 }
 
     [shader("compute")][NumThreads(8, 8, 1)] void
@@ -49,8 +55,8 @@ struct PushConstants {
         value = handle_hit(query, constants);
     }
 
-    WTexture2D<float4> output = storage_images[constants.image];
-    output.Store(thread, float4(srgb_lin2encoded(value), 1));
+    RWTexture2D<float3> output = storage_images[constants.image];
+    output[thread] = lerp(output[thread], value, 1.0/float(constants.accum_index+1));
 }
 
 float3 handle_hit(RayQuery query, PushConstants constants) {
@@ -58,7 +64,7 @@ float3 handle_hit(RayQuery query, PushConstants constants) {
     let model_index = query.CommittedRayInstanceId();
     let primitive_index = query.CommittedRayPrimitiveIndex();
     let model = constants.models[model_index];
-    
+
 
     let indices = uint3(
         model.read_index(primitive_index * 3 + 0),
@@ -70,14 +76,77 @@ float3 handle_hit(RayQuery query, PushConstants constants) {
     let normal = model.normals[indices.x];
     let position = interpolate_from_buffer(model.positions, indices, barycentrics);
     let image_index = model.image_indices[primitive_index];
-    
+
     Sampler2D<float3> img = sampled_images[NonUniformResourceIndex(image_index)];
-    
+
     let val = img.SampleLevel(uv, 0);
 
     let l = normalize(float3(1,5,2));
     let f = abs(dot(normal,l));
 
     let col = val;//colour_from_val(image_index) + (uv.xyy %1) * 0.1;
-    return f*col;
+    return col * calculate_lighting(constants,position, normal);
+}
+
+
+float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 normal) {
+    let vector = light.position - position;
+    let distance_sq = dot(vector,vector);
+
+    let direction = vector / sqrt(distance_sq);
+
+    return light.color * light.intensity / distance_sq * abs(dot(normal, direction)) / pdf;
+}
+
+float3 calculate_lighting(PushConstants constants, float3 position, float3 normal) {
+    let light_index = constants.frame_index % constants.num_lights;
+    let pdf = 1.0 / float(constants.num_lights);
+
+    let light = constants.lights[light_index];
+    return calculate_lighting_raw(light, pdf, position, normal);
+}
+
+
+float3 calculate_lighting2(PushConstants constants, float3 position, float3 normal) {
+    let pdf = 1.0;
+
+    var sum = float3(0.0);
+
+    for (uint i = 0; i < constants.num_lights; i++) {
+        let light = constants.lights[i];
+        sum += calculate_lighting_raw(light, pdf, position, normal);
+    }
+
+    return sum;
+}
+
+struct LightInterp {
+    float4 pos: SV_Position;
+    float3 col;
+    float point_size: SV_PointSize;
+};
+
+[shader("vertex")] LightInterp lights_vert(uint vertex_id : SV_VertexID, uniform PushConstants constants) {
+    let light = constants.lights[vertex_id];
+
+    LightInterp output;
+    output.col = light.color * light.intensity;
+    output.pos = mul(constants.proj_view, float4(light.position, 1.0));
+    output.point_size = 2.0;
+    return output;
+}
+
+[shader("pixel")] float3 lights_frag(LightInterp interp) {
+    return interp.col;
+}
+
+[shader("compute")][NumThreads(8, 8, 1)] void resolve(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) {
+    if (any(thread >= constants.extent)) {
+        return;
+    }
+
+    Texture2D<float3> input = storage_images[constants.image];
+
+    WTexture2D<float4> output = storage_images[constants.swapchain_image];
+    output.Store(thread, float4(srgb_lin2encoded(input[thread]), 1));
 }

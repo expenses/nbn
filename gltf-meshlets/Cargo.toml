@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1" }
+goth-gltf = { version = "0.1.2" }
 meshopt = "0.6.2"

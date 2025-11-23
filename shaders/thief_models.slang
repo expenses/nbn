@@ -26,3 +26,9 @@ public struct Model {
         }
     }
 };
+
+public struct Light {
+    public float3 position;
+    public float3 color;
+    public float intensity;
+};

@@ -1157,7 +1157,7 @@ checksum = "bd47b05dddf0005d850e5644cae7f2b14ac3df487979dbfff3b56f20b1a6ae46"
 name = "gltf-compress"
 version = "0.1.0"
 dependencies = [
- "goth-gltf 0.1.2 (git+https://github.com/expenses/goth-gltf)",
+ "goth-gltf 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "image 0.25.9",
  "intel_tex_2 0.5.0",
  "ktx2",
@@ -1170,7 +1170,7 @@ dependencies = [
 name = "gltf-meshlets"
 version = "0.1.0"
 dependencies = [
- "goth-gltf 0.1.2 (git+https://github.com/expenses/goth-gltf)",
+ "goth-gltf 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "meshopt",
 ]
 
@@ -1179,14 +1179,6 @@ name = "goth-gltf"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ac96cc0d901a00a03d8f6cbe5388eec314fb31973d5482d5fcffc85c21845a6"
-dependencies = [
- "nanoserde",
-]
-
-[[package]]
-name = "goth-gltf"
-version = "0.1.2"
-source = "git+https://github.com/expenses/goth-gltf#67f5295884b77a7e87ca9ae7df4988e35ee31d77"
 dependencies = [
  "bytemuck",
  "nanoserde",
@@ -1815,7 +1807,7 @@ dependencies = [
  "egui-winit",
  "env_logger",
  "glam 0.30.9",
- "goth-gltf 0.1.2 (git+https://github.com/expenses/goth-gltf)",
+ "goth-gltf 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "gpu-allocator",
  "ktx2",
  "nbn",

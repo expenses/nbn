@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 nbn = {path = ".."}
-goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
+goth-gltf = { version = "0.1.2", features = [
     "primitive_reader",
 ] }
 env_logger = "0.11.8"
