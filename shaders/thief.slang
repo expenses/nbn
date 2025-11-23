@@ -4,6 +4,7 @@ import fallback_bindings;
 import thief_models;
 import shared.barycentrics;
 import shared.noise;
+import shared.restir;
 
 struct Uniforms {
     float4x4 view_inv;
@@ -153,9 +154,10 @@ float3 calculate_lighting(uint2 thread, PushConstants constants, float3 position
 
 
 float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 position, float3 normal) {
-    uint[20] light_indices;
-    float[20] weights;
-    float total_weight = 0.0;
+    var res = Reservoir();
+    float pdf = 1.0 / float(constants.num_lights);
+    float p_hat = 0;
+    
     for (uint i = 0; i < 20; i++) {
         uint light_index = uint(constants.blue_noise.sample(thread, constants.frame_index, i) * constants.num_lights);
         Light light = constants.get_light(light_index);
@@ -165,37 +167,26 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
 
         let direction = vector / distance;
 
-        weights[i] = light.intensity * max(dot(normal, direction),0.0) / distance_sq;
-        total_weight += weights[i];
-        light_indices[i] = light_index;
+        p_hat = length(light.color * light.intensity * max(dot(normal, direction),0.0) / distance_sq);
+        let weight = p_hat / pdf;
+        res.update(light_index, weight, 1, constants.blue_noise.sample(thread, constants.frame_index, 20+i));
     }
     
-    if (total_weight == 0.0) {
-        return float3(0);
-    }
-
-    let value = constants.blue_noise.sample(thread, constants.frame_index, 0) * total_weight;
+    //if (!res.is_valid) {
+    //    return float3(0);
+    //}
     
-    float cumulative = 0.0;
-    uint i;
-    for (i = 0; i < 20; i++) {
-        cumulative += weights[i];
-        if (cumulative >= value) {
-            break;
-        }
-    } 
-    let light = constants.get_light(light_indices[i]);
-    let pdf = (weights[i] / total_weight) * (20.0/float(constants.num_lights));
+    let light = constants.get_light(res.Y);
+    let vector = position - light.position;
     
-    let vector = light.position - position;
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
 
     let direction = vector / distance;
-
+    
     RayDesc desc;
     desc.Origin = position;
-    desc.Direction = direction;
+    desc.Direction = -direction;
     desc.TMin = 1e-3f;
     desc.TMax = distance;
     var query = RayQuery<
@@ -209,7 +200,17 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
     query.Proceed();
     let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
-    return weights[i] * visibility * light.color / pdf;
+    var radiance = visibility * light.color * light.intensity * max(dot(normal, direction),0.0) / distance_sq;
+
+    p_hat = length(radiance);
+    
+    // calculate the weight of this light
+    let res_W_y = p_hat > 0.0 ? rcp(p_hat) * res.W_sum / res.M : 0.0;
+    
+    // apply it to the radiance to get the final radiance.
+    radiance  *=  res_W_y;
+
+    return radiance;
 }
 
 
