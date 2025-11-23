@@ -10,13 +10,25 @@ struct PushConstants {
     float4x4 proj_view;
     uint64_t as;
     Model* models;
-    Light* lights;
+    float* light_values;
     uint2 extent;
     uint image;
     uint swapchain_image;
     uint num_lights;
     uint accum_index;
     uint frame_index;
+    
+    Light get_light(uint index) {
+        Light light;
+        light.position[0] = light_values[index * 7 + 0];
+        light.position[1] = light_values[index * 7 + 1];
+        light.position[2] = light_values[index * 7 + 2];
+        light.color[0] = light_values[index * 7 + 3];
+        light.color[1] = light_values[index * 7 + 4];
+        light.color[2] = light_values[index * 7 + 5];
+        light.intensity = light_values[index * 7 + 6];
+        return light;
+    }
 }
 
     [shader("compute")][NumThreads(8, 8, 1)] void
@@ -36,8 +48,8 @@ struct PushConstants {
     RayDesc desc;
     desc.Direction = direction;
     desc.Origin = origin;
-    desc.TMax = 10000.0;
-    desc.TMin = 0.1;
+    desc.TMax = 100000.0;
+    desc.TMin = 0.0;
 
     var query = RayQuery<RAY_FLAG_NONE>();
     query.TraceRayInline(
@@ -89,23 +101,52 @@ float3 handle_hit(RayQuery query, PushConstants constants) {
 }
 
 
-float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 normal) {
+float3 calculate_lighting_raw(Light light, float pdf, float3 position, float3 normal, RaytracingAccelerationStructure tlas) {
     let vector = light.position - position;
     let distance_sq = dot(vector,vector);
+    let distance = sqrt(distance_sq);
 
-    let direction = vector / sqrt(distance_sq);
+    let direction = vector / distance;
 
-    return light.color * light.intensity / distance_sq * abs(dot(normal, direction)) / pdf;
+    RayDesc desc;
+    desc.Origin = position;
+    desc.Direction = direction;
+    desc.TMin = 1e-4f;
+    desc.TMax = distance;
+    var query = RayQuery<
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+    query.TraceRayInline(
+        tlas,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        0xff,
+        desc
+    );
+    query.Proceed();
+    let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
+
+    return visibility * light.color * light.intensity / distance_sq * abs(dot(normal, direction)) / pdf;
 }
 
 float3 calculate_lighting(PushConstants constants, float3 position, float3 normal) {
     let light_index = constants.frame_index % constants.num_lights;
     let pdf = 1.0 / float(constants.num_lights);
 
-    let light = constants.lights[light_index];
-    return calculate_lighting_raw(light, pdf, position, normal);
+    let light = constants.get_light(light_index);
+    return calculate_lighting_raw(light, pdf, position, normal, RaytracingAccelerationStructure(constants.as));
 }
 
+bool trace_shadow_ray(RayDesc desc, RaytracingAccelerationStructure tlas) {
+    var query = RayQuery<
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+    query.TraceRayInline(
+        tlas,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        0xff,
+        desc
+    );
+    query.Proceed();
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+}
 
 float3 calculate_lighting2(PushConstants constants, float3 position, float3 normal) {
     let pdf = 1.0;
@@ -113,8 +154,8 @@ float3 calculate_lighting2(PushConstants constants, float3 position, float3 norm
     var sum = float3(0.0);
 
     for (uint i = 0; i < constants.num_lights; i++) {
-        let light = constants.lights[i];
-        sum += calculate_lighting_raw(light, pdf, position, normal);
+        let light = constants.get_light(i);
+        sum += calculate_lighting_raw(light, pdf, position, normal, RaytracingAccelerationStructure(constants.as));
     }
 
     return sum;
@@ -127,7 +168,7 @@ struct LightInterp {
 };
 
 [shader("vertex")] LightInterp lights_vert(uint vertex_id : SV_VertexID, uniform PushConstants constants) {
-    let light = constants.lights[vertex_id];
+    let light = constants.get_light(vertex_id);
 
     LightInterp output;
     output.col = light.color * light.intensity;
