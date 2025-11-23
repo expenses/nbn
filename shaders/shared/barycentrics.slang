@@ -147,3 +147,16 @@ func interpolate_ray_barycentrics<int N>(
     return a * (1.0 - barycentrics.x - barycentrics.y) + b * barycentrics.x
         + c * barycentrics.y;
 }
+
+func interpolate_from_buffer<int N>(
+    vector<float, N>* values,
+    uint3 indices,
+    float2 barycentrics
+) -> vector<float, N> {
+    return interpolate_ray_barycentrics(
+        values[indices.x],
+        values[indices.y],
+        values[indices.z],
+        barycentrics
+    );
+}
