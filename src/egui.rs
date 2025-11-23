@@ -47,7 +47,7 @@ impl Renderer {
                     .src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
                     .dst_alpha_blend_factor(vk::BlendFactor::ONE)],
 
-                conservative_rasterization: false,
+                flags: Default::default(),
                 depth: nbn::GraphicsPipelineDepthDesc::default(),
                 cull_mode: vk::CullModeFlags::NONE,
             }),

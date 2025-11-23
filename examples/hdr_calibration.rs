@@ -22,7 +22,7 @@ fn create_pipelines(
             color_attachment_formats: &[swapchain.create_info.image_format],
             blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)],
-            conservative_rasterization: false,
+            flags: Default::default(),
             depth: Default::default(),
             cull_mode: Default::default(),
         })

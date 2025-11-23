@@ -1239,11 +1239,16 @@ impl Device {
 
         let mut conservative_rasterization =
             vk::PipelineRasterizationConservativeStateCreateInfoEXT::default()
-                .conservative_rasterization_mode(if desc.conservative_rasterization {
-                    vk::ConservativeRasterizationModeEXT::OVERESTIMATE
-                } else {
-                    vk::ConservativeRasterizationModeEXT::DISABLED
-                });
+                .conservative_rasterization_mode(
+                    if desc
+                        .flags
+                        .contains(GraphicsPipelineFlags::CONSERVATIVE_RASTERIZATION)
+                    {
+                        vk::ConservativeRasterizationModeEXT::OVERESTIMATE
+                    } else {
+                        vk::ConservativeRasterizationModeEXT::DISABLED
+                    },
+                );
 
         let stages: &[vk::PipelineShaderStageCreateInfo] = match desc.shaders {
             GraphicsPipelineShaders::Legacy { vertex, fragment } => &[
@@ -1293,8 +1298,13 @@ impl Device {
                     .stages(stages)
                     .vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
                     .input_assembly_state(
-                        &vk::PipelineInputAssemblyStateCreateInfo::default()
-                            .topology(vk::PrimitiveTopology::TRIANGLE_LIST),
+                        &vk::PipelineInputAssemblyStateCreateInfo::default().topology(
+                            if desc.flags.contains(GraphicsPipelineFlags::POINTS) {
+                                vk::PrimitiveTopology::POINT_LIST
+                            } else {
+                                vk::PrimitiveTopology::TRIANGLE_LIST
+                            },
+                        ),
                     )
                     .multisample_state(
                         &vk::PipelineMultisampleStateCreateInfo::default()
@@ -1818,12 +1828,20 @@ pub struct ShaderDesc<'a> {
     pub module: &'a ShaderModule,
 }
 
+bitflags::bitflags! {
+    #[derive(Default)]
+    pub struct GraphicsPipelineFlags: u8 {
+        const CONSERVATIVE_RASTERIZATION = 1;
+        const POINTS = 1 << 1;
+    }
+}
+
 pub struct GraphicsPipelineDesc<'a> {
     pub name: &'a str,
     pub shaders: GraphicsPipelineShaders<'a>,
     pub color_attachment_formats: &'a [vk::Format],
     pub blend_attachments: &'a [vk::PipelineColorBlendAttachmentState],
-    pub conservative_rasterization: bool,
+    pub flags: GraphicsPipelineFlags,
     pub cull_mode: vk::CullModeFlags,
     pub depth: GraphicsPipelineDepthDesc,
 }
