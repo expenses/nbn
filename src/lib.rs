@@ -2091,8 +2091,14 @@ impl StagingBuffer {
         buffer
     }
 
-    pub fn create_buffer_from_slice(&mut self, device: &Device, name: &str, data: &[u8]) -> Buffer {
-        self.create_buffer(device, name, data.len(), std::io::Cursor::new(data))
+    pub fn create_buffer_from_slice<N: Copy>(
+        &mut self,
+        device: &Device,
+        name: &str,
+        data: &[N],
+    ) -> Buffer {
+        let bytes = cast_slice(data);
+        self.create_buffer(device, name, bytes.len(), std::io::Cursor::new(bytes))
     }
 
     pub fn create_sampled_image(
