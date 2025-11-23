@@ -1,5 +1,5 @@
-use nbn::vk;
 use indicatif::ProgressIterator;
+use nbn::vk;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 slang_struct::slang_include!("shaders/gltf.slang");
@@ -72,7 +72,7 @@ fn main() {
             let mut image_data = None;
             let path = format!("{}/{}", base, image.uri.as_ref().unwrap());
             if !path.ends_with(".dds") {
-                image_data = Some(image::open(&path).unwrap().to_rgba8());                
+                image_data = Some(image::open(&path).unwrap().to_rgba8());
             }
             (image_data, path)
         })
@@ -82,28 +82,34 @@ fn main() {
         .iter()
         .zip(&image_formats)
         .map(|((image, filename), &format)| {
-            
-            
-            let image = if let Some(image) = image {staging_buffer.create_sampled_image(
-                &device,
-                nbn::SampledImageDescriptor {
-                    name: filename,
-                    extent: vk::Extent3D {
-                        width: image.width(),
-                        height: image.height(),
-                        depth: 1,
-                    }.into(),
-                    format,
-                },
-                &image,
-                nbn::QueueType::Compute,
-                &[0]
-            )} else {
-                nbn::image_loading::create_image(&device, &mut staging_buffer, &filename, nbn::QueueType::Compute)
+            let image = if let Some(image) = image {
+                staging_buffer.create_sampled_image(
+                    &device,
+                    nbn::SampledImageDescriptor {
+                        name: filename,
+                        extent: vk::Extent3D {
+                            width: image.width(),
+                            height: image.height(),
+                            depth: 1,
+                        }
+                        .into(),
+                        format,
+                    },
+                    &image,
+                    nbn::QueueType::Compute,
+                    &[0],
+                )
+            } else {
+                nbn::image_loading::create_image(
+                    &device,
+                    &mut staging_buffer,
+                    &filename,
+                    nbn::QueueType::Compute,
+                )
             };
             nbn::IndexedImage {
                 index: device.register_image(*image.view, false),
-                image
+                image,
             }
         })
         .collect::<Vec<_>>();
@@ -123,7 +129,7 @@ fn main() {
             positions: primitive.attributes.position.unwrap() as u32,
             uvs: primitive.attributes.texcoord_0.unwrap() as u32,
             material: primitive.material.unwrap() as u32,
-            normals: 0
+            normals: 0,
         })
         .collect();
 
