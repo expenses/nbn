@@ -1904,6 +1904,7 @@ dependencies = [
  "bitflags 2.10.0",
  "blue-noise-sampler",
  "ddsfile",
+ "dolly",
  "egui",
  "egui-winit",
  "env_logger",
