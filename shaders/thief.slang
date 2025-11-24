@@ -13,6 +13,7 @@ struct Uniforms {
     uint64_t tlas;
     Model* models;
     float* light_values;
+    //Reservoir<int>* reserviors;
     int* _blue_noise_sobol;
     int* _blue_noise_ranking_tile;
     int* _blue_noise_scrambling_tile;
@@ -36,6 +37,10 @@ struct PushConstants {
             data.ranking_tile = uniforms._blue_noise_ranking_tile;
             return data;
         }
+    }
+
+    float blue_noise_sample(uint2 thread, uint dimension) {
+        return blue_noise.sample(thread, frame_index, dimension);
     }
 
     Light get_light(uint index) {
@@ -121,7 +126,7 @@ float3 handle_hit(uint2 thread, RayQuery query, PushConstants constants) {
 }
 
 float3 calculate_lighting(uint2 thread, PushConstants constants, float3 position, float3 normal) {
-    let rand = constants.blue_noise.sample(thread, constants.frame_index, 0);
+    let rand = constants.blue_noise_sample(thread, 0);
 
     let light_index = uint(rand * constants.num_lights);
     let pdf = 1.0 / float(constants.num_lights);
@@ -154,12 +159,12 @@ float3 calculate_lighting(uint2 thread, PushConstants constants, float3 position
 
 
 float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 position, float3 normal) {
-    var res = Reservoir();
-    float pdf = 1.0 / float(constants.num_lights);
-    float p_hat = 0;
-    
-    for (uint i = 0; i < 20; i++) {
-        uint light_index = uint(constants.blue_noise.sample(thread, constants.frame_index, i) * constants.num_lights);
+    float pdf = rcp(constants.num_lights);
+    var state = RestirState<int>(pdf, -1);
+
+    uint num_samples = 16;
+    for (uint i = 0; i < num_samples; i++) {
+        uint light_index = uint(constants.blue_noise_sample(thread, 1+i) * constants.num_lights);
         Light light = constants.get_light(light_index);
         let vector = position - light.position;
         let distance_sq = dot(vector,vector);
@@ -167,23 +172,24 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
 
         let direction = vector / distance;
 
-        p_hat = length(light.color * light.intensity * max(dot(normal, direction),0.0) / distance_sq);
-        let weight = p_hat / pdf;
-        res.update(light_index, weight, 1, constants.blue_noise.sample(thread, constants.frame_index, 20+i));
+        let p_hat = length(light.color) * light.intensity * max(dot(normal, direction),0.0) / distance_sq;
+        state.update(light_index, p_hat, constants.blue_noise_sample(thread, 21+i));
     }
-    
-    //if (!res.is_valid) {
-    //    return float3(0);
-    //}
-    
-    let light = constants.get_light(res.Y);
+
+    let light_index = state.get_data();
+
+    if (light_index < 0) {
+        return float3(0);
+    }
+
+    let light = constants.get_light(light_index);
     let vector = position - light.position;
-    
+
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
 
     let direction = vector / distance;
-    
+
     RayDesc desc;
     desc.Origin = position;
     desc.Direction = -direction;
@@ -200,17 +206,10 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
     query.Proceed();
     let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
-    var radiance = visibility * light.color * light.intensity * max(dot(normal, direction),0.0) / distance_sq;
+    var radiance = light.color * (visibility * light.intensity * max(dot(normal, direction),0.0) / distance_sq);
 
-    p_hat = length(radiance);
-    
-    // calculate the weight of this light
-    let res_W_y = p_hat > 0.0 ? rcp(p_hat) * res.W_sum / res.M : 0.0;
-    
-    // apply it to the radiance to get the final radiance.
-    radiance  *=  res_W_y;
-
-    return radiance;
+    state.update_from_frame_sample(length(radiance));
+    return radiance * state.get_weight();
 }
 
 
