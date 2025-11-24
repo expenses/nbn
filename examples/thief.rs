@@ -205,7 +205,7 @@ impl winit::application::ApplicationHandler for App {
                 .with(dolly::drivers::Position::new([-22.8, 62.0, 46.0]))
                 .with(dolly::drivers::YawPitch {
                     pitch_degrees: -45.0,
-                    yaw_degrees: -60.0
+                    yaw_degrees: -60.0,
                 })
                 .with(dolly::drivers::Smooth::new_position_rotation(1.0, 1.0))
                 .build(),
@@ -357,7 +357,7 @@ impl winit::application::ApplicationHandler for App {
                         );
 
                     let transform = state.camera_rig.update(1.0 / 60.0);
-                    
+
                     let view = glam::Mat4::look_to_rh(
                         glam::Vec3::from_array(transform.position.into()),
                         glam::Vec3::from_array(transform.forward()),
@@ -389,19 +389,10 @@ impl winit::application::ApplicationHandler for App {
                     let uniforms_ptr = *state.combined_uniform_buffer
                         + (std::mem::size_of::<Uniforms>() * current_frame) as u64;
 
-                    device.push_constants::<(
-                        u64,
-                        vk::Extent2D,
-                        u32,
-                        u32,
-                        u32,
-                        u32,
-                        u32,
-                    )>(
+                    device.push_constants::<(u64, vk::Extent2D, u32, u32, u32, u32, u32)>(
                         command_buffer,
                         (
                             uniforms_ptr,
-                           
                             extent,
                             *state.hdr,
                             *state.swapchain_image_heap_indices[next_image as usize],

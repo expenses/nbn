@@ -1186,6 +1186,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "goth-gltf"
+version = "0.1.2"
+source = "git+https://github.com/expenses/goth-gltf#6d95f25b1dee784a3e4ff1c478839e0107c3d232"
+dependencies = [
+ "bytemuck",
+ "nanoserde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "gpu-allocator"
 version = "0.27.0"
 source = "git+https://github.com/expenses/gpu-allocator?branch=updates#c8e59b97bcc780c75363e29f8936bc731a9be58a"
