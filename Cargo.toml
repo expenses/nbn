@@ -21,7 +21,7 @@ bitflags = "2.10.0"
 blue-noise-sampler = { version = "0.1.0", optional = true }
 
 [dev-dependencies]
-goth-gltf = { path = "../goth-gltf", features = [
+goth-gltf = { git = "https://github.com/expenses/goth-gltf", features = [
     "primitive_reader",
 ] }
 env_logger = "0.11.8"

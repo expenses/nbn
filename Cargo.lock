@@ -1177,15 +1177,6 @@ dependencies = [
 [[package]]
 name = "goth-gltf"
 version = "0.1.2"
-dependencies = [
- "bytemuck",
- "nanoserde",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "goth-gltf"
-version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ac96cc0d901a00a03d8f6cbe5388eec314fb31973d5482d5fcffc85c21845a6"
 dependencies = [
@@ -1917,7 +1908,7 @@ dependencies = [
  "egui-winit",
  "env_logger",
  "glam 0.30.9",
- "goth-gltf 0.1.2",
+ "goth-gltf 0.1.2 (git+https://github.com/expenses/goth-gltf)",
  "gpu-allocator",
  "image 0.25.9",
  "ktx2",
