@@ -8,7 +8,7 @@ struct Reservoir<T> {
     // sum of all weights for all samples processed
     float W_sum = 0.0;
     // number of samples processed for this reservoir
-    float M = 0.0;
+    uint M = 0;
 
     __init(T initial) {
         Y = initial;
@@ -19,7 +19,7 @@ struct Reservoir<T> {
     }
 
     [mutating]
-    bool update<R: Rng>(T value, float w, float c, R* rng) {
+    bool update<R: Rng>(T value, float w, uint c, R* rng) {
         W_sum += w;
         M += c;
 
@@ -43,6 +43,11 @@ struct Reservoir<T> {
     [mutating]
     void set_weight(float p_hat) {
         W_y = p_hat > 0.0 ? average_weight() / p_hat : 0.0;
+    }
+    
+    [mutating]
+    void clamp(uint max_samples) {
+        M = min(M, max_samples);
     }
 };
 
