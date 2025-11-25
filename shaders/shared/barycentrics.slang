@@ -160,3 +160,29 @@ func interpolate_from_buffer<int N>(
         barycentrics
     );
 }
+
+WithDerivatives<float2> interpolate_from_buffer(
+    float2* values,
+    uint3 indices,
+    BarycentricDeriv barycentrics
+) {
+    return interpolate(
+        barycentrics,
+        values[indices.x],
+        values[indices.y],
+        values[indices.z],
+    );
+}
+
+WithDerivatives<float3> interpolate_from_buffer(
+    float3* values,
+    uint3 indices,
+    BarycentricDeriv barycentrics
+) {
+    return interpolate(
+        barycentrics,
+        values[indices.x],
+        values[indices.y],
+        values[indices.z],
+    );
+}
