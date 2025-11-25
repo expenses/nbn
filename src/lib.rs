@@ -903,6 +903,13 @@ impl Device {
         self.register_image_with_sampler(view, &self.samplers.repeat, is_storage)
     }
 
+    pub fn register_owned_image(&self, image: Image, is_storage: bool) -> IndexedImage {
+        IndexedImage {
+            index: self.register_image(*image.view, is_storage),
+            image
+        }
+    }
+
     pub fn create_image_with_data_in_command_buffer(
         &self,
         desc: SampledImageDescriptor,
