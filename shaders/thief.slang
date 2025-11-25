@@ -4,6 +4,7 @@ import fallback_bindings;
 import thief_structs;
 import shared.barycentrics;
 import shared.restir;
+import shared.constants;
 
 [shader("compute")][NumThreads(8, 8, 1)]
 void write(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) {
@@ -37,43 +38,14 @@ void write(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) 
 
     query.Proceed();
 
-    var value = float3(0.0);
+    var prim = MAX_UINT_VALUE;
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        value = handle_hit(thread, query, uniforms);
+        prim = query.CommittedPrimitiveIndex();
     }
 
-    RWTexture2D<float3> output = storage_images[uniforms.hdr_image];
-    output[thread] = lerp(output[thread], value, 1.0/float(uniforms.accum_index+1));
-}
-
-float3 handle_hit(uint2 thread, RayQuery query, Uniforms uniforms) {
-    let barycentrics = query.CommittedTriangleBarycentrics();
-    let model_index = query.CommittedRayInstanceId();
-    let primitive_index = query.CommittedRayPrimitiveIndex();
-    let model = uniforms.models[model_index];
-
-
-    let indices = uint3(
-        model.read_index(primitive_index * 3 + 0),
-        model.read_index(primitive_index * 3 + 1),
-        model.read_index(primitive_index * 3 + 2),
-    );
-
-    let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
-    let normal = model.normals[indices.x];
-    let position = interpolate_from_buffer(model.positions, indices, barycentrics);
-    let image_index = model.image_indices[primitive_index];
-
-    Sampler2D<float3> img = sampled_images[NonUniformResourceIndex(image_index)];
-
-    let val = img.SampleLevel(uv, 0);
-
-    let l = normalize(float3(1,5,2));
-    let f = abs(dot(normal,l));
-
-    let col = val;//colour_from_val(image_index) + (uv.xyy %1) * 0.1;
-    return col * calculate_lighting_ris(thread, uniforms, position, normal);
+    WTexture2D<uint> output = storage_images[uniforms.prims_image];
+    output.Store(thread, prim);
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, float3 position, float3 normal) {
@@ -152,14 +124,61 @@ struct LightInterp {
 }
 
 [shader("compute")][NumThreads(8, 8, 1)] void resolve(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) {
-    let uniforms = constants.uniforms;
+    Uniforms uniforms = *constants.uniforms;
     
     if (any(thread >= uniforms.extent)) {
         return;
     }
 
-    Texture2D<float3> input = storage_images[uniforms.hdr_image];
+    Texture2D<uint> prim_image = storage_images[uniforms.prims_image];
+    let prim = prim_image[thread];
+    let value = resolve_inner(thread, uniforms, prim);
 
+    RWTexture2D<float3> hdr = storage_images[uniforms.hdr_image];
+    hdr[thread] = lerp(hdr[thread], value, 1.0/float(uniforms.accum_index+1));
+    
     WTexture2D<float4> output = storage_images[uniforms.swapchain_image];
-    output.Store(thread, float4(srgb_lin2encoded(input[thread]), 1));
+    output.Store(thread, float4(srgb_lin2encoded(hdr[thread]), 1));
+}
+
+float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
+    if (prim == MAX_UINT_VALUE) {
+        return float3(0);   
+    }
+    
+    let model_index = 0;
+    let model = uniforms.models[model_index];
+
+    let indices = uint3(
+        model.read_index(prim * 3 + 0),
+        model.read_index(prim * 3 + 1),
+        model.read_index(prim * 3 + 2),
+    );
+    
+    let bary_and_pos = calculate_barycentrics_from_world_positions(
+        uniforms.proj_view,
+        model.positions[indices.x],
+        model.positions[indices.y],
+        model.positions[indices.z],
+        thread,
+        uniforms.extent
+    );
+    let pos = bary_and_pos.position;
+    let bary = bary_and_pos.barycentrics;
+    
+    let uv = interpolate(
+        bary,
+        model.uvs[indices.x],
+        model.uvs[indices.y],
+        model.uvs[indices.z]
+    );
+
+    let normal = model.normals[indices.x];        
+    let image_index = model.image_indices[prim];
+
+    Sampler2D<float3> img = sampled_images[NonUniformResourceIndex(image_index)];
+
+    let col = img.SampleGrad(uv.val, uv.dx, uv.dy);
+
+    return col * calculate_lighting_ris(thread, uniforms, pos.val, normal);
 }

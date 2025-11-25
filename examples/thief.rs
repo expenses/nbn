@@ -6,19 +6,32 @@ use winit::window::CursorGrabMode;
 
 slang_struct::slang_include!("shaders/thief_structs.slang");
 
-fn create_hdr(device: &nbn::Device, extent: vk::Extent2D) -> nbn::IndexedImage {
-    let image = device.create_image(nbn::ImageDescriptor {
-        name: "hdrbuffer",
-        format: vk::Format::R16G16B16A16_SFLOAT,
-        extent: extent.into(),
-        usage: vk::ImageUsageFlags::STORAGE,
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        mip_levels: 1,
-    });
+struct Images {
+    hdr: nbn::IndexedImage,
+    prims: nbn::IndexedImage
+}
 
-    let index = device.register_image(*image.view, true);
-
-    nbn::IndexedImage { image, index }
+impl Images {
+    fn new(device: &nbn::Device, extent: vk::Extent2D) -> Self {
+        Self {
+            hdr: device.register_owned_image(device.create_image(nbn::ImageDescriptor {
+                name: "hdrbuffer",
+                format: vk::Format::R16G16B16A16_SFLOAT,
+                extent: extent.into(),
+                usage: vk::ImageUsageFlags::STORAGE,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_levels: 1,
+            }), true),
+            prims: device.register_owned_image(device.create_image(nbn::ImageDescriptor {
+                name: "primsbuffer",
+                format: vk::Format::R32_UINT,
+                extent: extent.into(),
+                usage: vk::ImageUsageFlags::STORAGE,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_levels: 1,
+            }), true)
+        }
+    }
 }
 
 struct WindowState {
@@ -41,7 +54,7 @@ struct WindowState {
     lights: nbn::Buffer,
     num_lights: usize,
     lights_pipeline: nbn::Pipeline,
-    hdr: nbn::IndexedImage,
+    images: Images,
     resolve_pipeline: nbn::Pipeline,
     frame_index: u32,
     accum_index: u32,
@@ -172,7 +185,7 @@ impl winit::application::ApplicationHandler for App {
                 .iter()
                 .map(|image| device.register_image(*image.view, true))
                 .collect(),
-            hdr: create_hdr(&device, swapchain.create_info.image_extent),
+            images: Images::new(&device, swapchain.create_info.image_extent),
             resolve_pipeline: device.create_compute_pipeline(&shader, c"resolve"),
             swapchain,
             pipeline,
@@ -235,7 +248,7 @@ impl winit::application::ApplicationHandler for App {
                         .iter()
                         .map(|image| device.register_image(*image.view, true)),
                 );
-                state.hdr = create_hdr(&device, state.swapchain.create_info.image_extent);
+                state.images = Images::new(&device, state.swapchain.create_info.image_extent);
             }
             winit::event::WindowEvent::RedrawRequested => {
                 let device = self.device.as_ref().unwrap();
@@ -374,7 +387,8 @@ impl winit::application::ApplicationHandler for App {
                         accum_index: state.accum_index,
                         frame_index: state.frame_index,
                         extent: [extent.width,extent.height],
-                        hdr_image: *state.hdr,
+                        hdr_image: *state.images.hdr,
+                        prims_image: *state.images.prims,
                         num_lights: state.num_lights as _,
                         swapchain_image: *state.swapchain_image_heap_indices[next_image as usize],
 

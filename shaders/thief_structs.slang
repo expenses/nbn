@@ -42,6 +42,7 @@ struct Uniforms {
     uint2 extent;
     uint hdr_image;
     uint swapchain_image;
+    uint prims_image;
     uint num_lights;
     uint accum_index;
     uint frame_index;
