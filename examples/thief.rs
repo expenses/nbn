@@ -4,20 +4,7 @@ use winit::event::ElementState;
 use winit::keyboard::KeyCode;
 use winit::window::CursorGrabMode;
 
-#[derive(Clone, Copy)]
-struct Uniforms {
-    view_inv: glam::Mat4,
-    proj_inv: glam::Mat4,
-    proj_view: glam::Mat4,
-    tlas: u64,
-    models: u64,
-    lights: u64,
-    blue_noise_sobol: u64,
-    blue_noise_ranking_tile: u64,
-    blue_noise_scrambling_tile: u64,
-}
-
-slang_struct::slang_include!("shaders/thief_models.slang");
+slang_struct::slang_include!("shaders/thief_structs.slang");
 
 fn create_hdr(device: &nbn::Device, extent: vk::Extent2D) -> nbn::IndexedImage {
     let image = device.create_image(nbn::ImageDescriptor {
@@ -375,31 +362,32 @@ impl winit::application::ApplicationHandler for App {
                         .unwrap();
 
                     uniforms[current_frame] = Uniforms {
-                        view_inv: view.inverse(),
-                        proj_inv: proj.inverse(),
-                        proj_view: (proj * view),
+                        view_inv: view.inverse().to_cols_array(),
+                        proj_inv: proj.inverse().to_cols_array(),
+                        proj_view: (proj * view).to_cols_array(),
                         tlas: *state.tlas,
                         models: *state.model_buffer,
-                        lights: *state.lights,
+                        light_values: *state.lights,
                         blue_noise_sobol: *state.blue_noise_buffers.sobol,
                         blue_noise_ranking_tile: *state.blue_noise_buffers.ranking_tile,
                         blue_noise_scrambling_tile: *state.blue_noise_buffers.scrambling_tile,
+                        accum_index: state.accum_index,
+                        frame_index: state.frame_index,
+                        extent: [extent.width,extent.height],
+                        hdr_image: *state.hdr,
+                        num_lights: state.num_lights as _,
+                        swapchain_image: *state.swapchain_image_heap_indices[next_image as usize],
+
                     };
 
                     let uniforms_ptr = *state.combined_uniform_buffer
                         + (std::mem::size_of::<Uniforms>() * current_frame) as u64;
 
-                    device.push_constants::<(u64, vk::Extent2D, u32, u32, u32, u32, u32)>(
+                    device.push_constants(
                         command_buffer,
-                        (
-                            uniforms_ptr,
-                            extent,
-                            *state.hdr,
-                            *state.swapchain_image_heap_indices[next_image as usize],
-                            state.num_lights as _,
-                            state.accum_index,
-                            state.frame_index,
-                        ),
+                        PushConstants  {
+                            uniforms: uniforms_ptr
+                        },
                     );
 
                     device.cmd_dispatch(

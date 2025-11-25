@@ -1,74 +1,25 @@
 import shared.colour;
 import shared.util;
 import fallback_bindings;
-import thief_models;
+import thief_structs;
 import shared.barycentrics;
-import shared.noise;
 import shared.restir;
 
-struct Uniforms {
-    float4x4 view_inv;
-    float4x4 proj_inv;
-    float4x4 proj_view;
-    uint64_t tlas;
-    Model* models;
-    float* light_values;
-    //Reservoir<int>* reserviors;
-    int* _blue_noise_sobol;
-    int* _blue_noise_ranking_tile;
-    int* _blue_noise_scrambling_tile;
-};
+[shader("compute")][NumThreads(8, 8, 1)]
+void write(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) {
+    Uniforms uniforms = *constants.uniforms;
 
-struct PushConstants {
-    Uniforms* uniforms;
-
-    uint2 extent;
-    uint image;
-    uint swapchain_image;
-    uint num_lights;
-    uint accum_index;
-    uint frame_index;
-
-    property BlueNoiseData blue_noise {
-        get {
-            BlueNoiseData data;
-            data.sobol = uniforms._blue_noise_sobol;
-            data.scrambling_tile = uniforms._blue_noise_scrambling_tile;
-            data.ranking_tile = uniforms._blue_noise_ranking_tile;
-            return data;
-        }
-    }
-
-    float blue_noise_sample(uint2 thread, uint dimension) {
-        return blue_noise.sample(thread, frame_index, dimension);
-    }
-
-    Light get_light(uint index) {
-        Light light;
-        light.position[0] = uniforms.light_values[index * 7 + 0];
-        light.position[1] = uniforms.light_values[index * 7 + 1];
-        light.position[2] = uniforms.light_values[index * 7 + 2];
-        light.color[0] = uniforms.light_values[index * 7 + 3];
-        light.color[1] = uniforms.light_values[index * 7 + 4];
-        light.color[2] = uniforms.light_values[index * 7 + 5];
-        light.intensity = uniforms.light_values[index * 7 + 6];
-        return light;
-    }
-}
-
-    [shader("compute")][NumThreads(8, 8, 1)] void
-    write(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) {
-    if (any(thread >= constants.extent)) {
+    if (any(thread >= uniforms.extent)) {
         return;
     }
 
-    let as = RaytracingAccelerationStructure(constants.uniforms.tlas);
+    let as = RaytracingAccelerationStructure(uniforms.tlas);
 
-    let d = thread_to_clip(thread, constants.extent);
-    let origin = mul(constants.uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
-    let temp = mul(constants.uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
+    let d = thread_to_clip(thread, uniforms.extent);
+    let origin = mul(uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    let temp = mul(uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
     let direction =
-        mul(constants.uniforms.view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
+        mul(uniforms.view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
 
     RayDesc desc;
     desc.Direction = direction;
@@ -89,18 +40,18 @@ struct PushConstants {
     var value = float3(0.0);
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        value = handle_hit(thread, query, constants);
+        value = handle_hit(thread, query, uniforms);
     }
 
-    RWTexture2D<float3> output = storage_images[constants.image];
-    output[thread] = lerp(output[thread], value, 1.0/float(constants.accum_index+1));
+    RWTexture2D<float3> output = storage_images[uniforms.hdr_image];
+    output[thread] = lerp(output[thread], value, 1.0/float(uniforms.accum_index+1));
 }
 
-float3 handle_hit(uint2 thread, RayQuery query, PushConstants constants) {
+float3 handle_hit(uint2 thread, RayQuery query, Uniforms uniforms) {
     let barycentrics = query.CommittedTriangleBarycentrics();
     let model_index = query.CommittedRayInstanceId();
     let primitive_index = query.CommittedRayPrimitiveIndex();
-    let model = constants.uniforms.models[model_index];
+    let model = uniforms.models[model_index];
 
 
     let indices = uint3(
@@ -122,50 +73,17 @@ float3 handle_hit(uint2 thread, RayQuery query, PushConstants constants) {
     let f = abs(dot(normal,l));
 
     let col = val;//colour_from_val(image_index) + (uv.xyy %1) * 0.1;
-    return col * calculate_lighting_ris(thread, constants,position, normal);
+    return col * calculate_lighting_ris(thread, uniforms, position, normal);
 }
 
-float3 calculate_lighting(uint2 thread, PushConstants constants, float3 position, float3 normal) {
-    let rand = constants.blue_noise_sample(thread, 0);
-
-    let light_index = uint(rand * constants.num_lights);
-    let pdf = 1.0 / float(constants.num_lights);
-
-    let light = constants.get_light(light_index);
-    let vector = light.position - position;
-    let distance_sq = dot(vector,vector);
-    let distance = sqrt(distance_sq);
-
-    let direction = vector / distance;
-
-    RayDesc desc;
-    desc.Origin = position;
-    desc.Direction = direction;
-    desc.TMin = 1e-3f;
-    desc.TMax = distance;
-    var query = RayQuery<
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-    query.TraceRayInline(
-        RaytracingAccelerationStructure(constants.uniforms.tlas),
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-        0xff,
-        desc
-    );
-    query.Proceed();
-    let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-
-    return visibility * light.color * light.intensity / distance_sq * abs(dot(normal, direction)) / pdf;
-}
-
-
-float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 position, float3 normal) {
-    float pdf = rcp(constants.num_lights);
+float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, float3 position, float3 normal) {
+    float pdf = rcp(uniforms.num_lights);
     var state = RestirState<int>(pdf, -1);
 
     uint num_samples = 16;
     for (uint i = 0; i < num_samples; i++) {
-        uint light_index = uint(constants.blue_noise_sample(thread, 1+i) * constants.num_lights);
-        Light light = constants.get_light(light_index);
+        uint light_index = uint(uniforms.blue_noise_sample(thread, 1+i) * uniforms.num_lights);
+        Light light = uniforms.get_light(light_index);
         let vector = position - light.position;
         let distance_sq = dot(vector,vector);
         let distance = sqrt(distance_sq);
@@ -173,7 +91,7 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
         let direction = vector / distance;
 
         let p_hat = length(light.color) * light.intensity * max(dot(normal, direction),0.0) / distance_sq;
-        state.update(light_index, p_hat, constants.blue_noise_sample(thread, 21+i));
+        state.update(light_index, p_hat, uniforms.blue_noise_sample(thread, 21+i));
     }
 
     let light_index = state.get_data();
@@ -182,7 +100,7 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
         return float3(0);
     }
 
-    let light = constants.get_light(light_index);
+    let light = uniforms.get_light(light_index);
     let vector = position - light.position;
 
     let distance_sq = dot(vector,vector);
@@ -198,7 +116,7 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
     var query = RayQuery<
         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
     query.TraceRayInline(
-        RaytracingAccelerationStructure(constants.uniforms.tlas),
+        RaytracingAccelerationStructure(uniforms.tlas),
         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
         0xff,
         desc
@@ -212,20 +130,6 @@ float3 calculate_lighting_ris(uint2 thread, PushConstants constants, float3 posi
     return radiance * state.get_weight();
 }
 
-
-bool trace_shadow_ray(RayDesc desc, RaytracingAccelerationStructure tlas) {
-    var query = RayQuery<
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-    query.TraceRayInline(
-        tlas,
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-        0xff,
-        desc
-    );
-    query.Proceed();
-    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
-}
-
 struct LightInterp {
     float4 pos: SV_Position;
     float3 col;
@@ -233,11 +137,12 @@ struct LightInterp {
 };
 
 [shader("vertex")] LightInterp lights_vert(uint vertex_id : SV_VertexID, uniform PushConstants constants) {
-    let light = constants.get_light(vertex_id);
+    let uniforms = constants.uniforms;
+    let light = uniforms.get_light(vertex_id);
 
     LightInterp output;
     output.col = light.color * light.intensity;
-    output.pos = mul(constants.uniforms.proj_view, float4(light.position, 1.0));
+    output.pos = mul(uniforms.proj_view, float4(light.position, 1.0));
     output.point_size = 2.0;
     return output;
 }
@@ -247,22 +152,14 @@ struct LightInterp {
 }
 
 [shader("compute")][NumThreads(8, 8, 1)] void resolve(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) {
-    if (any(thread >= constants.extent)) {
+    let uniforms = constants.uniforms;
+    
+    if (any(thread >= uniforms.extent)) {
         return;
     }
 
-    Texture2D<float3> input = storage_images[constants.image];
+    Texture2D<float3> input = storage_images[uniforms.hdr_image];
 
-    WTexture2D<float4> output = storage_images[constants.swapchain_image];
+    WTexture2D<float4> output = storage_images[uniforms.swapchain_image];
     output.Store(thread, float4(srgb_lin2encoded(input[thread]), 1));
-}
-
-uint linear_search(float[] values, float target) {
-    uint i;
-    while(true) {
-        if (target < values[i]) {
-            return i;
-        }
-        i++;
-    }
 }
