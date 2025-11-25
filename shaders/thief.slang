@@ -6,53 +6,35 @@ import shared.barycentrics;
 import shared.restir;
 import shared.constants;
 
-[shader("compute")][NumThreads(8, 8, 1)]
-void write(uint2 thread : SV_DispatchThreadID, uniform PushConstants constants) {
-    Uniforms uniforms = *constants.uniforms;
+struct PrimInterp {
+    float4 pos: SV_Position;
+    uint prim;
+};
 
-    if (any(thread >= uniforms.extent)) {
-        return;
-    }
+[shader("vertex")]
+PrimInterp mesh_vert(uint vertex_id : SV_VertexID, uniform PushConstants constants) {
+    let uniforms = constants.uniforms;
+    let model = uniforms.model;
+    
+    let index = model.indices[vertex_id];
+    let position = model.positions[index]; 
+    
+    PrimInterp output;
+    output.prim = vertex_id / 3;
+    output.pos = mul(uniforms.proj_view, float4(position, 1.0));
+    return output;
+}
 
-    let as = RaytracingAccelerationStructure(uniforms.tlas);
-
-    let d = thread_to_clip(thread, uniforms.extent);
-    let origin = mul(uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
-    let temp = mul(uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
-    let direction =
-        mul(uniforms.view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
-
-    RayDesc desc;
-    desc.Direction = direction;
-    desc.Origin = origin;
-    desc.TMax = 100000.0;
-    desc.TMin = 0.0;
-
-    var query = RayQuery<RAY_FLAG_NONE>();
-    query.TraceRayInline(
-        as,
-        RAY_FLAG_NONE,
-        0xff,
-        desc
-    );
-
-    query.Proceed();
-
-    var prim = MAX_UINT_VALUE;
-
-    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        prim = query.CommittedPrimitiveIndex();
-    }
-
-    WTexture2D<uint> output = storage_images[uniforms.prims_image];
-    output.Store(thread, prim);
+[shader("pixel")]
+uint mesh_frag(PrimInterp interp) {
+    return interp.prim;
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, float3 position, float3 normal) {
     float pdf = rcp(uniforms.num_lights);
     var state = RestirState<int>(pdf, -1);
 
-    uint num_samples = 16;
+    uint num_samples = 8;
     for (uint i = 0; i < num_samples; i++) {
         uint light_index = uint(uniforms.blue_noise_sample(thread, 1+i) * uniforms.num_lights);
         Light light = uniforms.get_light(light_index);
@@ -146,8 +128,7 @@ float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
         return float3(0);   
     }
     
-    let model_index = 0;
-    let model = uniforms.models[model_index];
+    let model = uniforms.model;
 
     let indices = uint3(
         model.read_index(prim * 3 + 0),
@@ -163,7 +144,7 @@ float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
         thread,
         uniforms.extent
     );
-    let pos = bary_and_pos.position;
+    let pos = bary_and_pos.position.val;
     let bary = bary_and_pos.barycentrics;
     
     let uv = interpolate(
@@ -180,5 +161,5 @@ float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
 
     let col = img.SampleGrad(uv.val, uv.dx, uv.dy);
 
-    return col * calculate_lighting_ris(thread, uniforms, pos.val, normal);
+    return col * calculate_lighting_ris(thread, uniforms, pos, normal);
 }

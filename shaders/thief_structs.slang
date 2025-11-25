@@ -32,7 +32,7 @@ struct Uniforms {
     float4x4 proj_inv;
     float4x4 proj_view;
     uint64_t tlas;
-    Model* models;
+    Model* model;
     float* light_values;
     //Reservoir<int>* reserviors;
     int* blue_noise_sobol;

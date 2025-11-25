@@ -8,28 +8,43 @@ slang_struct::slang_include!("shaders/thief_structs.slang");
 
 struct Images {
     hdr: nbn::IndexedImage,
-    prims: nbn::IndexedImage
+    prims: nbn::IndexedImage,
+    depth: nbn::Image,
 }
 
 impl Images {
     fn new(device: &nbn::Device, extent: vk::Extent2D) -> Self {
         Self {
-            hdr: device.register_owned_image(device.create_image(nbn::ImageDescriptor {
-                name: "hdrbuffer",
-                format: vk::Format::R16G16B16A16_SFLOAT,
+            hdr: device.register_owned_image(
+                device.create_image(nbn::ImageDescriptor {
+                    name: "hdrbuffer",
+                    format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent: extent.into(),
+                    usage: vk::ImageUsageFlags::STORAGE,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                }),
+                true,
+            ),
+            prims: device.register_owned_image(
+                device.create_image(nbn::ImageDescriptor {
+                    name: "primsbuffer",
+                    format: vk::Format::R32_UINT,
+                    extent: extent.into(),
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                }),
+                true,
+            ),
+            depth: device.create_image(nbn::ImageDescriptor {
+                name: "depthbuffer",
+                format: vk::Format::D32_SFLOAT,
                 extent: extent.into(),
-                usage: vk::ImageUsageFlags::STORAGE,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
                 mip_levels: 1,
-            }), true),
-            prims: device.register_owned_image(device.create_image(nbn::ImageDescriptor {
-                name: "primsbuffer",
-                format: vk::Format::R32_UINT,
-                extent: extent.into(),
-                usage: vk::ImageUsageFlags::STORAGE,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_levels: 1,
-            }), true)
+            }),
         }
     }
 }
@@ -39,7 +54,6 @@ struct WindowState {
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
-    pipeline: nbn::Pipeline,
     egui_winit: egui_winit::State,
     egui_render: nbn::egui::Renderer,
     alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
@@ -50,10 +64,11 @@ struct WindowState {
     camera_rig: dolly::rig::CameraRig,
     cursor_grabbed: bool,
     keyboard: KeyboardState,
-    gltf_data: CombinedModel,
+    _gltf_data: CombinedModel,
     lights: nbn::Buffer,
     num_lights: usize,
     lights_pipeline: nbn::Pipeline,
+    mesh_pipeline: nbn::Pipeline,
     images: Images,
     resolve_pipeline: nbn::Pipeline,
     frame_index: u32,
@@ -61,6 +76,7 @@ struct WindowState {
     accum: bool,
     blue_noise_buffers: nbn::blue_noise::BlueNoiseBuffers,
     combined_uniform_buffer: nbn::Buffer,
+    num_indices: u32,
 }
 
 struct App {
@@ -152,14 +168,35 @@ impl winit::application::ApplicationHandler for App {
                 .color_write_mask(vk::ColorComponentFlags::RGBA)],
             flags: nbn::GraphicsPipelineFlags::POINTS,
             depth: Default::default(),
-            cull_mode: Default::default(),
         });
-        let pipeline = device.create_compute_pipeline(&shader, c"write");
-
+        let mesh_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+            name: "mesh pipeline",
+            shaders: nbn::GraphicsPipelineShaders::Legacy {
+                vertex: nbn::ShaderDesc {
+                    module: &shader,
+                    entry_point: c"mesh_vert",
+                },
+                fragment: nbn::ShaderDesc {
+                    module: &shader,
+                    entry_point: c"mesh_frag",
+                },
+            },
+            color_attachment_formats: &[vk::Format::R32_UINT],
+            blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+                .color_write_mask(vk::ColorComponentFlags::RGBA)],
+            flags: Default::default(),
+            depth: nbn::GraphicsPipelineDepthDesc {
+                write_enable: true,
+                test_enable: true,
+                compare_op: vk::CompareOp::GREATER,
+                format: vk::Format::D32_SFLOAT,
+            },
+        });
         let egui_ctx = egui::Context::default();
 
         self.window_state = Some(WindowState {
             tlas,
+            mesh_pipeline,
             _instances_buffer: instance_buffer,
             alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
             egui_render: nbn::egui::Renderer::new(
@@ -188,7 +225,6 @@ impl winit::application::ApplicationHandler for App {
             images: Images::new(&device, swapchain.create_info.image_extent),
             resolve_pipeline: device.create_compute_pipeline(&shader, c"resolve"),
             swapchain,
-            pipeline,
             blue_noise_buffers,
             lights_pipeline,
             model_buffer,
@@ -211,12 +247,13 @@ impl winit::application::ApplicationHandler for App {
                 .build(),
             cursor_grabbed: false,
             keyboard: Default::default(),
-            gltf_data,
+            _gltf_data: gltf_data,
             lights,
             num_lights,
             accum_index: 0,
             frame_index: 0,
             accum: false,
+            num_indices: model.num_indices,
         });
         self.device = Some(device);
     }
@@ -335,12 +372,6 @@ impl winit::application::ApplicationHandler for App {
 
                     device.bind_internal_descriptor_sets_to_all(command_buffer);
 
-                    device.cmd_bind_pipeline(
-                        **command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        *state.pipeline,
-                    );
-
                     let forward = state.keyboard.forwards as i32 - state.keyboard.backwards as i32;
                     let right = state.keyboard.right as i32 - state.keyboard.left as i32;
 
@@ -379,19 +410,18 @@ impl winit::application::ApplicationHandler for App {
                         proj_inv: proj.inverse().to_cols_array(),
                         proj_view: (proj * view).to_cols_array(),
                         tlas: *state.tlas,
-                        models: *state.model_buffer,
+                        model: *state.model_buffer,
                         light_values: *state.lights,
                         blue_noise_sobol: *state.blue_noise_buffers.sobol,
                         blue_noise_ranking_tile: *state.blue_noise_buffers.ranking_tile,
                         blue_noise_scrambling_tile: *state.blue_noise_buffers.scrambling_tile,
                         accum_index: state.accum_index,
                         frame_index: state.frame_index,
-                        extent: [extent.width,extent.height],
+                        extent: [extent.width, extent.height],
                         hdr_image: *state.images.hdr,
                         prims_image: *state.images.prims,
                         num_lights: state.num_lights as _,
                         swapchain_image: *state.swapchain_image_heap_indices[next_image as usize],
-
                     };
 
                     let uniforms_ptr = *state.combined_uniform_buffer
@@ -399,16 +429,48 @@ impl winit::application::ApplicationHandler for App {
 
                     device.push_constants(
                         command_buffer,
-                        PushConstants  {
-                            uniforms: uniforms_ptr
+                        PushConstants {
+                            uniforms: uniforms_ptr,
                         },
                     );
 
-                    device.cmd_dispatch(
+                    device.begin_rendering(
+                        command_buffer,
+                        extent.width,
+                        extent.height,
+                        &[vk::RenderingAttachmentInfo::default()
+                            .image_view(*state.images.prims.image.view)
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .load_op(vk::AttachmentLoadOp::CLEAR)
+                            .store_op(vk::AttachmentStoreOp::STORE)],
+                        Some(
+                            &vk::RenderingAttachmentInfo::default()
+                                .image_view(*state.images.depth.view)
+                                .image_layout(vk::ImageLayout::GENERAL)
+                                .load_op(vk::AttachmentLoadOp::CLEAR)
+                                .store_op(vk::AttachmentStoreOp::STORE),
+                        ),
+                    );
+                    device.cmd_bind_pipeline(
                         **command_buffer,
-                        extent.width.div_ceil(8),
-                        extent.height.div_ceil(8),
-                        1,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        *state.mesh_pipeline,
+                    );
+                    device.cmd_draw(**command_buffer, state.num_indices as _, 1, 0, 0);
+                    device.cmd_end_rendering(**command_buffer);
+
+                    device.cmd_pipeline_barrier2(
+                        **command_buffer,
+                        &vk::DependencyInfo::default().image_memory_barriers(&[
+                            nbn::ImageBarrier {
+                                image,
+                                src: Some(nbn::BarrierOp::ColorAttachmentReadWrite),
+                                dst: nbn::BarrierOp::ComputeStorageWrite,
+                                src_queue_family_index: command_buffer.queue_family_index,
+                                dst_queue_family_index: command_buffer.queue_family_index,
+                            }
+                            .into(),
+                        ]),
                     );
 
                     device.cmd_bind_pipeline(
@@ -775,12 +837,12 @@ fn load_gltf(
     (
         CombinedModel {
             acceleration_structure,
-            positions,
-            indices,
-            uvs,
-            normals,
-            image_indices,
-            images,
+            _positions: positions,
+            _indices: indices,
+            _uvs: uvs,
+            _normals: normals,
+            _image_indices: image_indices,
+            _images: images,
         },
         model,
         lights,
@@ -789,10 +851,10 @@ fn load_gltf(
 
 struct CombinedModel {
     acceleration_structure: nbn::AccelerationStructure,
-    positions: nbn::Buffer,
-    indices: nbn::Buffer,
-    uvs: nbn::Buffer,
-    normals: nbn::Buffer,
-    image_indices: nbn::Buffer,
-    images: Vec<nbn::IndexedImage>,
+    _positions: nbn::Buffer,
+    _indices: nbn::Buffer,
+    _uvs: nbn::Buffer,
+    _normals: nbn::Buffer,
+    _image_indices: nbn::Buffer,
+    _images: Vec<nbn::IndexedImage>,
 }
