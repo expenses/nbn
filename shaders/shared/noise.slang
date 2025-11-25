@@ -1,3 +1,5 @@
+import random;
+
 // x and y are in pixels.
 public
 
@@ -52,7 +54,7 @@ struct BlueNoiseData {
     }
 };
 
-public struct ThreadBlueNoise {
+public struct ThreadBlueNoise: Rng {
     BlueNoiseData data;
     uint2 thread;
     uint frame_index;

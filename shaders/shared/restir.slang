@@ -1,3 +1,5 @@
+import random;
+
 struct Reservoir<T> {
     // Data (e.g. the index of most important light) of the sample
     T Y;
@@ -11,18 +13,17 @@ struct Reservoir<T> {
     __init(T initial) {
         Y = initial;
     }
-    
+
     T get_data() {
         return Y;
     }
 
     [mutating]
-    bool update(T value, float w, float c, float rand) {
+    bool update<R: Rng>(T value, float w, float c, R* rng) {
         W_sum += w;
         M += c;
 
-        if ( rand < w / W_sum  )
-        {
+        if (rng.rand() < w / W_sum) {
             Y = value;
             return true;
         }
@@ -31,8 +32,8 @@ struct Reservoir<T> {
     }
 
     [mutating]
-    bool update_from_reservoir(Reservoir<T> reservoir, float p_hat, float rand) {
-        return update(reservoir.Y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rand);
+    bool update_from_reservoir<R: Rng>(Reservoir<T> reservoir, float p_hat, R* rng) {
+        return update(reservoir.Y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rng);
     }
 
     float average_weight() {
@@ -55,9 +56,9 @@ struct RestirState<T> {
     }
 
     [mutating]
-    void update(T value, float p_hat, float rand) {
+    void update<R: Rng>(T value, float p_hat, R* rng) {
         let weight = p_hat / pdf;
-        res.update(value, weight, 1, rand);
+        res.update(value, weight, 1, rng);
     }
 
     T get_data() {
