@@ -10,6 +10,7 @@ struct Images {
     hdr: nbn::IndexedImage,
     prims: nbn::IndexedImage,
     depth: nbn::Image,
+    reservoirs: nbn::Buffer,
 }
 
 impl Images {
@@ -45,6 +46,13 @@ impl Images {
                 aspect_mask: vk::ImageAspectFlags::DEPTH,
                 mip_levels: 1,
             }),
+            reservoirs: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "reservoirs",
+                    size: extent.width as u64 * extent.height as u64 * 4 * 4,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
         }
     }
 }
@@ -77,6 +85,7 @@ struct WindowState {
     blue_noise_buffers: nbn::blue_noise::BlueNoiseBuffers,
     combined_uniform_buffer: nbn::Buffer,
     num_indices: u32,
+    temporal_reuse: bool,
 }
 
 struct App {
@@ -254,6 +263,7 @@ impl winit::application::ApplicationHandler for App {
             frame_index: 0,
             accum: false,
             num_indices: model.num_indices,
+            temporal_reuse: false,
         });
         self.device = Some(device);
     }
@@ -299,6 +309,8 @@ impl winit::application::ApplicationHandler for App {
                     let allocator = device.allocator.inner.read();
                     egui::Window::new(".").show(egui_ctx, |ui| {
                         ui.checkbox(&mut state.accum, "accum");
+                        ui.checkbox(&mut state.temporal_reuse, "temporal_reuse");
+
                         //state.alloc_vis.render_memory_block_ui(ui, &allocator);
                         //state.alloc_vis.render_breakdown_ui(ui, &allocator);
                     });
@@ -422,6 +434,8 @@ impl winit::application::ApplicationHandler for App {
                         prims_image: *state.images.prims,
                         num_lights: state.num_lights as _,
                         swapchain_image: *state.swapchain_image_heap_indices[next_image as usize],
+                        temporal_reuse: state.temporal_reuse as _,
+                        reservoirs: *state.images.reservoirs,
                     };
 
                     let uniforms_ptr = *state.combined_uniform_buffer

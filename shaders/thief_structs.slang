@@ -1,4 +1,5 @@
 import shared.noise;
+import shared.restir;
 
 [Flags] enum ModelFlags { Indices32Bit };
 
@@ -34,7 +35,7 @@ struct Uniforms {
     uint64_t tlas;
     Model* model;
     float* light_values;
-    //Reservoir<int>* reserviors;
+    Reservoir<int>* reservoirs;
     int* blue_noise_sobol;
     int* blue_noise_ranking_tile;
     int* blue_noise_scrambling_tile;
@@ -46,19 +47,18 @@ struct Uniforms {
     uint num_lights;
     uint accum_index;
     uint frame_index;
+    uint temporal_reuse;
 
-    property BlueNoiseData blue_noise {
-        get {
-            BlueNoiseData data;
-            data.sobol = blue_noise_sobol;
-            data.scrambling_tile = blue_noise_scrambling_tile;
-            data.ranking_tile = blue_noise_ranking_tile;
-            return data;
-        }
+    ThreadBlueNoise blue_noise(uint2 thread) {
+        BlueNoiseData data;
+        data.sobol = blue_noise_sobol;
+        data.scrambling_tile = blue_noise_scrambling_tile;
+        data.ranking_tile = blue_noise_ranking_tile;
+        return ThreadBlueNoise(data, frame_index, thread);
     }
-
-    float blue_noise_sample(uint2 thread, uint dimension) {
-        return blue_noise.sample(thread, frame_index, dimension);
+    
+    uint thread_to_index(uint2 thread) {
+        return thread.x + thread.y * extent.x;
     }
 
     Light get_light(uint index) {
