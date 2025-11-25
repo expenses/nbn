@@ -94,7 +94,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
     var p_hat = length(contribution);
     state.update_from_frame_sample(p_hat);
 
-    if (uniforms.temporal_reuse!=0) {
+    if (uniforms.flags & FrameFlags::TemporalReuse) {
         var temporal_reservoir = Reservoir<int>(-1);
 
         // Update from current reservoir
@@ -102,21 +102,28 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
 
         // Get clamp previous reservoir and clamp
         var previous_reservoir = uniforms.reservoirs[reservoir_index];
-        previous_reservoir.M = min(20.0 * state.res.M, previous_reservoir.M);
+        previous_reservoir.clamp(20 * num_samples);
 
         // Update from prevous reservoir
         let p_hat_prev = length(get_unshadowed_contribution(point, previous_reservoir.get_data(), uniforms));
         temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, &blue_noise);
 
-        let p_hat = temporal_reservoir.get_data() != -1 ? length(get_unshadowed_contribution(point, temporal_reservoir.get_data(), uniforms)) : 0.0;
+        p_hat = temporal_reservoir.get_data() != -1 ? length(get_unshadowed_contribution(point, temporal_reservoir.get_data(), uniforms)) : 0.0;
         temporal_reservoir.set_weight(p_hat);
         state.res = temporal_reservoir;
+        
+        if (state.get_data() != -1) {
+            if (uniforms.flags & FrameFlags::OneRayPerPixel) {
+                contribution = get_unshadowed_contribution(point, state.get_data(), uniforms);
+            } else {
+                contribution = get_shadowed_contribution(point, state.get_data(), uniforms);
+            }
+        } else {
+            contribution = float3(0.0);
+        }
+        p_hat = length(contribution);
+        state.update_from_frame_sample(p_hat);
     }
-
-    contribution = state.get_data() != -1 ? get_shadowed_contribution(point, state.get_data(), uniforms) : float3(0.0);
-    p_hat = length(contribution);
-    state.update_from_frame_sample(p_hat);
-
 
     uniforms.reservoirs[reservoir_index] = state.res;
 

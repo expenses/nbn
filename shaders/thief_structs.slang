@@ -1,7 +1,16 @@
 import shared.noise;
 import shared.restir;
 
-[Flags] enum ModelFlags { Indices32Bit };
+[Flags]
+enum ModelFlags {
+    Indices32Bit
+};
+
+[Flags]
+enum FrameFlags {
+    TemporalReuse,
+    OneRayPerPixel
+};
 
 struct Model {
     float3* positions;
@@ -47,7 +56,7 @@ struct Uniforms {
     uint num_lights;
     uint accum_index;
     uint frame_index;
-    uint temporal_reuse;
+    FrameFlags flags;
 
     ThreadBlueNoise blue_noise(uint2 thread) {
         BlueNoiseData data;

@@ -86,6 +86,7 @@ struct WindowState {
     combined_uniform_buffer: nbn::Buffer,
     num_indices: u32,
     temporal_reuse: bool,
+    one_ray_per_pixel: bool,
 }
 
 struct App {
@@ -264,6 +265,7 @@ impl winit::application::ApplicationHandler for App {
             accum: false,
             num_indices: model.num_indices,
             temporal_reuse: false,
+            one_ray_per_pixel: true,
         });
         self.device = Some(device);
     }
@@ -310,6 +312,7 @@ impl winit::application::ApplicationHandler for App {
                     egui::Window::new(".").show(egui_ctx, |ui| {
                         ui.checkbox(&mut state.accum, "accum");
                         ui.checkbox(&mut state.temporal_reuse, "temporal_reuse");
+                        ui.checkbox(&mut state.one_ray_per_pixel, "one_ray_per_pixel");
 
                         //state.alloc_vis.render_memory_block_ui(ui, &allocator);
                         //state.alloc_vis.render_breakdown_ui(ui, &allocator);
@@ -434,7 +437,8 @@ impl winit::application::ApplicationHandler for App {
                         prims_image: *state.images.prims,
                         num_lights: state.num_lights as _,
                         swapchain_image: *state.swapchain_image_heap_indices[next_image as usize],
-                        temporal_reuse: state.temporal_reuse as _,
+                        flags: (state.temporal_reuse as u32)
+                            | ((state.one_ray_per_pixel as u32) << 1),
                         reservoirs: *state.images.reservoirs,
                     };
 
