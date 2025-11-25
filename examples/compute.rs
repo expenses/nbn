@@ -49,14 +49,13 @@ fn main() {
         color_attachment_formats: &[vk::Format::R8G8B8A8_UNORM],
         blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
             .color_write_mask(vk::ColorComponentFlags::RGBA)],
-        conservative_rasterization: false,
         depth: nbn::GraphicsPipelineDepthDesc {
             write_enable: true,
             test_enable: true,
             compare_op: vk::CompareOp::GREATER,
             format: vk::Format::D32_SFLOAT,
         },
-        cull_mode: Default::default(),
+        flags: Default::default(),
     });
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);

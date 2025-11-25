@@ -906,7 +906,7 @@ impl Device {
     pub fn register_owned_image(&self, image: Image, is_storage: bool) -> IndexedImage {
         IndexedImage {
             index: self.register_image(*image.view, is_storage),
-            image
+            image,
         }
     }
 
@@ -1323,7 +1323,13 @@ impl Device {
                         &vk::PipelineRasterizationStateCreateInfo::default()
                             .line_width(1.0)
                             .polygon_mode(vk::PolygonMode::FILL)
-                            .cull_mode(desc.cull_mode)
+                            .cull_mode(
+                                if desc.flags.contains(GraphicsPipelineFlags::BACKFACE_CULLING) {
+                                    vk::CullModeFlags::BACK
+                                } else {
+                                    vk::CullModeFlags::NONE
+                                },
+                            )
                             .push_next(&mut conservative_rasterization),
                     )
                     .viewport_state(
@@ -1842,6 +1848,7 @@ bitflags::bitflags! {
     pub struct GraphicsPipelineFlags: u8 {
         const CONSERVATIVE_RASTERIZATION = 1;
         const POINTS = 1 << 1;
+        const BACKFACE_CULLING = 1 << 2;
     }
 }
 
@@ -1851,7 +1858,6 @@ pub struct GraphicsPipelineDesc<'a> {
     pub color_attachment_formats: &'a [vk::Format],
     pub blend_attachments: &'a [vk::PipelineColorBlendAttachmentState],
     pub flags: GraphicsPipelineFlags,
-    pub cull_mode: vk::CullModeFlags,
     pub depth: GraphicsPipelineDepthDesc,
 }
 

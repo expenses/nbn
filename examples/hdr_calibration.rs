@@ -24,7 +24,6 @@ fn create_pipelines(
                 .color_write_mask(vk::ColorComponentFlags::RGBA)],
             flags: Default::default(),
             depth: Default::default(),
-            cull_mode: Default::default(),
         })
     };
 

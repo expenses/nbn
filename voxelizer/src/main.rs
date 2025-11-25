@@ -233,7 +233,6 @@ fn main() {
                 entry_point: c"fragment",
             },
         },
-        cull_mode: Default::default(),
         blend_attachments: &[],
         color_attachment_formats: &[],
         conservative_rasterization: true,

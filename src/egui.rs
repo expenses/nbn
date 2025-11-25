@@ -49,7 +49,6 @@ impl Renderer {
 
                 flags: Default::default(),
                 depth: nbn::GraphicsPipelineDepthDesc::default(),
-                cull_mode: vk::CullModeFlags::NONE,
             }),
 
             buffer: device
