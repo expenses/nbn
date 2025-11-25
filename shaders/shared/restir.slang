@@ -11,6 +11,10 @@ struct Reservoir<T> {
     __init(T initial) {
         Y = initial;
     }
+    
+    T get_data() {
+        return Y;
+    }
 
     [mutating]
     bool update(T value, float w, float c, float rand) {
@@ -57,7 +61,7 @@ struct RestirState<T> {
     }
 
     T get_data() {
-        return res.Y;
+        return res.get_data();
     }
 
     [mutating]
