@@ -51,3 +51,23 @@ struct BlueNoiseData {
         );
     }
 };
+
+public struct ThreadBlueNoise {
+    BlueNoiseData data;
+    uint2 thread;
+    uint frame_index;
+    uint dimension = 0;
+    
+    public __init(BlueNoiseData data_, uint frame_index_, uint2 thread_) {
+        data = data_;
+        frame_index = frame_index_;
+        thread = thread_;
+    }
+    
+    [mutating]
+    public float rand() {
+        let value = data.sample(thread, frame_index, dimension);
+        dimension++;
+        return value;
+    }
+};
