@@ -398,7 +398,7 @@ impl winit::application::ApplicationHandler for App {
                         .translate(
                             ((glam::Vec3::from_array(prev_transform.forward()) * forward as f32
                                 + glam::Vec3::from_array(prev_transform.right()) * right as f32)
-                                * 0.25)
+                                * 1.0)
                                 .to_array(),
                         );
 
@@ -708,22 +708,28 @@ fn load_gltf(
                 .map(|ext| (node, ext.light))
         })
         .map(|(node, index)| {
-            let pos = if let goth_gltf::NodeTransform::Set { translation, .. } = node.transform() {
-                translation
+            let (pos, rotation) = if let goth_gltf::NodeTransform::Set { translation, rotation, .. } = node.transform() {
+                (translation, rotation)
             } else {
                 panic!()
             };
 
             let light = &gltf.extensions.khr_lights_punctual.as_ref().unwrap().lights[index];
-            
-            let (inner_cone_angle, outer_cone_angle) = light.spot.map(|spot| (spot.inner_cone_angle, spot.outer_cone_angle)).unwrap_or((-1.0, -1.0));
+
+            let (spotlight_angle_scale, spotlight_angle_offset) = light.spot.map(|spot| {
+                // https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_lights_punctual/README.md#inner-and-outer-cone-angles
+                let spotlight_angle_scale = 1.0 / 0.000001_f32.max(spot.inner_cone_angle.cos() - spot.outer_cone_angle.cos());
+                let spotlight_angle_offset = -spot.outer_cone_angle.cos() * spotlight_angle_scale;
+                (spotlight_angle_scale, spotlight_angle_offset)
+            }).unwrap_or((0.0, 1.0));
             
             Light {
                 position: pos,
                 emission: (glam::Vec3::from(light.color) * light.intensity).into(),
-                inner_cone_angle, outer_cone_angle
+                spotlight_angle_scale, spotlight_angle_offset,
+                spotlight_direction: (glam::Quat::from_array(rotation) * glam::Vec3::Z).into()
             }
-            
+
         })
         .collect();
 

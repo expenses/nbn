@@ -41,13 +41,21 @@ float3 get_unshadowed_contribution(SamplePoint point, uint blue_noise_state, Uni
     let light_index = uint(blue_noise.rand() * uniforms.num_lights);
     let light = uniforms.get_light(light_index);
 
+    var emission = light.emission;
+
     let vector = light.position - point.position;
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
 
     let direction = vector / distance;
 
-    return light.emission * (max(dot(point.normal, direction),0.0) / distance_sq);
+    // spotlights
+    {
+        let theta = dot(direction, light.spotlight_direction);
+        emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
+    }
+
+    return emission * (max(dot(point.normal, direction), 0.0) / distance_sq);
 }
 
 float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Uniforms uniforms) {
@@ -55,11 +63,19 @@ float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Unifo
     let light_index = uint(blue_noise.rand() * uniforms.num_lights);
     let light = uniforms.get_light(light_index);
 
+    var emission = light.emission;
+
     let vector = light.position - point.position;
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
 
     let direction = vector / distance;
+
+    // spotlights
+    {
+        let theta = dot(direction, light.spotlight_direction);
+        emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
+    }
 
     RayDesc desc;
     desc.Origin = point.position;
@@ -77,7 +93,7 @@ float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Unifo
     query.Proceed();
     let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
-    return light.emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
+    return emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point) {

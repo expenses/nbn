@@ -34,12 +34,9 @@ struct Model {
 struct Light {
     float3 emission;
     float3 position;
-    float inner_cone_angle;
-    float outer_cone_angle;
-
-    bool is_spotlight() {
-        return outer_cone_angle > 0.0;
-    }
+    float spotlight_angle_scale;
+    float spotlight_angle_offset;
+    float3 spotlight_direction;
 };
 
 struct Uniforms {
@@ -48,7 +45,7 @@ struct Uniforms {
     float4x4 proj_view;
     uint64_t tlas;
     Model* model;
-    float[8]* lights;
+    float[11]* lights;
     Reservoir<uint>* reservoirs;
     int* blue_noise_sobol;
     int* blue_noise_ranking_tile;
