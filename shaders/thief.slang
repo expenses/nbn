@@ -39,48 +39,48 @@ struct SamplePoint {
 struct State: Contribution<uint> {
     SamplePoint point;
     Uniforms uniforms;
-    
+
     float3 get_unshadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
         let light_index = uint(blue_noise.rand() * uniforms.num_lights);
         let light = uniforms.get_light(light_index);
-    
+
         var emission = light.emission;
-    
+
         let vector = light.position - point.position;
         let distance_sq = dot(vector,vector);
         let distance = sqrt(distance_sq);
-    
+
         let direction = vector / distance;
-    
+
         // spotlights
         {
             let theta = dot(direction, light.spotlight_direction);
             emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
         }
-    
+
         return emission * (max(dot(point.normal, direction), 0.0) / distance_sq);
     }
-    
+
     float3 get_shadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
         let light_index = uint(blue_noise.rand() * uniforms.num_lights);
         let light = uniforms.get_light(light_index);
-    
+
         var emission = light.emission;
-    
+
         let vector = light.position - point.position;
         let distance_sq = dot(vector,vector);
         let distance = sqrt(distance_sq);
-    
+
         let direction = vector / distance;
-    
+
         // spotlights
         {
             let theta = dot(direction, light.spotlight_direction);
             emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
         }
-    
+
         RayDesc desc;
         desc.Origin = point.position;
         desc.Direction = direction;
@@ -96,9 +96,9 @@ struct State: Contribution<uint> {
         );
         query.Proceed();
         let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-    
+
         return emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
-    }    
+    }
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point) {
@@ -241,7 +241,7 @@ float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
     point.position = pos;
     // normals are flipped
     point.normal = normal;
-    
+
     if (dot(uniforms.camera_pos - pos, normal) < 0) {
         point.normal = -normal;
     }
