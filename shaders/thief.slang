@@ -5,6 +5,7 @@ import thief_structs;
 import shared.barycentrics;
 import shared.restir;
 import shared.constants;
+import shared.noise;
 
 struct PrimInterp {
     float4 pos: SV_Position;
@@ -35,7 +36,9 @@ struct SamplePoint {
     float3 normal;
 }
 
-float3 get_unshadowed_contribution(SamplePoint point, uint light_index, Uniforms uniforms) {
+float3 get_unshadowed_contribution(SamplePoint point, uint blue_noise_state, Uniforms uniforms) {
+    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data(), blue_noise_state);
+    let light_index = uint(blue_noise.rand() * uniforms.num_lights);
     let light = uniforms.get_light(light_index);
 
     let vector = point.position - light.position;
@@ -47,7 +50,9 @@ float3 get_unshadowed_contribution(SamplePoint point, uint light_index, Uniforms
     return light.color * (light.intensity * max(dot(point.normal, direction),0.0) / distance_sq);
 }
 
-float3 get_shadowed_contribution(SamplePoint point, uint light_index, Uniforms uniforms) {
+float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Uniforms uniforms) {
+    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data(), blue_noise_state);
+    let light_index = uint(blue_noise.rand() * uniforms.num_lights);
     let light = uniforms.get_light(light_index);
 
     let vector = point.position - light.position;
@@ -79,28 +84,35 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
     var blue_noise = uniforms.blue_noise(thread);
 
     let reservoir_index = uniforms.thread_to_index(thread);
-    let pdf = rcp(uniforms.num_lights);
+    // the pdf is 1/num_lights but we're dividing by that
+    let recip_pdf = uniforms.num_lights;
 
-    var state = RestirState<int>(pdf, -1);
+    var frame_reservoir = Reservoir<uint>(MAX_UINT_VALUE);
 
     uint num_samples = 8;
     for (uint i = 0; i < num_samples; i++) {
-        uint light_index = uint(blue_noise.rand() * uniforms.num_lights);
-        let p_hat = length(get_unshadowed_contribution(point, light_index, uniforms));
-        state.update(light_index, p_hat, &blue_noise);
+        // Get the unshadowed contribution for a random light
+        let rng_state = blue_noise.state();
+        let p_hat = length(get_unshadowed_contribution(point, rng_state, uniforms));
+        let weight = p_hat * recip_pdf;
+        // Advance the rng state otherwise later lights have higher rng values.
+        // TODO: Change this to an advance by 3 in the future as soft shadows will require 2
+        // random values
+        blue_noise.advance(1);
+        frame_reservoir.update(rng_state, weight, 1, &blue_noise);
     }
 
-    var contribution = state.get_data() != -1 ? get_shadowed_contribution(point, state.get_data(), uniforms) : float3(0.0);
+    var contribution = frame_reservoir.get_data() != MAX_UINT_VALUE ? get_shadowed_contribution(point, frame_reservoir.get_data(), uniforms) : float3(0.0);
     var p_hat = length(contribution);
-    state.update_from_frame_sample(p_hat);
+    frame_reservoir.set_weight(p_hat);
 
     if (uniforms.flags & FrameFlags::TemporalReuse) {
-        var temporal_reservoir = Reservoir<int>(-1);
+        var temporal_reservoir = Reservoir<uint>(MAX_UINT_VALUE);
 
         // Update from current reservoir
-        temporal_reservoir.update_from_reservoir(state.res, p_hat, &blue_noise);
+        temporal_reservoir.update_from_reservoir(frame_reservoir, p_hat, &blue_noise);
 
-        // Get clamp previous reservoir and clamp
+        // Get clamp previous reservoir and clamp to the last 20 frames.
         var previous_reservoir = uniforms.reservoirs[reservoir_index];
         previous_reservoir.clamp(20 * num_samples);
 
@@ -108,26 +120,26 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
         let p_hat_prev = length(get_unshadowed_contribution(point, previous_reservoir.get_data(), uniforms));
         temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, &blue_noise);
 
-        p_hat = temporal_reservoir.get_data() != -1 ? length(get_unshadowed_contribution(point, temporal_reservoir.get_data(), uniforms)) : 0.0;
+        p_hat = temporal_reservoir.get_data() != MAX_UINT_VALUE ? length(get_unshadowed_contribution(point, temporal_reservoir.get_data(), uniforms)) : 0.0;
         temporal_reservoir.set_weight(p_hat);
-        state.res = temporal_reservoir;
-        
-        if (state.get_data() != -1) {
+        frame_reservoir = temporal_reservoir;
+
+        if (frame_reservoir.get_data() != MAX_UINT_VALUE) {
             if (uniforms.flags & FrameFlags::OneRayPerPixel) {
-                contribution = get_unshadowed_contribution(point, state.get_data(), uniforms);
+                contribution = get_unshadowed_contribution(point, frame_reservoir.get_data(), uniforms);
             } else {
-                contribution = get_shadowed_contribution(point, state.get_data(), uniforms);
+                contribution = get_shadowed_contribution(point, frame_reservoir.get_data(), uniforms);
             }
         } else {
             contribution = float3(0.0);
         }
         p_hat = length(contribution);
-        state.update_from_frame_sample(p_hat);
+        frame_reservoir.set_weight(p_hat);
     }
 
-    uniforms.reservoirs[reservoir_index] = state.res;
+    uniforms.reservoirs[reservoir_index] = frame_reservoir;
 
-    return contribution * state.get_weight();
+    return contribution * frame_reservoir.get_weight();
 }
 
 struct LightInterp {

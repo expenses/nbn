@@ -44,7 +44,7 @@ struct Uniforms {
     uint64_t tlas;
     Model* model;
     float* light_values;
-    Reservoir<int>* reservoirs;
+    Reservoir<uint>* reservoirs;
     int* blue_noise_sobol;
     int* blue_noise_ranking_tile;
     int* blue_noise_scrambling_tile;
@@ -58,12 +58,16 @@ struct Uniforms {
     uint frame_index;
     FrameFlags flags;
 
-    ThreadBlueNoise blue_noise(uint2 thread) {
+    BlueNoiseData blue_noise_data() {
         BlueNoiseData data;
         data.sobol = blue_noise_sobol;
         data.scrambling_tile = blue_noise_scrambling_tile;
         data.ranking_tile = blue_noise_ranking_tile;
-        return ThreadBlueNoise(data, frame_index, thread);
+        return data;
+    }
+
+    ThreadBlueNoise blue_noise(uint2 thread) {
+        return ThreadBlueNoise(blue_noise_data(), frame_index, thread);
     }
     
     uint thread_to_index(uint2 thread) {
