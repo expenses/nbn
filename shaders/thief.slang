@@ -6,6 +6,7 @@ import shared.barycentrics;
 import shared.restir;
 import shared.constants;
 import shared.noise;
+import shared.sampling;
 
 struct PrimInterp {
     float4 pos: SV_Position;
@@ -98,6 +99,42 @@ struct State: Contribution<uint> {
         let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
         return emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
+    }
+}
+
+struct Environment: Contribution<uint> {
+    SamplePoint point;
+    Uniforms uniforms;
+
+    float3 get_unshadowed_contribution(uint data) {
+        return float3(1);
+    }
+
+    float3 get_shadowed_contribution(uint blue_noise_state) {
+        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
+
+        let hemisphere_dir = sample_cosine_weighted_hemisphere(&blue_noise);
+        let rotated_dir = mul(build_tbn(point.normal), hemisphere_dir);
+
+        RayDesc desc;
+        desc.Origin = point.position;
+        desc.Direction = rotated_dir;
+        desc.TMin = 1e-4f;
+        desc.TMax = 100000.0;
+        var query = RayQuery<
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        query.TraceRayInline(
+            RaytracingAccelerationStructure(uniforms.tlas),
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            0xff,
+            desc
+        );
+        query.Proceed();
+        let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
+
+
+
+        return visibility;
     }
 }
 
