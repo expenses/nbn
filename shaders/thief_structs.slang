@@ -32,9 +32,14 @@ struct Model {
 };
 
 struct Light {
+    float3 emission;
     float3 position;
-    float3 color;
-    float intensity;
+    float inner_cone_angle;
+    float outer_cone_angle;
+
+    bool is_spotlight() {
+        return outer_cone_angle > 0.0;
+    }
 };
 
 struct Uniforms {
@@ -43,7 +48,7 @@ struct Uniforms {
     float4x4 proj_view;
     uint64_t tlas;
     Model* model;
-    float* light_values;
+    float[8]* lights;
     Reservoir<uint>* reservoirs;
     int* blue_noise_sobol;
     int* blue_noise_ranking_tile;
@@ -58,32 +63,26 @@ struct Uniforms {
     uint frame_index;
     FrameFlags flags;
 
-    BlueNoiseData blue_noise_data() {
-        BlueNoiseData data;
-        data.sobol = blue_noise_sobol;
-        data.scrambling_tile = blue_noise_scrambling_tile;
-        data.ranking_tile = blue_noise_ranking_tile;
-        return data;
+    property BlueNoiseData blue_noise_data {
+        get {
+            BlueNoiseData data;
+            data.sobol = blue_noise_sobol;
+            data.scrambling_tile = blue_noise_scrambling_tile;
+            data.ranking_tile = blue_noise_ranking_tile;
+            return data;
+        }
     }
 
     ThreadBlueNoise blue_noise(uint2 thread) {
-        return ThreadBlueNoise(blue_noise_data(), frame_index, thread);
+        return ThreadBlueNoise(blue_noise_data, frame_index, thread);
     }
-    
+
     uint thread_to_index(uint2 thread) {
         return thread.x + thread.y * extent.x;
     }
 
     Light get_light(uint index) {
-        Light light;
-        light.position[0] = light_values[index * 7 + 0];
-        light.position[1] = light_values[index * 7 + 1];
-        light.position[2] = light_values[index * 7 + 2];
-        light.color[0] = light_values[index * 7 + 3];
-        light.color[1] = light_values[index * 7 + 4];
-        light.color[2] = light_values[index * 7 + 5];
-        light.intensity = light_values[index * 7 + 6];
-        return light;
+        return reinterpret<Light>(lights[index]);
     }
 };
 

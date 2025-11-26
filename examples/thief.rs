@@ -398,7 +398,7 @@ impl winit::application::ApplicationHandler for App {
                         .translate(
                             ((glam::Vec3::from_array(prev_transform.forward()) * forward as f32
                                 + glam::Vec3::from_array(prev_transform.right()) * right as f32)
-                                * 1.0)
+                                * 0.25)
                                 .to_array(),
                         );
 
@@ -426,7 +426,7 @@ impl winit::application::ApplicationHandler for App {
                         proj_view: (proj * view).to_cols_array(),
                         tlas: *state.tlas,
                         model: *state.model_buffer,
-                        light_values: *state.lights,
+                        lights: *state.lights,
                         blue_noise_sobol: *state.blue_noise_buffers.sobol,
                         blue_noise_ranking_tile: *state.blue_noise_buffers.ranking_tile,
                         blue_noise_scrambling_tile: *state.blue_noise_buffers.scrambling_tile,
@@ -715,11 +715,15 @@ fn load_gltf(
             };
 
             let light = &gltf.extensions.khr_lights_punctual.as_ref().unwrap().lights[index];
+            
+            let (inner_cone_angle, outer_cone_angle) = light.spot.map(|spot| (spot.inner_cone_angle, spot.outer_cone_angle)).unwrap_or((-1.0, -1.0));
+            
             Light {
                 position: pos,
-                color: light.color,
-                intensity: light.intensity,
+                emission: (glam::Vec3::from(light.color) * light.intensity).into(),
+                inner_cone_angle, outer_cone_angle
             }
+            
         })
         .collect();
 

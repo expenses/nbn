@@ -37,25 +37,25 @@ struct SamplePoint {
 }
 
 float3 get_unshadowed_contribution(SamplePoint point, uint blue_noise_state, Uniforms uniforms) {
-    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data(), blue_noise_state);
+    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
     let light_index = uint(blue_noise.rand() * uniforms.num_lights);
     let light = uniforms.get_light(light_index);
 
-    let vector = point.position - light.position;
+    let vector = light.position - point.position;
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
 
     let direction = vector / distance;
 
-    return light.color * (light.intensity * max(dot(point.normal, direction),0.0) / distance_sq);
+    return light.emission * (max(dot(point.normal, direction),0.0) / distance_sq);
 }
 
 float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Uniforms uniforms) {
-    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data(), blue_noise_state);
+    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
     let light_index = uint(blue_noise.rand() * uniforms.num_lights);
     let light = uniforms.get_light(light_index);
 
-    let vector = point.position - light.position;
+    let vector = light.position - point.position;
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
 
@@ -63,8 +63,8 @@ float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Unifo
 
     RayDesc desc;
     desc.Origin = point.position;
-    desc.Direction = -direction;
-    desc.TMin = 1e-3f;
+    desc.Direction = direction;
+    desc.TMin = 5e-3f;
     desc.TMax = distance;
     var query = RayQuery<
         RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
@@ -77,7 +77,7 @@ float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Unifo
     query.Proceed();
     let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
-    return light.color * (visibility * light.intensity * max(dot(point.normal, direction),0.0) / distance_sq);
+    return light.emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point) {
@@ -102,7 +102,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
         frame_reservoir.update(rng_state, weight, 1, &blue_noise);
     }
 
-    var contribution = frame_reservoir.get_data() != MAX_UINT_VALUE ? get_shadowed_contribution(point, frame_reservoir.get_data(), uniforms) : float3(0.0);
+    var contribution = frame_reservoir.data != MAX_UINT_VALUE ? get_shadowed_contribution(point, frame_reservoir.data, uniforms) : float3(0.0);
     var p_hat = length(contribution);
     frame_reservoir.set_weight(p_hat);
 
@@ -117,18 +117,18 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
         previous_reservoir.clamp(20 * num_samples);
 
         // Update from prevous reservoir
-        let p_hat_prev = length(get_unshadowed_contribution(point, previous_reservoir.get_data(), uniforms));
+        let p_hat_prev = length(get_unshadowed_contribution(point, previous_reservoir.data, uniforms));
         temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, &blue_noise);
 
-        p_hat = temporal_reservoir.get_data() != MAX_UINT_VALUE ? length(get_unshadowed_contribution(point, temporal_reservoir.get_data(), uniforms)) : 0.0;
+        p_hat = temporal_reservoir.data != MAX_UINT_VALUE ? length(get_unshadowed_contribution(point, temporal_reservoir.data, uniforms)) : 0.0;
         temporal_reservoir.set_weight(p_hat);
         frame_reservoir = temporal_reservoir;
 
-        if (frame_reservoir.get_data() != MAX_UINT_VALUE) {
+        if (frame_reservoir.data != MAX_UINT_VALUE) {
             if (uniforms.flags & FrameFlags::OneRayPerPixel) {
-                contribution = get_unshadowed_contribution(point, frame_reservoir.get_data(), uniforms);
+                contribution = get_unshadowed_contribution(point, frame_reservoir.data, uniforms);
             } else {
-                contribution = get_shadowed_contribution(point, frame_reservoir.get_data(), uniforms);
+                contribution = get_shadowed_contribution(point, frame_reservoir.data, uniforms);
             }
         } else {
             contribution = float3(0.0);
@@ -139,7 +139,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
 
     uniforms.reservoirs[reservoir_index] = frame_reservoir;
 
-    return contribution * frame_reservoir.get_weight();
+    return contribution * frame_reservoir.weight;
 }
 
 struct LightInterp {
@@ -153,7 +153,7 @@ struct LightInterp {
     let light = uniforms.get_light(vertex_id);
 
     LightInterp output;
-    output.col = light.color * light.intensity;
+    output.col = light.emission;
     output.pos = mul(uniforms.proj_view, float4(light.position, 1.0));
     output.point_size = 2.0;
     return output;
@@ -216,7 +216,8 @@ float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
 
     SamplePoint point;
     point.position = pos;
-    point.normal = normal;
+    // normals are flipped
+    point.normal = -normal;
 
     return col * calculate_lighting_ris(thread, uniforms, point);
 }
