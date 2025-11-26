@@ -2,7 +2,7 @@ import uniforms;
 import shared.util;
 import shared.constants;
 import shared.barycentrics;
-import shared.sampling;
+import shared.sampling_old;
 import shared.noise;
 import raytracing;
 import fallback_bindings;
