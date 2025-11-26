@@ -1,7 +1,7 @@
 import derivatives;
 
 float length_squared(float3 v) {
-    return v.x * v.x + v.y * v.y + v.z * v.z;
+    return dot(v, v);
 }
 
 // Adapted from http://www.thetenthplanet.de/archives/1180
@@ -86,9 +86,7 @@ Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv)
     return ray;
 }
 
-public
-
-float3 world_position_from_depth(
+public float3 world_position_from_depth(
     float2 clip,
     float depth,
     float4x4 view_proj_inverse
@@ -98,4 +96,17 @@ float3 world_position_from_depth(
 
     // Undo projection.
     return world_pos.xyz / world_pos.w;
+}
+
+public float3x3 build_tbn(float3 n) {
+    float3 t;
+    if (abs(n.z) < 0.999) {
+        t = normalize(cross(float3(0, 0, 1), n));
+    } else {
+        t = normalize(cross(float3(0, 1, 0), n));
+    }
+    
+    let b = cross(n, t);
+    
+    return float3x3(t, b, n);
 }
