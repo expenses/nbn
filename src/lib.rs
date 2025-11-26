@@ -2299,6 +2299,7 @@ pub enum BarrierOp {
     AllCommandsSampledRead,
     Present,
     Acquire,
+    AllCommands,
 }
 
 impl BarrierOp {
@@ -2312,7 +2313,7 @@ impl BarrierOp {
             | Self::ComputeStorageReadWrite => vk::PipelineStageFlags2::COMPUTE_SHADER,
             Self::DepthStencilAttachmentReadWrite => vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
             Self::TransferRead | Self::TransferWrite => vk::PipelineStageFlags2::COPY,
-            Self::AllCommandsSampledRead => vk::PipelineStageFlags2::ALL_COMMANDS,
+            Self::AllCommandsSampledRead | Self::AllCommands => vk::PipelineStageFlags2::ALL_COMMANDS,
             Self::Present | Self::Acquire => vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
         }
     }
@@ -2335,6 +2336,7 @@ impl BarrierOp {
                 vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
                     | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
             }
+            Self::AllCommands => vk::AccessFlags2::SHADER_WRITE | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE | vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::TRANSFER_WRITE,
             Self::Present | Self::Acquire => Default::default(),
         }
     }
