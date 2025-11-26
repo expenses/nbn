@@ -1,13 +1,13 @@
 import random;
 
 struct Reservoir<T> {
-    // Data (e.g. the index of most important light) of the sample
+    // Data of the selected sample (e.g. the index of most important light)
     T Y;
-    // sample weight
+    // Weight of the selected sample
     float W_y = 0.0;
-    // sum of all weights for all samples processed
+    // Sum of all weights for all samples processed
     float W_sum = 0.0;
-    // number of samples processed for this reservoir
+    // Number of samples processed for this reservoir
     uint M = 0;
 
     __init(T initial) {
@@ -45,38 +45,12 @@ struct Reservoir<T> {
         W_y = p_hat > 0.0 ? average_weight() / p_hat : 0.0;
     }
     
+    float get_weight() {
+        return W_y;
+    }
+    
     [mutating]
     void clamp(uint max_samples) {
         M = min(M, max_samples);
     }
 };
-
-struct RestirState<T> {
-    Reservoir<T> res;
-    float pdf;
-
-    __init(float pdf_value, T initial_sample_data) {
-        pdf = pdf_value;
-        res = Reservoir<T>(initial_sample_data);
-    }
-
-    [mutating]
-    void update<R: Rng>(T value, float p_hat, R* rng) {
-        let weight = p_hat / pdf;
-        res.update(value, weight, 1, rng);
-    }
-
-    T get_data() {
-        return res.get_data();
-    }
-
-    [mutating]
-    void update_from_frame_sample(float p_hat) {
-        // calculate the weight of this sample
-        res.set_weight(p_hat);
-    }
-
-    float get_weight() {
-        return res.W_y;
-    }
-}
