@@ -68,3 +68,40 @@ float4x4 inverse(float4x4 m) {
 
     return ret;
 }
+
+public float4x4 perspective_reversed_infinite_z_vk(
+    float vertical_fov,
+    float aspect_ratio,
+    float z_near,
+)  {
+    let t = tan(vertical_fov / 2.0);
+
+    let sy = 1.0 / t;
+
+    let sx = sy / aspect_ratio;
+
+    // Construct a matrix from a list of rows
+    return float4x4(
+        float4(sx, 0.0, 0.0, 0.0),
+        float4(0.0, -sy, 0.0, 0.0),
+        float4(0.0, 0.0, 0.0, z_near),
+        float4(0.0, 0.0, -1.0, 0.0),
+    );
+}
+
+public float4x4 look_to_rh(float3 eye, float3 dir, float3 up) {
+    let f = dir;
+    let s = normalize(cross(f, up));
+    let u = cross(s, f);
+
+    return float4x4(
+        float4(s, -dot(eye, s)),
+        float4(u, -dot(eye, u)),
+        float4(-f, dot(eye, f)),
+        float4(0.0, 0.0, 0.0, 1.0)
+    );
+}
+
+public float4x4 look_at_rh(float3 eye, float3 center, float3 up) {
+    return look_to_rh(eye, normalize(center - eye), up);
+}
