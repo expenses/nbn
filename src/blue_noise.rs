@@ -1,5 +1,7 @@
 use crate as nbn;
 
+use blue_noise_sampler::spp256::*;
+
 pub struct BlueNoiseBuffers {
     pub sobol: nbn::Buffer,
     pub ranking_tile: nbn::Buffer,
@@ -9,20 +11,16 @@ pub struct BlueNoiseBuffers {
 impl BlueNoiseBuffers {
     pub fn new(device: &nbn::Device, staging_buffer: &mut nbn::StagingBuffer) -> Self {
         Self {
-            sobol: staging_buffer.create_buffer_from_slice(
-                device,
-                "sobol",
-                blue_noise_sampler::spp64::SOBOL,
-            ),
+            sobol: staging_buffer.create_buffer_from_slice(device, "sobol", SOBOL),
             ranking_tile: staging_buffer.create_buffer_from_slice(
                 device,
                 "ranking_tile",
-                blue_noise_sampler::spp64::RANKING_TILE,
+                RANKING_TILE,
             ),
             scrambling_tile: staging_buffer.create_buffer_from_slice(
                 device,
                 "scrambling_tile",
-                blue_noise_sampler::spp64::SCRAMBLING_TILE,
+                SCRAMBLING_TILE,
             ),
         }
     }

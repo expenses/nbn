@@ -19,7 +19,7 @@ struct Reservoir<T> {
             return Y;
         }
     }
-    
+
     property float weight {
         get {
             return W_y;
@@ -27,11 +27,11 @@ struct Reservoir<T> {
     }
 
     [mutating]
-    bool update<R: Rng>(T value, float w, uint c, R* rng) {
+    bool update(T value, float w, uint c, float rand) {
         W_sum += w;
         M += c;
 
-        if (rng.rand() < w / W_sum) {
+        if (rand < w / W_sum) {
             Y = value;
             return true;
         }
@@ -40,8 +40,18 @@ struct Reservoir<T> {
     }
 
     [mutating]
+    bool update<R: Rng>(T value, float w, uint c, R* rng) {
+        return update(value, w, c, rng.rand());
+    }
+
+    [mutating]
+    bool update_from_reservoir(Reservoir<T> reservoir, float p_hat, float rand) {
+        return update(reservoir.Y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rand);
+    }
+
+    [mutating]
     bool update_from_reservoir<R: Rng>(Reservoir<T> reservoir, float p_hat, R* rng) {
-        return update(reservoir.Y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rng);
+        return update_from_reservoir(reservoir, p_hat, rng.rand());
     }
 
     float average_weight() {
@@ -58,3 +68,14 @@ struct Reservoir<T> {
         M = min(M, max_samples);
     }
 };
+
+interface Contribution<T> {
+    UnshadowedContribution get_unshadowed_contribution(T data);
+    float3 get_shadowed_contribution(T data);
+}
+
+struct UnshadowedContribution {
+    float3 contribution;
+    // 1.0 / pdf
+    float inv_pdf;
+}

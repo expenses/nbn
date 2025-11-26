@@ -4,7 +4,6 @@ import shared.colour;
 import shared.barycentrics;
 import shared.derivatives;
 import shared.linalg;
-import shared.sampling;
 import models;
 import uniforms;
 import raytracing;

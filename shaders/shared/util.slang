@@ -1,13 +1,11 @@
 import derivatives;
 
 float length_squared(float3 v) {
-    return v.x * v.x + v.y * v.y + v.z * v.z;
+    return dot(v, v);
 }
 
 // Adapted from http://www.thetenthplanet.de/archives/1180
-public
-
-float3x3 compute_cotangent_frame(
+public float3x3 compute_cotangent_frame(
     float3 normal,
     WithDerivatives<float3> position,
     WithDerivatives<float2> uv
@@ -86,9 +84,7 @@ Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv)
     return ray;
 }
 
-public
-
-float3 world_position_from_depth(
+public float3 world_position_from_depth(
     float2 clip,
     float depth,
     float4x4 view_proj_inverse
@@ -98,4 +94,15 @@ float3 world_position_from_depth(
 
     // Undo projection.
     return world_pos.xyz / world_pos.w;
+}
+
+public float3x3 build_tbn(float3 n) {
+    let basis = abs(n.z) < 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+    let t = normalize(cross(basis, n));
+    let b = cross(n, t);
+    return transpose(float3x3(t, b, n));
+}
+
+public float inv_lerp(float value, float from, float to){
+  return (value - from) / (to - from);
 }
