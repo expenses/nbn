@@ -463,7 +463,11 @@ impl winit::application::ApplicationHandler for App {
                             .image_view(*state.images.prims.image.view)
                             .image_layout(vk::ImageLayout::GENERAL)
                             .load_op(vk::AttachmentLoadOp::CLEAR)
-                            .store_op(vk::AttachmentStoreOp::STORE)],
+                            .store_op(vk::AttachmentStoreOp::STORE)
+                            .clear_value(vk::ClearValue {
+                                color: vk::ClearColorValue { uint32: [!0; 4] },
+                            })
+                        ],
                         Some(
                             &vk::RenderingAttachmentInfo::default()
                                 .image_view(*state.images.depth.view)
