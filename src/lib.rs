@@ -2218,6 +2218,12 @@ impl From<&Image> for ImageInfo {
     }
 }
 
+impl From<&IndexedImage> for ImageInfo {
+    fn from(image: &IndexedImage) -> Self {
+        (&image.image).into()
+    }
+}
+
 pub enum AccelerationStructureData {
     Instances {
         buffer_address: u64,
