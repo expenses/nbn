@@ -55,7 +55,7 @@ struct BlueNoiseData {
 };
 
 public struct ThreadBlueNoise: Rng {
-    BlueNoiseData data;
+    public BlueNoiseData data;
     uint2 thread;
     uint frame_index;
     uint dimension = 0;
@@ -64,6 +64,22 @@ public struct ThreadBlueNoise: Rng {
         data = data_;
         frame_index = frame_index_;
         thread = thread_;
+    }
+    
+    public __init(BlueNoiseData data_, uint state) {
+        data = data_;
+        thread = uint2(state & 127, (state >> 8) & 127);
+        frame_index = (state >> 16) & 255;
+        dimension = (state >> 24) & 255;
+    }
+    
+    public uint state() {
+        return (thread.x & 127) | ((thread.y & 127) << 8) | ((frame_index & 255) << 16) | ((dimension & 255) << 24);
+    }
+    
+    [mutating]
+    public void advance(uint times) {
+        dimension += times;
     }
     
     [mutating]
