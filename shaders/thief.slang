@@ -233,7 +233,11 @@ float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
     SamplePoint point;
     point.position = pos;
     // normals are flipped
-    point.normal = -normal;
+    point.normal = normal;
+    
+    if (dot(uniforms.camera_pos - pos, normal) < 0) {
+        point.normal = -normal;
+    }
 
     return col * calculate_lighting_ris(thread, uniforms, point);
 }

@@ -59,6 +59,8 @@ struct Uniforms {
     uint accum_index;
     uint frame_index;
     FrameFlags flags;
+    
+    float3 camera_pos;
 
     property BlueNoiseData blue_noise_data {
         get {
