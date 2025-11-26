@@ -168,7 +168,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
 
         device.bind_internal_descriptor_sets_to_all(command_buffer);
 
-        device.dispatch_command_pipeline(
+        device.dispatch_compute_pipeline(
             command_buffer,
             &state.compute_pipelines.reset_buffers,
             *state.dispatches,
@@ -183,7 +183,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             &[nbn::AccessType::ComputeShaderReadWrite],
         );
 
-        device.dispatch_command_pipeline(
+        device.dispatch_compute_pipeline(
             command_buffer,
             &state.compute_pipelines.generate_meshlet_prefix_sums,
             uniforms_ptr,
@@ -321,7 +321,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             ],
         );
 
-        device.dispatch_command_pipeline(
+        device.dispatch_compute_pipeline(
             command_buffer,
             &state.shadow_pipeline,
             uniforms_ptr,
@@ -334,7 +334,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             &[nbn::AccessType::ComputeShaderReadWrite],
             &[nbn::AccessType::ComputeShaderReadWrite],
         );
-        device.dispatch_command_pipeline(
+        device.dispatch_compute_pipeline(
             command_buffer,
             &state.shadow_denoising_pipelines.tile_classification,
             uniforms_ptr,
@@ -343,7 +343,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
             1,
         );
 
-        device.dispatch_command_pipeline(
+        device.dispatch_compute_pipeline(
             command_buffer,
             &state.blit_pipelines.resolve_visbuffer,
             uniforms_ptr,
@@ -380,7 +380,7 @@ pub fn render(device: &nbn::Device, state: &mut WindowState) {
                 .into(),
             ],
         );
-        device.dispatch_command_pipeline(
+        device.dispatch_compute_pipeline(
             command_buffer,
             &state.blit_pipelines.tonemap,
             uniforms_ptr,

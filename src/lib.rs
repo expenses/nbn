@@ -1664,7 +1664,28 @@ impl Device {
         }
     }
 
-    pub fn dispatch_command_pipeline<T: Copy>(
+    pub fn dispatch_compute_pipeline(
+        &self,
+        command_buffer: &CommandBuffer,
+        pipeline: &Pipeline,
+        dispatch_width: u32,
+        dispatch_height: u32,
+        dispatch_depth: u32,
+    ) {
+        unsafe {
+            self.cmd_bind_pipeline(**command_buffer, vk::PipelineBindPoint::COMPUTE, **pipeline)
+        };
+        unsafe {
+            self.cmd_dispatch(
+                **command_buffer,
+                dispatch_width,
+                dispatch_height,
+                dispatch_depth,
+            )
+        };
+    }
+
+    pub fn dispatch_compute_pipeline_with_push_constants<T: Copy>(
         &self,
         command_buffer: &CommandBuffer,
         pipeline: &Pipeline,
@@ -1677,14 +1698,13 @@ impl Device {
             self.cmd_bind_pipeline(**command_buffer, vk::PipelineBindPoint::COMPUTE, **pipeline)
         };
         self.push_constants(command_buffer, push_constants);
-        unsafe {
-            self.cmd_dispatch(
-                **command_buffer,
-                dispatch_width,
-                dispatch_height,
-                dispatch_depth,
-            )
-        };
+        self.dispatch_compute_pipeline(
+            command_buffer,
+            pipeline,
+            dispatch_width,
+            dispatch_height,
+            dispatch_depth,
+        );
     }
 }
 
@@ -2218,6 +2238,12 @@ impl From<&Image> for ImageInfo {
     }
 }
 
+impl From<&IndexedImage> for ImageInfo {
+    fn from(image: &IndexedImage) -> Self {
+        (&image.image).into()
+    }
+}
+
 pub enum AccelerationStructureData {
     Instances {
         buffer_address: u64,
@@ -2259,6 +2285,8 @@ pub enum BarrierOp {
     ColorAttachmentWrite,
     ColorAttachmentReadWrite,
     ComputeStorageWrite,
+    ComputeStorageRead,
+    ComputeStorageReadWrite,
     DepthStencilAttachmentReadWrite,
     TransferRead,
     TransferWrite,
@@ -2273,7 +2301,9 @@ impl BarrierOp {
             Self::ColorAttachmentWrite | Self::ColorAttachmentReadWrite => {
                 vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
             }
-            Self::ComputeStorageWrite => vk::PipelineStageFlags2::COMPUTE_SHADER,
+            Self::ComputeStorageWrite
+            | Self::ComputeStorageRead
+            | Self::ComputeStorageReadWrite => vk::PipelineStageFlags2::COMPUTE_SHADER,
             Self::DepthStencilAttachmentReadWrite => vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
             Self::TransferRead | Self::TransferWrite => vk::PipelineStageFlags2::COPY,
             Self::AllCommandsSampledRead => vk::PipelineStageFlags2::ALL_COMMANDS,
@@ -2287,7 +2317,11 @@ impl BarrierOp {
                 vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE
             }
             Self::ColorAttachmentWrite => vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-            Self::ComputeStorageWrite => vk::AccessFlags2::SHADER_WRITE,
+            Self::ComputeStorageRead => vk::AccessFlags2::SHADER_STORAGE_READ,
+            Self::ComputeStorageWrite => vk::AccessFlags2::SHADER_STORAGE_WRITE,
+            Self::ComputeStorageReadWrite => {
+                vk::AccessFlags2::SHADER_STORAGE_READ | vk::AccessFlags2::SHADER_STORAGE_WRITE
+            }
             Self::TransferRead => vk::AccessFlags2::TRANSFER_READ,
             Self::TransferWrite => vk::AccessFlags2::TRANSFER_WRITE,
             Self::AllCommandsSampledRead => vk::AccessFlags2::SHADER_SAMPLED_READ,

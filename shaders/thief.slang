@@ -36,68 +36,75 @@ struct SamplePoint {
     float3 normal;
 }
 
-float3 get_unshadowed_contribution(SamplePoint point, uint blue_noise_state, Uniforms uniforms) {
-    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-    let light_index = uint(blue_noise.rand() * uniforms.num_lights);
-    let light = uniforms.get_light(light_index);
-
-    var emission = light.emission;
-
-    let vector = light.position - point.position;
-    let distance_sq = dot(vector,vector);
-    let distance = sqrt(distance_sq);
-
-    let direction = vector / distance;
-
-    // spotlights
-    {
-        let theta = dot(direction, light.spotlight_direction);
-        emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
+struct State: Contribution<uint> {
+    SamplePoint point;
+    Uniforms uniforms;
+    
+    float3 get_unshadowed_contribution(uint blue_noise_state) {
+        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
+        let light_index = uint(blue_noise.rand() * uniforms.num_lights);
+        let light = uniforms.get_light(light_index);
+    
+        var emission = light.emission;
+    
+        let vector = light.position - point.position;
+        let distance_sq = dot(vector,vector);
+        let distance = sqrt(distance_sq);
+    
+        let direction = vector / distance;
+    
+        // spotlights
+        {
+            let theta = dot(direction, light.spotlight_direction);
+            emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
+        }
+    
+        return emission * (max(dot(point.normal, direction), 0.0) / distance_sq);
     }
-
-    return emission * (max(dot(point.normal, direction), 0.0) / distance_sq);
-}
-
-float3 get_shadowed_contribution(SamplePoint point, uint blue_noise_state, Uniforms uniforms) {
-    var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-    let light_index = uint(blue_noise.rand() * uniforms.num_lights);
-    let light = uniforms.get_light(light_index);
-
-    var emission = light.emission;
-
-    let vector = light.position - point.position;
-    let distance_sq = dot(vector,vector);
-    let distance = sqrt(distance_sq);
-
-    let direction = vector / distance;
-
-    // spotlights
-    {
-        let theta = dot(direction, light.spotlight_direction);
-        emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
-    }
-
-    RayDesc desc;
-    desc.Origin = point.position;
-    desc.Direction = direction;
-    desc.TMin = 5e-3f;
-    desc.TMax = distance;
-    var query = RayQuery<
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-    query.TraceRayInline(
-        RaytracingAccelerationStructure(uniforms.tlas),
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-        0xff,
-        desc
-    );
-    query.Proceed();
-    let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-
-    return emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
+    
+    float3 get_shadowed_contribution(uint blue_noise_state) {
+        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
+        let light_index = uint(blue_noise.rand() * uniforms.num_lights);
+        let light = uniforms.get_light(light_index);
+    
+        var emission = light.emission;
+    
+        let vector = light.position - point.position;
+        let distance_sq = dot(vector,vector);
+        let distance = sqrt(distance_sq);
+    
+        let direction = vector / distance;
+    
+        // spotlights
+        {
+            let theta = dot(direction, light.spotlight_direction);
+            emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
+        }
+    
+        RayDesc desc;
+        desc.Origin = point.position;
+        desc.Direction = direction;
+        desc.TMin = 5e-3f;
+        desc.TMax = distance;
+        var query = RayQuery<
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        query.TraceRayInline(
+            RaytracingAccelerationStructure(uniforms.tlas),
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            0xff,
+            desc
+        );
+        query.Proceed();
+        let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
+    
+        return emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
+    }    
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point) {
     var blue_noise = uniforms.blue_noise(thread);
+
+    State state = {point,uniforms};// = {point,uniforms};
 
     let reservoir_index = uniforms.thread_to_index(thread);
     // the pdf is 1/num_lights but we're dividing by that
@@ -109,7 +116,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
     for (uint i = 0; i < num_samples; i++) {
         // Get the unshadowed contribution for a random light
         let rng_state = blue_noise.state();
-        let p_hat = length(get_unshadowed_contribution(point, rng_state, uniforms));
+        let p_hat = length(state.get_unshadowed_contribution(rng_state));
         let weight = p_hat * recip_pdf;
         // Advance the rng state otherwise later lights have higher rng values.
         // TODO: Change this to an advance by 3 in the future as soft shadows will require 2
@@ -118,7 +125,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
         frame_reservoir.update(rng_state, weight, 1, &blue_noise);
     }
 
-    var contribution = frame_reservoir.data != MAX_UINT_VALUE ? get_shadowed_contribution(point, frame_reservoir.data, uniforms) : float3(0.0);
+    var contribution = frame_reservoir.data != MAX_UINT_VALUE ? state.get_shadowed_contribution(frame_reservoir.data) : float3(0.0);
     var p_hat = length(contribution);
     frame_reservoir.set_weight(p_hat);
 
@@ -133,18 +140,18 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
         previous_reservoir.clamp(20 * num_samples);
 
         // Update from prevous reservoir
-        let p_hat_prev = length(get_unshadowed_contribution(point, previous_reservoir.data, uniforms));
+        let p_hat_prev = length(state.get_unshadowed_contribution(previous_reservoir.data));
         temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, &blue_noise);
 
-        p_hat = temporal_reservoir.data != MAX_UINT_VALUE ? length(get_unshadowed_contribution(point, temporal_reservoir.data, uniforms)) : 0.0;
+        p_hat = temporal_reservoir.data != MAX_UINT_VALUE ? length(state.get_unshadowed_contribution(temporal_reservoir.data)) : 0.0;
         temporal_reservoir.set_weight(p_hat);
         frame_reservoir = temporal_reservoir;
 
         if (frame_reservoir.data != MAX_UINT_VALUE) {
             if (uniforms.flags & FrameFlags::OneRayPerPixel) {
-                contribution = get_unshadowed_contribution(point, frame_reservoir.data, uniforms);
+                contribution = state.get_unshadowed_contribution(frame_reservoir.data);
             } else {
-                contribution = get_shadowed_contribution(point, frame_reservoir.data, uniforms);
+                contribution = state.get_shadowed_contribution(frame_reservoir.data);
             }
         } else {
             contribution = float3(0.0);

@@ -2,7 +2,7 @@ import uniforms;
 import shared.util;
 import shared.constants;
 import shared.barycentrics;
-import shared.sampling;
+import shared.sampling_old;
 import shared.noise;
 import raytracing;
 import fallback_bindings;
@@ -35,7 +35,7 @@ import fallback_bindings;
     RayDesc desc;
     desc.Origin = world_space_pos.xyz;
     desc.Direction = SphericalDirectionalLightRayDirection(
-        uniforms.blue_noise.sample(thread, uniforms.frame_index),
+        uniforms.blue_noise.sample2(thread, uniforms.frame_index),
         sun,
         0.01
     );
