@@ -97,14 +97,8 @@ public float3 world_position_from_depth(
 }
 
 public float3x3 build_tbn(float3 n) {
-    float3 t;
-    if (abs(n.z) < 0.999) {
-        t = normalize(cross(float3(0, 0, 1), n));
-    } else {
-        t = normalize(cross(float3(0, 1, 0), n));
-    }
-
+    let basis = abs(n.z) < 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+    let t = normalize(cross(basis, n));
     let b = cross(n, t);
-
-    return float3x3(t, b, n);
+    return transpose(float3x3(t, b, n));
 }
