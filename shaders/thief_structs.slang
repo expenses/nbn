@@ -60,7 +60,15 @@ struct Uniforms {
     uint frame_index;
     FrameFlags flags;
     
-    float3 camera_pos;
+    float camera_pos_x;
+    float camera_pos_y;
+    float camera_pos_z;
+    
+    property float3 camera_pos {
+        get {
+            return float3(camera_pos_x, camera_pos_y, camera_pos_z);
+        }
+    }
 
     property BlueNoiseData blue_noise_data {
         get {

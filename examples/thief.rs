@@ -421,7 +421,9 @@ impl winit::application::ApplicationHandler for App {
                         .unwrap();
 
                     uniforms[current_frame] = Uniforms {
-                        camera_pos: transform.position.into(),
+                        camera_pos_x: transform.position.x,
+                        camera_pos_y: transform.position.y,
+                        camera_pos_z: transform.position.z,
                         view_inv: view.inverse().to_cols_array(),
                         proj_inv: proj.inverse().to_cols_array(),
                         proj_view: (proj * view).to_cols_array(),
