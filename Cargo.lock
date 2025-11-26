@@ -2982,7 +2982,7 @@ checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
 [[package]]
 name = "slang_struct"
 version = "0.0.2"
-source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#324568fc109a3d6646ca77f35d9d84d031623adf"
+source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#cbdf61a5242b68222829290e2cb1fd16d91bf8f9"
 dependencies = [
  "logos",
  "proc-macro2",
