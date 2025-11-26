@@ -5,9 +5,7 @@ float length_squared(float3 v) {
 }
 
 // Adapted from http://www.thetenthplanet.de/archives/1180
-public
-
-float3x3 compute_cotangent_frame(
+public float3x3 compute_cotangent_frame(
     float3 normal,
     WithDerivatives<float3> position,
     WithDerivatives<float2> uv
@@ -105,8 +103,8 @@ public float3x3 build_tbn(float3 n) {
     } else {
         t = normalize(cross(float3(0, 1, 0), n));
     }
-    
+
     let b = cross(n, t);
-    
+
     return float3x3(t, b, n);
 }
