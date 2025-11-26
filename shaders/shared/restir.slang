@@ -14,8 +14,16 @@ struct Reservoir<T> {
         Y = initial;
     }
 
-    T get_data() {
-        return Y;
+    property T data {
+        get {
+            return Y;
+        }
+    }
+    
+    property float weight {
+        get {
+            return W_y;
+        }
     }
 
     [mutating]
@@ -44,11 +52,7 @@ struct Reservoir<T> {
     void set_weight(float p_hat) {
         W_y = p_hat > 0.0 ? average_weight() / p_hat : 0.0;
     }
-    
-    float get_weight() {
-        return W_y;
-    }
-    
+
     [mutating]
     void clamp(uint max_samples) {
         M = min(M, max_samples);
