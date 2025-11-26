@@ -6,7 +6,7 @@ float3 sample_cosine_weighted_hemisphere(float2 u) {
     let r = sqrt(u.y);
     
     let x = r * cos(phi);
-    let y = r * cos(phi);
+    let y = r * sin(phi);
     let z = sqrt(1 - u.y);
     
     return float3(x, y, z);
