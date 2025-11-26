@@ -114,15 +114,15 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
 
     uint num_samples = 8;
     for (uint i = 0; i < num_samples; i++) {
+        // Sample the value for the reservoir update now, so that the
+        // random values generated in `get_unshadowed_contribution` are different
+        let update_rand = blue_noise.rand();
+
         // Get the unshadowed contribution for a random light
         let rng_state = blue_noise.state();
         let p_hat = length(state.get_unshadowed_contribution(rng_state));
         let weight = p_hat * recip_pdf;
-        // Advance the rng state otherwise later lights have higher rng values.
-        // TODO: Change this to an advance by 3 in the future as soft shadows will require 2
-        // random values
-        blue_noise.advance(1);
-        frame_reservoir.update(rng_state, weight, 1, &blue_noise);
+        frame_reservoir.update(rng_state, weight, 1, update_rand);
     }
 
     var contribution = frame_reservoir.data != MAX_UINT_VALUE ? state.get_shadowed_contribution(frame_reservoir.data) : float3(0.0);
