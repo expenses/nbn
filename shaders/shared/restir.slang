@@ -58,3 +58,8 @@ struct Reservoir<T> {
         M = min(M, max_samples);
     }
 };
+
+interface Contribution<T> {
+    float3 get_unshadowed_contribution(T data);
+    float3 get_shadowed_contribution(T data);
+}
