@@ -27,16 +27,21 @@ struct Reservoir<T> {
     }
 
     [mutating]
-    bool update<R: Rng>(T value, float w, uint c, R* rng) {
+    bool update(T value, float w, uint c, float rand) {
         W_sum += w;
         M += c;
 
-        if (rng.rand() < w / W_sum) {
+        if (rand < w / W_sum) {
             Y = value;
             return true;
         }
 
         return false;
+    }
+
+    [mutating]
+    bool update<R: Rng>(T value, float w, uint c, R* rng) {
+        return update(value, w, c, rng.rand());
     }
 
     [mutating]
