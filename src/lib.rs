@@ -1664,7 +1664,28 @@ impl Device {
         }
     }
 
-    pub fn dispatch_command_pipeline<T: Copy>(
+    pub fn dispatch_compute_pipeline(
+        &self,
+        command_buffer: &CommandBuffer,
+        pipeline: &Pipeline,
+        dispatch_width: u32,
+        dispatch_height: u32,
+        dispatch_depth: u32,
+    ) {
+        unsafe {
+            self.cmd_bind_pipeline(**command_buffer, vk::PipelineBindPoint::COMPUTE, **pipeline)
+        };
+        unsafe {
+            self.cmd_dispatch(
+                **command_buffer,
+                dispatch_width,
+                dispatch_height,
+                dispatch_depth,
+            )
+        };
+    }
+
+    pub fn dispatch_compute_pipeline_with_push_constants<T: Copy>(
         &self,
         command_buffer: &CommandBuffer,
         pipeline: &Pipeline,
@@ -1677,14 +1698,13 @@ impl Device {
             self.cmd_bind_pipeline(**command_buffer, vk::PipelineBindPoint::COMPUTE, **pipeline)
         };
         self.push_constants(command_buffer, push_constants);
-        unsafe {
-            self.cmd_dispatch(
-                **command_buffer,
-                dispatch_width,
-                dispatch_height,
-                dispatch_depth,
-            )
-        };
+        self.dispatch_compute_pipeline(
+            command_buffer,
+            pipeline,
+            dispatch_width,
+            dispatch_height,
+            dispatch_depth,
+        );
     }
 }
 
