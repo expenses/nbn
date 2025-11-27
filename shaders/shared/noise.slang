@@ -54,7 +54,7 @@ public struct ThreadBlueNoise: Rng {
     public BlueNoiseData data;
     uint2 thread;
     uint frame_index;
-    uint dimension = 0;
+    uint index = 0;
 
     public __init(BlueNoiseData data_, uint frame_index_, uint2 thread_) {
         data = data_;
@@ -66,22 +66,22 @@ public struct ThreadBlueNoise: Rng {
         data = data_;
         thread = uint2(state & 127, (state >> 8) & 127);
         frame_index = (state >> 16) & 255;
-        dimension = (state >> 24) & 255;
+        index = (state >> 24) & 255;
     }
 
     public uint state() {
-        return (thread.x & 127) | ((thread.y & 127) << 8) | ((frame_index & 255) << 16) | ((dimension & 255) << 24);
+        return (thread.x & 127) | ((thread.y & 127) << 8) | ((frame_index & 255) << 16) | ((index & 255) << 24);
     }
 
     [mutating]
     public void advance(uint times) {
-        dimension += times;
+        index += times;
     }
 
     [mutating]
     public float rand() {
-        let value = data.sample(thread, frame_index, dimension);
-        dimension++;
+        let value = data.sample(thread + uint2(R2(index) * 128), frame_index, 0);
+        index += R2;
         return value;
     }
 };
@@ -148,4 +148,15 @@ uint interleave_32bit(uint2 v)
 
 
     return x | (y << 1);
+}
+
+// https://github.com/electronicarts/fastnoise/blob/main/FastNoiseDesign.md#references
+// R2 is from http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+// R2 Low discrepancy sequence
+float2 R2(int index)
+{
+	static const float g  = 1.32471795724474602596f;
+	static const float a1 = 1 / g;
+	static const float a2 = 1 / (g * g);
+	return float2(frac(float(index) * a1), frac(float(index) * a2));
 }
