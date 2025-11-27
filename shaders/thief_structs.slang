@@ -59,11 +59,11 @@ struct Uniforms {
     uint accum_index;
     uint frame_index;
     FrameFlags flags;
-    
+
     float camera_pos_x;
     float camera_pos_y;
     float camera_pos_z;
-    
+
     property float3 camera_pos {
         get {
             return float3(camera_pos_x, camera_pos_y, camera_pos_z);
