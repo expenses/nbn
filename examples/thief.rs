@@ -381,6 +381,22 @@ impl winit::application::ApplicationHandler for App {
                                 dst_queue_family_index: command_buffer.queue_family_index,
                             }
                             .into(),
+                            nbn::ImageBarrier {
+                                image: &state.images.depth,
+                                src: Some(nbn::BarrierOp::DepthStencilAttachmentReadWrite),
+                                dst: nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+                                src_queue_family_index: command_buffer.queue_family_index,
+                                dst_queue_family_index: command_buffer.queue_family_index,
+                            }
+                            .into(),
+                            nbn::ImageBarrier {
+                                image: &state.images.prims,
+                                src: Some(nbn::BarrierOp::ComputeStorageRead),
+                                dst: nbn::BarrierOp::ColorAttachmentWrite,
+                                src_queue_family_index: command_buffer.queue_family_index,
+                                dst_queue_family_index: command_buffer.queue_family_index,
+                            }
+                            .into(),
                         ]),
                     );
                     let extent = state.swapchain.create_info.image_extent;
@@ -466,8 +482,7 @@ impl winit::application::ApplicationHandler for App {
                             .store_op(vk::AttachmentStoreOp::STORE)
                             .clear_value(vk::ClearValue {
                                 color: vk::ClearColorValue { uint32: [!0; 4] },
-                            })
-                        ],
+                            })],
                         Some(
                             &vk::RenderingAttachmentInfo::default()
                                 .image_view(*state.images.depth.view)
@@ -488,9 +503,9 @@ impl winit::application::ApplicationHandler for App {
                         **command_buffer,
                         &vk::DependencyInfo::default().image_memory_barriers(&[
                             nbn::ImageBarrier {
-                                image,
-                                src: Some(nbn::BarrierOp::ColorAttachmentReadWrite),
-                                dst: nbn::BarrierOp::ComputeStorageWrite,
+                                image: &state.images.prims,
+                                src: Some(nbn::BarrierOp::ColorAttachmentWrite),
+                                dst: nbn::BarrierOp::ComputeStorageRead,
                                 src_queue_family_index: command_buffer.queue_family_index,
                                 dst_queue_family_index: command_buffer.queue_family_index,
                             }
@@ -498,14 +513,9 @@ impl winit::application::ApplicationHandler for App {
                         ]),
                     );
 
-                    device.cmd_bind_pipeline(
-                        **command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        *state.resolve_pipeline,
-                    );
-
-                    device.cmd_dispatch(
-                        **command_buffer,
+                    device.dispatch_compute_pipeline(
+                        command_buffer,
+                        &state.resolve_pipeline,
                         extent.width.div_ceil(8),
                         extent.height.div_ceil(8),
                         1,
@@ -715,7 +725,12 @@ fn load_gltf(
                 .map(|ext| (node, ext.light))
         })
         .map(|(node, index)| {
-            let (pos, rotation) = if let goth_gltf::NodeTransform::Set { translation, rotation, .. } = node.transform() {
+            let (pos, rotation) = if let goth_gltf::NodeTransform::Set {
+                translation,
+                rotation,
+                ..
+            } = node.transform()
+            {
                 (translation, rotation)
             } else {
                 panic!()
@@ -723,20 +738,26 @@ fn load_gltf(
 
             let light = &gltf.extensions.khr_lights_punctual.as_ref().unwrap().lights[index];
 
-            let (spotlight_angle_scale, spotlight_angle_offset) = light.spot.map(|spot| {
-                // https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_lights_punctual/README.md#inner-and-outer-cone-angles
-                let spotlight_angle_scale = 1.0 / 0.000001_f32.max(spot.inner_cone_angle.cos() - spot.outer_cone_angle.cos());
-                let spotlight_angle_offset = -spot.outer_cone_angle.cos() * spotlight_angle_scale;
-                (spotlight_angle_scale, spotlight_angle_offset)
-            }).unwrap_or((0.0, 1.0));
-            
+            let (spotlight_angle_scale, spotlight_angle_offset) = light
+                .spot
+                .map(|spot| {
+                    // https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_lights_punctual/README.md#inner-and-outer-cone-angles
+                    let spotlight_angle_scale = 1.0
+                        / 0.000001_f32
+                            .max(spot.inner_cone_angle.cos() - spot.outer_cone_angle.cos());
+                    let spotlight_angle_offset =
+                        -spot.outer_cone_angle.cos() * spotlight_angle_scale;
+                    (spotlight_angle_scale, spotlight_angle_offset)
+                })
+                .unwrap_or((0.0, 1.0));
+
             Light {
                 position: pos,
                 emission: (glam::Vec3::from(light.color) * light.intensity).into(),
-                spotlight_angle_scale, spotlight_angle_offset,
-                spotlight_direction: (glam::Quat::from_array(rotation) * glam::Vec3::Z).into()
+                spotlight_angle_scale,
+                spotlight_angle_offset,
+                spotlight_direction: (glam::Quat::from_array(rotation) * glam::Vec3::Z).into(),
             }
-
         })
         .collect();
 
