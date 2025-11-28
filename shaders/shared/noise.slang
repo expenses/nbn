@@ -51,7 +51,7 @@ public struct BlueNoiseData {
 };
 
 public uint pack_blue_noise_state(uint2 thread, uint sample_index) {
-    return (thread.x & 127) | ((thread.y & 127) << 8) | ((sample_index & 255) << 16);
+    return (thread.x & 127) | ((thread.y & 127) << 8) | ((sample_index & 65535) << 16);
 }
 
 public struct ThreadBlueNoise: Rng {
@@ -68,16 +68,7 @@ public struct ThreadBlueNoise: Rng {
     public __init(BlueNoiseData data_, uint state) {
         data = data_;
         thread = uint2(state & 127, (state >> 8) & 127);
-        sample_index = (state >> 16) & 255;
-    }
-
-    public uint state() {
-        return pack_blue_noise_state(thread, sample_index);
-    }
-
-    [mutating]
-    public void advance(uint times) {
-        sample_index += times;
+        sample_index = ((state >> 16) & 65535);
     }
 
     [mutating]
@@ -89,7 +80,7 @@ public struct ThreadBlueNoise: Rng {
 
     [mutating]
     public float2 rand2() {
-        let value = data.sample2(thread, sample_index);
+        let value = frac(data.sample2(thread, 0) + R2(sample_index));
         sample_index += 1;
         return value;
     }
