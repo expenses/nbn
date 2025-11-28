@@ -2286,6 +2286,7 @@ pub enum BarrierOp {
     ColorAttachmentReadWrite,
     ComputeStorageWrite,
     ComputeStorageRead,
+    ComputeStorageReadWrite,
     DepthStencilAttachmentReadWrite,
     TransferRead,
     TransferWrite,
@@ -2300,9 +2301,9 @@ impl BarrierOp {
             Self::ColorAttachmentWrite | Self::ColorAttachmentReadWrite => {
                 vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
             }
-            Self::ComputeStorageWrite | Self::ComputeStorageRead => {
-                vk::PipelineStageFlags2::COMPUTE_SHADER
-            }
+            Self::ComputeStorageWrite
+            | Self::ComputeStorageRead
+            | Self::ComputeStorageReadWrite => vk::PipelineStageFlags2::COMPUTE_SHADER,
             Self::DepthStencilAttachmentReadWrite => vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
             Self::TransferRead | Self::TransferWrite => vk::PipelineStageFlags2::COPY,
             Self::AllCommandsSampledRead => vk::PipelineStageFlags2::ALL_COMMANDS,
@@ -2318,6 +2319,9 @@ impl BarrierOp {
             Self::ColorAttachmentWrite => vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
             Self::ComputeStorageRead => vk::AccessFlags2::SHADER_STORAGE_READ,
             Self::ComputeStorageWrite => vk::AccessFlags2::SHADER_STORAGE_WRITE,
+            Self::ComputeStorageReadWrite => {
+                vk::AccessFlags2::SHADER_STORAGE_READ | vk::AccessFlags2::SHADER_STORAGE_WRITE
+            }
             Self::TransferRead => vk::AccessFlags2::TRANSFER_READ,
             Self::TransferWrite => vk::AccessFlags2::TRANSFER_WRITE,
             Self::AllCommandsSampledRead => vk::AccessFlags2::SHADER_SAMPLED_READ,
