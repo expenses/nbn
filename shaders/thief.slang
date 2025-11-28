@@ -37,11 +37,11 @@ struct SamplePoint {
     float3 normal;
 }
 
-struct State: Contribution<uint> {
+struct Lights: Contribution<uint> {
     SamplePoint point;
     Uniforms uniforms;
 
-    float3 get_unshadowed_contribution(float rand) {
+    UnshadowedContribution get_unshadowed_contribution(float rand) {
         let light_index = uint(rand * uniforms.num_lights);
         let light = uniforms.get_light(light_index);
 
@@ -59,16 +59,15 @@ struct State: Contribution<uint> {
             emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
         }
 
-        return emission * (max(dot(point.normal, direction), 0.0) / distance_sq);
+        UnshadowedContribution contribution;
+        contribution.contribution = emission * (max(dot(point.normal, direction), 0.0) / distance_sq);
+        contribution.inv_pdf = uniforms.num_lights;
+        return contribution;
     }
 
     UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-
-        UnshadowedContribution contribution;
-        contribution.contribution = get_unshadowed_contribution(blue_noise.rand());
-        contribution.inv_pdf = uniforms.num_lights;
-        return contribution;
+        return get_unshadowed_contribution(blue_noise.rand());
     }
 
     float3 get_shadowed_contribution(float rand) {
@@ -119,7 +118,7 @@ struct Environment: Contribution<uint> {
     Uniforms uniforms;
     float3 colour;
 
-    UnshadowedContribution get_unshadowed_contribution(uint data) {
+    UnshadowedContribution get_unshadowed_contribution(uint _data) {
         UnshadowedContribution contribution;
         contribution.contribution = colour;
         contribution.inv_pdf = 1;
@@ -146,8 +145,6 @@ struct Environment: Contribution<uint> {
         query.Proceed();
         let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
-
-
         return visibility * colour;
     }
 
@@ -159,32 +156,39 @@ struct Environment: Contribution<uint> {
 
 struct Combined: Contribution<uint> {
     Environment env;
-    State state;
+    Lights lights;
 
     UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(state.uniforms.blue_noise_data, blue_noise_state);
-        let rand = blue_noise.rand2();
+        var blue_noise = ThreadBlueNoise(lights.uniforms.blue_noise_data, blue_noise_state);
+        var rand = blue_noise.rand2();
+
+        let factor = 0.9;
 
         UnshadowedContribution contribution;
-        if (rand.x < 0.75) {
-            contribution.contribution = state.get_unshadowed_contribution(rand.x/0.75);
-            contribution.inv_pdf = state.uniforms.num_lights/0.75;
+        if (rand.x < factor) {
+            rand.x /= factor;
+            contribution = lights.get_unshadowed_contribution(rand.x);
+            contribution.inv_pdf /= factor;
         } else {
-            contribution.contribution = env.colour;
-            contribution.inv_pdf = 1.0/0.25;
+            contribution = env.get_unshadowed_contribution(0);
+            contribution.inv_pdf /= (1.0-factor);
         }
 
         return contribution;
     }
 
     float3 get_shadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(state.uniforms.blue_noise_data, blue_noise_state);
-        let rand = blue_noise.rand2();
+        var blue_noise = ThreadBlueNoise(lights.uniforms.blue_noise_data, blue_noise_state);
+        var rand = blue_noise.rand2();
 
-        if (rand.x < 0.75) {
-            return state.get_shadowed_contribution(rand.x/0.75);
+        let factor = 0.9;
+
+        if (rand.x < factor) {
+            rand.x /= factor;
+            return lights.get_shadowed_contribution(rand.x);
         } else {
-            return env.get_shadowed_contribution(float2(rand.x/0.25, rand.y));
+            rand.x = inv_lerp(rand.x, factor, 1.0);
+            return env.get_shadowed_contribution(rand);
         }
     }
 }
@@ -193,7 +197,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
     var rng = LCG(thread, uniforms.frame_index);
 
     Combined state;
-    state.state =  {point,uniforms};
+    state.lights =  {point,uniforms};
     state.env = {point,uniforms,float3(0.1)};
 
     let reservoir_index = uniforms.thread_to_index(thread);
@@ -202,7 +206,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
 
     uint num_samples = 8;
     for (uint i = 0; i < num_samples; i++) {
-        let rng_state = pack_blue_noise_state(thread, uniforms.frame_index * num_samples + i);
+        let rng_state = pack_blue_noise_state(thread, uniforms.frame_index, i);
         // Get the unshadowed contribution for a random light
         let contribution = state.get_unshadowed_contribution(rng_state);
         let p_hat = length(contribution.contribution);
