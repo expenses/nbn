@@ -32,17 +32,13 @@ uint mesh_frag(PrimInterp interp) {
     return interp.prim;
 }
 
-struct SamplePoint {
-    float3 position;
-    float3 normal;
-}
 
-struct Lights: Contribution<uint> {
+struct Lights: Contribution<float2> {
     SamplePoint point;
     Uniforms uniforms;
 
-    UnshadowedContribution get_unshadowed_contribution(float rand) {
-        let light_index = uint(rand * uniforms.num_lights);
+    UnshadowedContribution get_unshadowed_contribution(float2 rand) {
+        let light_index = uint(rand.x * uniforms.num_lights);
         let light = uniforms.get_light(light_index);
 
         var emission = light.emission;
@@ -65,13 +61,8 @@ struct Lights: Contribution<uint> {
         return contribution;
     }
 
-    UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-        return get_unshadowed_contribution(blue_noise.rand());
-    }
-
-    float3 get_shadowed_contribution(float rand) {
-        let light_index = uint(rand * uniforms.num_lights);
+    float3 get_shadowed_contribution(float2 rand) {
+        let light_index = uint(rand.x * uniforms.num_lights);
         let light = uniforms.get_light(light_index);
 
         var emission = light.emission;
@@ -106,99 +97,20 @@ struct Lights: Contribution<uint> {
 
         return emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
     }
-
-    float3 get_shadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-        return get_shadowed_contribution(blue_noise.rand());
-    }
-}
-
-struct Environment: Contribution<uint> {
-    SamplePoint point;
-    Uniforms uniforms;
-    float3 colour;
-
-    UnshadowedContribution get_unshadowed_contribution(uint _data) {
-        UnshadowedContribution contribution;
-        contribution.contribution = colour;
-        contribution.inv_pdf = 1;
-        return contribution;
-    }
-
-    float3 get_shadowed_contribution(float2 rand) {
-        let hemisphere_dir = sample_cosine_weighted_hemisphere(rand);
-        let rotated_dir = mul(build_tbn(point.normal), hemisphere_dir);
-
-        RayDesc desc;
-        desc.Origin = point.position;
-        desc.Direction = rotated_dir;
-        desc.TMin = 2e-4f;
-        desc.TMax = 100000.0;
-        var query = RayQuery<
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        query.TraceRayInline(
-            RaytracingAccelerationStructure(uniforms.tlas),
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xff,
-            desc
-        );
-        query.Proceed();
-        let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-
-        return visibility * colour;
-    }
-
-    float3 get_shadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-        return get_shadowed_contribution(blue_noise.rand2());
-    }
-}
-
-struct Combined: Contribution<uint> {
-    Environment env;
-    Lights lights;
-    float factor;
-
-    UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(lights.uniforms.blue_noise_data, blue_noise_state);
-        var rand = blue_noise.rand2();
-
-        UnshadowedContribution contribution;
-        if (rand.x < factor) {
-            rand.x /= factor;
-            contribution = lights.get_unshadowed_contribution(rand.x);
-            contribution.inv_pdf /= factor;
-        } else {
-            contribution = env.get_unshadowed_contribution(0);
-            contribution.inv_pdf /= (1.0-factor);
-        }
-
-        return contribution;
-    }
-
-    float3 get_shadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(lights.uniforms.blue_noise_data, blue_noise_state);
-        var rand = blue_noise.rand2();
-
-        if (rand.x < factor) {
-            rand.x /= factor;
-            return lights.get_shadowed_contribution(rand.x);
-        } else {
-            rand.x = inv_lerp(rand.x, factor, 1.0);
-            return env.get_shadowed_contribution(rand);
-        }
-    }
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point) {
     var rng = LCG(thread, uniforms.frame_index);
 
-    Combined state;
-    state.lights =  {point,uniforms};
-    state.env = {point,uniforms,float3(0.1)};
-    state.factor = 0.9;
+    let env = Environment(point, RaytracingAccelerationStructure(uniforms.tlas), float3(0.1));
+    Lights lights = {point, uniforms};
+    let combined = Combined<Lights, Environment>(lights, env, 0.9);
+    let state = BlueNoise<Combined<Lights, Environment>>(combined, uniforms.blue_noise_data);
 
+    let prev_coord = uniforms.get_prev_position(point.position);
     let reservoir_index = uniforms.thread_to_index(thread);
+    let prev_normal = normal_for_coord(uint2(prev_coord), uniforms);
+    let prev_res_valid = all(prev_coord > 0.0 & prev_coord < uniforms.extent) && abs(dot(point.normal, prev_normal)) > 0.9;
 
     var frame_reservoir = Reservoir<uint>(MAX_UINT_VALUE);
 
@@ -216,14 +128,16 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
     var p_hat = length(contribution);
     frame_reservoir.set_weight(p_hat);
 
-    if (uniforms.flags & FrameFlags::TemporalReuse) {
+    if (uniforms.flags & FrameFlags::TemporalReuse && prev_res_valid) {
+        let prev_reservoir_index = uniforms.thread_to_index(uint2(prev_coord));
+        
         var temporal_reservoir = Reservoir<uint>(MAX_UINT_VALUE);
 
         // Update from current reservoir
         temporal_reservoir.update_from_reservoir(frame_reservoir, p_hat, &rng);
 
         // Get clamp previous reservoir and clamp to the last 20 frames.
-        var previous_reservoir = uniforms.reservoirs[reservoir_index];
+        var previous_reservoir = uniforms.prev_reservoirs[prev_reservoir_index];
         previous_reservoir.clamp(20 * num_samples);
 
         // Update from prevous reservoir
@@ -334,4 +248,15 @@ float3 resolve_inner(uint2 thread, Uniforms uniforms, uint prim) {
     }
 
     return col * calculate_lighting_ris(thread, uniforms, point);
+}
+
+float3 normal_for_coord(uint2 coord, Uniforms uniforms) {
+    Texture2D<uint> prim_image = storage_images[uniforms.prims_image];
+    let prim = prim_image[coord];
+    if (prim == MAX_UINT_VALUE) {
+        return float3(0);
+    }
+    let model = uniforms.model;
+    let first_index = model.read_index(prim * 3 + 0);
+    return model.normals[first_index];
 }

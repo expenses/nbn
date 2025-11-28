@@ -10,11 +10,22 @@ struct Images {
     hdr: nbn::IndexedImage,
     prims: nbn::IndexedImage,
     depth: nbn::Image,
-    reservoirs: nbn::Buffer,
+    reservoirs: nbn::PingPong<nbn::Buffer>,
 }
 
 impl Images {
     fn new(device: &nbn::Device, extent: vk::Extent2D) -> Self {
+        let reservoir_size = 4 * 4;
+        let frame_reservoirs_size = extent.width as u64 * extent.height as u64 * reservoir_size;
+
+        let reservoirs = |name| device
+            .create_buffer(nbn::BufferDescriptor {
+                name,
+                size: extent.width as u64 * extent.height as u64 * reservoir_size,
+                ty: nbn::MemoryLocation::GpuOnly,
+            })
+            .unwrap();
+
         Self {
             hdr: device.register_owned_image(
                 device.create_image(nbn::ImageDescriptor {
@@ -46,13 +57,7 @@ impl Images {
                 aspect_mask: vk::ImageAspectFlags::DEPTH,
                 mip_levels: 1,
             }),
-            reservoirs: device
-                .create_buffer(nbn::BufferDescriptor {
-                    name: "reservoirs",
-                    size: extent.width as u64 * extent.height as u64 * 4 * 4,
-                    ty: nbn::MemoryLocation::GpuOnly,
-                })
-                .unwrap(),
+            reservoirs: nbn::PingPong::new([reservoirs("reservoirs 1"), reservoirs("reservoirs 2")]),
         }
     }
 }
@@ -97,7 +102,7 @@ struct App {
 impl winit::application::ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = event_loop
-            .create_window(winit::window::WindowAttributes::default().with_resizable(true))
+            .create_window(winit::window::WindowAttributes::default().with_resizable(false))
             .unwrap();
         let device = Arc::new(nbn::Device::new(Some(&window)));
 
@@ -370,35 +375,6 @@ impl winit::application::ApplicationHandler for App {
                         &output.textures_delta,
                     );
 
-                    device.cmd_pipeline_barrier2(
-                        **command_buffer,
-                        &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::ImageBarrier {
-                                image,
-                                src: Some(nbn::BarrierOp::Acquire),
-                                dst: nbn::BarrierOp::ComputeStorageWrite,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                            nbn::ImageBarrier {
-                                image: &state.images.depth,
-                                src: Some(nbn::BarrierOp::DepthStencilAttachmentReadWrite),
-                                dst: nbn::BarrierOp::DepthStencilAttachmentReadWrite,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                            nbn::ImageBarrier {
-                                image: &state.images.prims,
-                                src: Some(nbn::BarrierOp::ComputeStorageRead),
-                                dst: nbn::BarrierOp::ColorAttachmentWrite,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                        ]),
-                    );
                     let extent = state.swapchain.create_info.image_extent;
 
                     device.bind_internal_descriptor_sets_to_all(command_buffer);
@@ -425,6 +401,11 @@ impl winit::application::ApplicationHandler for App {
                         glam::Vec3::from_array(transform.forward()),
                         glam::Vec3::Y,
                     );
+                    let prev_view = glam::Mat4::look_to_rh(
+                        glam::Vec3::from_array(prev_transform.position.into()),
+                        glam::Vec3::from_array(prev_transform.forward()),
+                        glam::Vec3::Y,
+                    );
                     let proj = nbn::perspective_reversed_infinite_z_vk(
                         59.0_f32.to_radians(),
                         extent.width as f32 / extent.height as f32,
@@ -436,13 +417,22 @@ impl winit::application::ApplicationHandler for App {
                         .try_as_slice_mut::<Uniforms>()
                         .unwrap();
 
+                    let width = extent.width as f32;
+                    let height = extent.height as f32;
+
+                    let ndc_to_screen_space = glam::Mat4::from_cols(
+                        glam::Vec4::new(width * 0.5, 0.0, 0.0, 0.0),
+                        glam::Vec4::new(0.0, height * 0.5, 0.0, 0.0),
+                        glam::Vec4::new(0.0, 0.0, 1.0, 0.0),
+                        glam::Vec4::new(width * 0.5, height * 0.5, 0.0, 1.0),
+                    );
+
                     uniforms[current_frame] = Uniforms {
                         camera_pos_x: transform.position.x,
                         camera_pos_y: transform.position.y,
                         camera_pos_z: transform.position.z,
-                        view_inv: view.inverse().to_cols_array(),
-                        proj_inv: proj.inverse().to_cols_array(),
                         proj_view: (proj * view).to_cols_array(),
+                        prev_proj_view: (ndc_to_screen_space * proj * prev_view).to_cols_array(),
                         tlas: *state.tlas,
                         model: *state.model_buffer,
                         lights: *state.lights,
@@ -458,7 +448,8 @@ impl winit::application::ApplicationHandler for App {
                         swapchain_image: *state.swapchain_image_heap_indices[next_image as usize],
                         flags: (state.temporal_reuse as u32)
                             | ((state.one_ray_per_pixel as u32) << 1),
-                        reservoirs: *state.images.reservoirs,
+                        reservoirs: **state.images.reservoirs,
+                        prev_reservoirs: **state.images.reservoirs.other(),
                     };
 
                     let uniforms_ptr = *state.combined_uniform_buffer
@@ -601,6 +592,7 @@ impl winit::application::ApplicationHandler for App {
                     } else {
                         state.accum_index = 0;
                     }
+                    state.images.reservoirs.flip();
                 }
             }
             winit::event::WindowEvent::KeyboardInput {

@@ -40,13 +40,13 @@ struct Light {
 };
 
 struct Uniforms {
-    float4x4 view_inv;
-    float4x4 proj_inv;
     float4x4 proj_view;
+    float4x4 prev_proj_view;
     uint64_t tlas;
     Model* model;
     float[11]* lights;
     Reservoir<uint>* reservoirs;
+    Reservoir<uint>* prev_reservoirs;
     int* blue_noise_sobol;
     int* blue_noise_ranking_tile;
     int* blue_noise_scrambling_tile;
@@ -86,6 +86,11 @@ struct Uniforms {
 
     Light get_light(uint index) {
         return reinterpret<Light>(lights[index]);
+    }
+
+    float2 get_prev_position(float3 position) {
+        let prev_pos = mul(prev_proj_view, float4(position, 1.0));
+        return prev_pos.xy / prev_pos.w;
     }
 };
 
