@@ -81,7 +81,7 @@ public struct ThreadBlueNoise: Rng {
     [mutating]
     public float rand() {
         let value = data.sample(thread + uint2(R2(index) * 128), frame_index, 0);
-        index += R2;
+        index += 1;
         return value;
     }
 };
