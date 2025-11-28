@@ -11,11 +11,7 @@ pub struct BlueNoiseBuffers {
 impl BlueNoiseBuffers {
     pub fn new(device: &nbn::Device, staging_buffer: &mut nbn::StagingBuffer) -> Self {
         Self {
-            sobol: staging_buffer.create_buffer_from_slice(
-                device,
-                "sobol",
-                SOBOL,
-            ),
+            sobol: staging_buffer.create_buffer_from_slice(device, "sobol", SOBOL),
             ranking_tile: staging_buffer.create_buffer_from_slice(
                 device,
                 "ranking_tile",
