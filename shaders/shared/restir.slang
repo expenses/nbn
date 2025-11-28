@@ -45,8 +45,13 @@ struct Reservoir<T> {
     }
 
     [mutating]
+    bool update_from_reservoir(Reservoir<T> reservoir, float p_hat, float rand) {
+        return update(reservoir.Y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rand);
+    }
+
+    [mutating]
     bool update_from_reservoir<R: Rng>(Reservoir<T> reservoir, float p_hat, R* rng) {
-        return update(reservoir.Y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rng);
+        return update_from_reservoir(reservoir, p_hat, rng.rand());
     }
 
     float average_weight() {
