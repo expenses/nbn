@@ -80,10 +80,6 @@ struct Uniforms {
         }
     }
 
-    ThreadBlueNoise blue_noise(uint2 thread) {
-        return ThreadBlueNoise(blue_noise_data, frame_index, thread);
-    }
-
     uint thread_to_index(uint2 thread) {
         return thread.x + thread.y * extent.x;
     }

@@ -139,9 +139,9 @@ struct Environment: Contribution<uint> {
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point) {
-    var blue_noise = uniforms.blue_noise(thread);
+    var rng = LCG(thread, uniforms.frame_index);
 
-    State state = {point,uniforms};// = {point,uniforms};
+    State state = {point,uniforms};
 
     let reservoir_index = uniforms.thread_to_index(thread);
     // the pdf is 1/num_lights but we're dividing by that
@@ -151,15 +151,11 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
 
     uint num_samples = 8;
     for (uint i = 0; i < num_samples; i++) {
-        // Sample the value for the reservoir update now, so that the
-        // random values generated in `get_unshadowed_contribution` are different
-        let update_rand = blue_noise.rand();
-
+        let rng_state = pack_blue_noise_state(thread, uniforms.frame_index * num_samples + i);
         // Get the unshadowed contribution for a random light
-        let rng_state = blue_noise.state();
         let p_hat = length(state.get_unshadowed_contribution(rng_state));
         let weight = p_hat * recip_pdf;
-        frame_reservoir.update(rng_state, weight, 1, update_rand);
+        frame_reservoir.update(rng_state, weight, 1, rng.rand());
     }
 
     var contribution = frame_reservoir.data != MAX_UINT_VALUE ? state.get_shadowed_contribution(frame_reservoir.data) : float3(0.0);
@@ -170,7 +166,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
         var temporal_reservoir = Reservoir<uint>(MAX_UINT_VALUE);
 
         // Update from current reservoir
-        temporal_reservoir.update_from_reservoir(frame_reservoir, p_hat, &blue_noise);
+        temporal_reservoir.update_from_reservoir(frame_reservoir, p_hat, &rng);
 
         // Get clamp previous reservoir and clamp to the last 20 frames.
         var previous_reservoir = uniforms.reservoirs[reservoir_index];
@@ -178,7 +174,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
 
         // Update from prevous reservoir
         let p_hat_prev = length(state.get_unshadowed_contribution(previous_reservoir.data));
-        temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, &blue_noise);
+        temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, &rng);
 
         p_hat = temporal_reservoir.data != MAX_UINT_VALUE ? length(state.get_unshadowed_contribution(temporal_reservoir.data)) : 0.0;
         temporal_reservoir.set_weight(p_hat);
