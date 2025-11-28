@@ -204,7 +204,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
 
     uint num_samples = 8;
     for (uint i = 0; i < num_samples; i++) {
-        let rng_state = pack_blue_noise_state(thread, uniforms.frame_index, i);
+        let rng_state = pack_blue_noise_state(thread, uniforms.frame_index * num_samples + i);
         // Get the unshadowed contribution for a random light
         let contribution = state.get_unshadowed_contribution(rng_state);
         let p_hat = length(contribution.contribution);
