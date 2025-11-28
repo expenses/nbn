@@ -102,3 +102,7 @@ public float3x3 build_tbn(float3 n) {
     let b = cross(n, t);
     return transpose(float3x3(t, b, n));
 }
+
+public float inv_lerp(float value, float from, float to){
+  return (value - from) / (to - from);
+}
