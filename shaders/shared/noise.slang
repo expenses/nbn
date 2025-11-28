@@ -42,7 +42,7 @@ public struct BlueNoiseData {
         return v;
     }
 
-    public float2 sample(int2 pixel, int sampleIndex) {
+    public float2 sample2(int2 pixel, int sampleIndex) {
         return float2(
             sample(pixel, sampleIndex, 0),
             sample(pixel, sampleIndex, 1),
@@ -86,6 +86,13 @@ public struct ThreadBlueNoise: Rng {
         sample_index += 1;
         return value;
     }
+
+    [mutating]
+    public float2 rand2() {
+        let value = data.sample2(thread, sample_index);
+        sample_index += 1;
+        return value;
+    }
 };
 
 // https://github.com/NVIDIAGameWorks/Falcor/blob/eb540f6748774680ce0039aaf3ac9279266ec521/Source/Falcor/Utils/Sampling/Pseudorandom/LCG.slang#L47-L56
@@ -106,6 +113,14 @@ public struct LCG: Rng {
         const uint C = 1013904223u;
         state = (A * state + C);
         return bits_to_float(state);
+    }
+    
+    [mutating]
+    public float2 rand2() {
+        // explicitly order
+        let a = rand();
+        let b = rand();
+        return float2(a, b);
     }
 }
 

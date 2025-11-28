@@ -19,7 +19,7 @@ struct Reservoir<T> {
             return Y;
         }
     }
-    
+
     property float weight {
         get {
             return W_y;
@@ -65,6 +65,12 @@ struct Reservoir<T> {
 };
 
 interface Contribution<T> {
-    float3 get_unshadowed_contribution(T data);
+    UnshadowedContribution get_unshadowed_contribution(T data);
     float3 get_shadowed_contribution(T data);
+}
+
+struct UnshadowedContribution {
+    float3 contribution;
+    // 1.0 / pdf
+    float inv_pdf;
 }

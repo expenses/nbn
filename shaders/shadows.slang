@@ -35,7 +35,7 @@ import fallback_bindings;
     RayDesc desc;
     desc.Origin = world_space_pos.xyz;
     desc.Direction = SphericalDirectionalLightRayDirection(
-        uniforms.blue_noise.sample(thread, uniforms.frame_index),
+        uniforms.blue_noise.sample2(thread, uniforms.frame_index),
         sun,
         0.01
     );

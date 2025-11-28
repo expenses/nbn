@@ -13,5 +13,5 @@ float3 sample_cosine_weighted_hemisphere(float2 u) {
 }
 
 float3 sample_cosine_weighted_hemisphere<R: Rng>(R* rng) {
-    return sample_cosine_weighted_hemisphere(float2(rng.rand(), rng.rand()));
+    return sample_cosine_weighted_hemisphere(rng.rand2());
 }
