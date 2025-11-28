@@ -50,38 +50,40 @@ public struct BlueNoiseData {
     }
 };
 
+public uint pack_blue_noise_state(uint2 thread, uint sample_index) {
+    return (thread.x & 127) | ((thread.y & 127) << 8) | ((sample_index & 255) << 16);
+}
+
 public struct ThreadBlueNoise: Rng {
     public BlueNoiseData data;
     uint2 thread;
-    uint frame_index;
-    uint index = 0;
+    uint sample_index;
 
-    public __init(BlueNoiseData data_, uint frame_index_, uint2 thread_) {
+    public __init(BlueNoiseData data_, uint2 thread_, uint frame_index, uint samples_per_frame) {
         data = data_;
-        frame_index = frame_index_;
+        sample_index = frame_index * samples_per_frame;
         thread = thread_;
     }
 
     public __init(BlueNoiseData data_, uint state) {
         data = data_;
         thread = uint2(state & 127, (state >> 8) & 127);
-        frame_index = (state >> 16) & 255;
-        index = (state >> 24) & 255;
+        sample_index = (state >> 16) & 255;
     }
 
     public uint state() {
-        return (thread.x & 127) | ((thread.y & 127) << 8) | ((frame_index & 255) << 16) | ((index & 255) << 24);
+        return pack_blue_noise_state(thread, sample_index);
     }
 
     [mutating]
     public void advance(uint times) {
-        index += times;
+        sample_index += times;
     }
 
     [mutating]
     public float rand() {
-        let value = data.sample(thread + uint2(R2(index) * 128), frame_index, 0);
-        index += 1;
+        let value = data.sample(thread, sample_index, 0);
+        sample_index += 1;
         return value;
     }
 };
@@ -89,15 +91,15 @@ public struct ThreadBlueNoise: Rng {
 // https://github.com/NVIDIAGameWorks/Falcor/blob/eb540f6748774680ce0039aaf3ac9279266ec521/Source/Falcor/Utils/Sampling/Pseudorandom/LCG.slang#L47-L56
 public struct LCG: Rng {
     public uint state;
-    
+
     public __init(uint state_) {
         state = state_;
     }
-    
+
     public __init(uint2 thread, uint frame_index) {
         state = blockCipherTEA(interleave_32bit(thread), frame_index).x;
     }
-    
+
     [mutating]
     public float rand() {
         const uint A = 1664525u;
