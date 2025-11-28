@@ -41,9 +41,8 @@ struct State: Contribution<uint> {
     SamplePoint point;
     Uniforms uniforms;
 
-    float3 get_unshadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-        let light_index = uint(blue_noise.rand() * uniforms.num_lights);
+    float3 get_unshadowed_contribution(float rand) {
+        let light_index = uint(rand * uniforms.num_lights);
         let light = uniforms.get_light(light_index);
 
         var emission = light.emission;
@@ -63,9 +62,17 @@ struct State: Contribution<uint> {
         return emission * (max(dot(point.normal, direction), 0.0) / distance_sq);
     }
 
-    float3 get_shadowed_contribution(uint blue_noise_state) {
+    UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-        let light_index = uint(blue_noise.rand() * uniforms.num_lights);
+
+        UnshadowedContribution contribution;
+        contribution.contribution = get_unshadowed_contribution(blue_noise.rand());
+        contribution.inv_pdf = uniforms.num_lights;
+        return contribution;
+    }
+
+    float3 get_shadowed_contribution(float rand) {
+        let light_index = uint(rand * uniforms.num_lights);
         let light = uniforms.get_light(light_index);
 
         var emission = light.emission;
@@ -100,26 +107,33 @@ struct State: Contribution<uint> {
 
         return emission * (visibility * max(dot(point.normal, direction),0.0) / distance_sq);
     }
+
+    float3 get_shadowed_contribution(uint blue_noise_state) {
+        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
+        return get_shadowed_contribution(blue_noise.rand());
+    }
 }
 
 struct Environment: Contribution<uint> {
     SamplePoint point;
     Uniforms uniforms;
+    float3 colour;
 
-    float3 get_unshadowed_contribution(uint data) {
-        return float3(1);
+    UnshadowedContribution get_unshadowed_contribution(uint data) {
+        UnshadowedContribution contribution;
+        contribution.contribution = colour;
+        contribution.inv_pdf = 1;
+        return contribution;
     }
 
-    float3 get_shadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
-
-        let hemisphere_dir = sample_cosine_weighted_hemisphere(&blue_noise);
+    float3 get_shadowed_contribution(float2 rand) {
+        let hemisphere_dir = sample_cosine_weighted_hemisphere(rand);
         let rotated_dir = mul(build_tbn(point.normal), hemisphere_dir);
 
         RayDesc desc;
         desc.Origin = point.position;
         desc.Direction = rotated_dir;
-        desc.TMin = 1e-4f;
+        desc.TMin = 2e-4f;
         desc.TMax = 100000.0;
         var query = RayQuery<
             RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
@@ -134,18 +148,55 @@ struct Environment: Contribution<uint> {
 
 
 
-        return visibility;
+        return visibility * colour;
+    }
+
+    float3 get_shadowed_contribution(uint blue_noise_state) {
+        var blue_noise = ThreadBlueNoise(uniforms.blue_noise_data, blue_noise_state);
+        return get_shadowed_contribution(blue_noise.rand2());
+    }
+}
+
+struct Combined: Contribution<uint> {
+    Environment env;
+    State state;
+
+    UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
+        var blue_noise = ThreadBlueNoise(state.uniforms.blue_noise_data, blue_noise_state);
+        let rand = blue_noise.rand2();
+
+        UnshadowedContribution contribution;
+        if (rand.x < 0.75) {
+            contribution.contribution = state.get_unshadowed_contribution(rand.x/0.75);
+            contribution.inv_pdf = state.uniforms.num_lights/0.75;
+        } else {
+            contribution.contribution = env.colour;
+            contribution.inv_pdf = 1.0/0.25;
+        }
+
+        return contribution;
+    }
+
+    float3 get_shadowed_contribution(uint blue_noise_state) {
+        var blue_noise = ThreadBlueNoise(state.uniforms.blue_noise_data, blue_noise_state);
+        let rand = blue_noise.rand2();
+
+        if (rand.x < 0.75) {
+            return state.get_shadowed_contribution(rand.x/0.75);
+        } else {
+            return env.get_shadowed_contribution(float2(rand.x/0.25, rand.y));
+        }
     }
 }
 
 float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point) {
     var rng = LCG(thread, uniforms.frame_index);
 
-    State state = {point,uniforms};
+    Combined state;
+    state.state =  {point,uniforms};
+    state.env = {point,uniforms,float3(0.1)};
 
     let reservoir_index = uniforms.thread_to_index(thread);
-    // the pdf is 1/num_lights but we're dividing by that
-    let recip_pdf = uniforms.num_lights;
 
     var frame_reservoir = Reservoir<uint>(MAX_UINT_VALUE);
 
@@ -153,8 +204,9 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
     for (uint i = 0; i < num_samples; i++) {
         let rng_state = pack_blue_noise_state(thread, uniforms.frame_index * num_samples + i);
         // Get the unshadowed contribution for a random light
-        let p_hat = length(state.get_unshadowed_contribution(rng_state));
-        let weight = p_hat * recip_pdf;
+        let contribution = state.get_unshadowed_contribution(rng_state);
+        let p_hat = length(contribution.contribution);
+        let weight = p_hat * contribution.inv_pdf;
         frame_reservoir.update(rng_state, weight, 1, rng.rand());
     }
 
@@ -173,16 +225,16 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
         previous_reservoir.clamp(20 * num_samples);
 
         // Update from prevous reservoir
-        let p_hat_prev = length(state.get_unshadowed_contribution(previous_reservoir.data));
+        let p_hat_prev = length(state.get_unshadowed_contribution(previous_reservoir.data).contribution);
         temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, &rng);
 
-        p_hat = temporal_reservoir.data != MAX_UINT_VALUE ? length(state.get_unshadowed_contribution(temporal_reservoir.data)) : 0.0;
+        p_hat = temporal_reservoir.data != MAX_UINT_VALUE ? length(state.get_unshadowed_contribution(temporal_reservoir.data).contribution) : 0.0;
         temporal_reservoir.set_weight(p_hat);
         frame_reservoir = temporal_reservoir;
 
         if (frame_reservoir.data != MAX_UINT_VALUE) {
             if (uniforms.flags & FrameFlags::OneRayPerPixel) {
-                contribution = state.get_unshadowed_contribution(frame_reservoir.data);
+                contribution = state.get_unshadowed_contribution(frame_reservoir.data).contribution;
             } else {
                 contribution = state.get_shadowed_contribution(frame_reservoir.data);
             }
