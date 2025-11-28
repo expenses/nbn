@@ -157,12 +157,11 @@ struct Environment: Contribution<uint> {
 struct Combined: Contribution<uint> {
     Environment env;
     Lights lights;
+    float factor;
 
     UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(lights.uniforms.blue_noise_data, blue_noise_state);
         var rand = blue_noise.rand2();
-
-        let factor = 0.9;
 
         UnshadowedContribution contribution;
         if (rand.x < factor) {
@@ -181,8 +180,6 @@ struct Combined: Contribution<uint> {
         var blue_noise = ThreadBlueNoise(lights.uniforms.blue_noise_data, blue_noise_state);
         var rand = blue_noise.rand2();
 
-        let factor = 0.9;
-
         if (rand.x < factor) {
             rand.x /= factor;
             return lights.get_shadowed_contribution(rand.x);
@@ -199,6 +196,7 @@ float3 calculate_lighting_ris(uint2 thread, Uniforms uniforms, SamplePoint point
     Combined state;
     state.lights =  {point,uniforms};
     state.env = {point,uniforms,float3(0.1)};
+    state.factor = 0.9;
 
     let reservoir_index = uniforms.thread_to_index(thread);
 
