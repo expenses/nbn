@@ -2,10 +2,11 @@ import random;
 import sampling;
 import util;
 import noise;
+import constants;
 
 struct Reservoir<T> {
     // Data of the selected sample (e.g. the index of most important light)
-    T Y;
+    T y;
     // Weight of the selected sample
     float W_y = 0.0;
     // Sum of all weights for all samples processed
@@ -14,12 +15,12 @@ struct Reservoir<T> {
     uint M = 0;
 
     __init(T initial) {
-        Y = initial;
+        y = initial;
     }
 
     property T data {
         get {
-            return Y;
+            return y;
         }
     }
 
@@ -35,7 +36,7 @@ struct Reservoir<T> {
         M += c;
 
         if (rand < w / W_sum) {
-            Y = value;
+            y = value;
             return true;
         }
 
@@ -49,7 +50,7 @@ struct Reservoir<T> {
 
     [mutating]
     bool update_from_reservoir(Reservoir<T> reservoir, float p_hat, float rand) {
-        return update(reservoir.Y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rand);
+        return update(reservoir.y, p_hat * reservoir.W_y * reservoir.M, reservoir.M, rand);
     }
 
     [mutating]
@@ -73,8 +74,8 @@ struct Reservoir<T> {
 };
 
 interface Contribution<T> {
-    UnshadowedContribution get_unshadowed_contribution(T data);
-    float3 get_shadowed_contribution(T data);
+    UnshadowedContribution unshadowed_contribution(T data);
+    float3 shadowed_contribution(T data);
 }
 
 struct UnshadowedContribution {
@@ -86,6 +87,13 @@ struct UnshadowedContribution {
 struct SamplePoint {
     float3 position;
     float3 normal;
+    
+    [mutating]
+    void fix_normal(float3 camera_pos) {
+        if (dot(camera_pos - position, normal) < 0) {
+            normal = -normal;
+        }
+    }
 }
 
 struct Environment: Contribution<float2> {
@@ -99,14 +107,14 @@ struct Environment: Contribution<float2> {
         colour = colour_;
     }
 
-    UnshadowedContribution get_unshadowed_contribution(float2 _rand2) {
+    UnshadowedContribution unshadowed_contribution(float2 _rand2) {
         UnshadowedContribution contribution;
         contribution.contribution = colour;
         contribution.inv_pdf = 1;
         return contribution;
     }
 
-    float3 get_shadowed_contribution(float2 rand) {
+    float3 shadowed_contribution(float2 rand) {
         let hemisphere_dir = sample_cosine_weighted_hemisphere(rand);
         let rotated_dir = mul(build_tbn(point.normal), hemisphere_dir);
 
@@ -142,27 +150,27 @@ struct Combined<A: Contribution<float2>, B: Contribution<float2>>: Contribution<
         factor = factor_;
     }
     
-    UnshadowedContribution get_unshadowed_contribution(float2 rand2) {
+    UnshadowedContribution unshadowed_contribution(float2 rand2) {
         UnshadowedContribution contribution;
         if (rand2.x < factor) {
             rand2.x /= factor;
-            contribution = a.get_unshadowed_contribution(rand2);
+            contribution = a.unshadowed_contribution(rand2);
             contribution.inv_pdf /= factor;
         } else {
             rand2.x = inv_lerp(rand2.x, factor, 1.0);
-            contribution = b.get_unshadowed_contribution(rand2);
+            contribution = b.unshadowed_contribution(rand2);
             contribution.inv_pdf /= (1.0-factor);
         }
         return contribution;
     }
 
-    float3 get_shadowed_contribution(float2 rand2) {
+    float3 shadowed_contribution(float2 rand2) {
         if (rand2.x < factor) {
             rand2.x /= factor;
-            return a.get_shadowed_contribution(rand2);
+            return a.shadowed_contribution(rand2);
         } else {
             rand2.x = inv_lerp(rand2.x, factor, 1.0);
-            return b.get_shadowed_contribution(rand2);
+            return b.shadowed_contribution(rand2);
         }
     }
 }
@@ -176,13 +184,64 @@ struct BlueNoise<T: Contribution<float2>>: Contribution<uint> {
         blue_noise_data = blue_noise_data_;
     }
     
-    UnshadowedContribution get_unshadowed_contribution(uint blue_noise_state) {
+    UnshadowedContribution unshadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(blue_noise_data, blue_noise_state);
-        return inner.get_unshadowed_contribution(blue_noise.rand2());
+        return inner.unshadowed_contribution(blue_noise.rand2());
     }
     
-    float3 get_shadowed_contribution(uint blue_noise_state) {
+    float3 shadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(blue_noise_data, blue_noise_state);
-        return inner.get_shadowed_contribution(blue_noise.rand2());
+        return inner.shadowed_contribution(blue_noise.rand2());
     }
+    
+    float3 shadowed_contribution_from_reservoir(Reservoir<uint> reservoir) {
+        if (reservoir.data != MAX_UINT_VALUE) {
+            return shadowed_contribution(reservoir.data);  
+        } else {
+            return float3(0.0);
+        }
+    }
+    
+    float3 unshadowed_contribution_from_reservoir(Reservoir<uint> reservoir) {
+        if (reservoir.data != MAX_UINT_VALUE) {
+            return unshadowed_contribution(reservoir.data).contribution;  
+        } else {
+            return float3(0.0);
+        }
+    }
+}
+
+void stream_into_reservoir<T: Contribution<float2>, R: Rng>(BlueNoise<T> state, Reservoir<uint>* reservoir, R* rng, uint2 thread, uint frame_index, uint num_samples) {
+    for (uint i = 0; i < num_samples; i++) {
+        let rng_state = pack_blue_noise_state(thread, frame_index * num_samples + i);
+        // Get the unshadowed contribution for a random light
+        let contribution = state.unshadowed_contribution(rng_state);
+        let p_hat = length(contribution.contribution);
+        let weight = p_hat * contribution.inv_pdf;
+        reservoir.update(rng_state, weight, 1, rng.rand());
+    }
+}
+
+void temporal_accumulation<T: Contribution<float2>, R: Rng>(
+    Reservoir<uint>* frame_reservoir,
+    float p_hat,
+    Reservoir<uint> previous_reservoir,
+    BlueNoise<T> state,
+    R* rng, 
+    uint num_samples
+) {
+    var previous_reservoir = previous_reservoir;
+    var temporal_reservoir = Reservoir<uint>(MAX_UINT_VALUE);
+
+    // Update from current reservoir
+    temporal_reservoir.update_from_reservoir(*frame_reservoir, p_hat, rng);
+
+    // Clamp previous reservoir to the last 20 frames.
+    previous_reservoir.clamp(20 * num_samples);
+
+    // Update from prevous reservoir
+    let p_hat_prev = length(state.unshadowed_contribution_from_reservoir(previous_reservoir));
+    temporal_reservoir.update_from_reservoir(previous_reservoir, p_hat_prev, rng);
+
+    *frame_reservoir = temporal_reservoir;
 }
