@@ -41,7 +41,7 @@ fn main() {
 
     let base = "../models/Bistro_v5_2";
 
-    let bytes = std::fs::read(&format!("{}/bistro_combined.gltf", base)).unwrap();
+    let bytes = std::fs::read(&format!("{}/bistro_combined_flat.gltf", base)).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         _,
@@ -235,14 +235,14 @@ fn main() {
         },
         blend_attachments: &[],
         color_attachment_formats: &[],
-        conservative_rasterization: true,
+        flags: nbn::GraphicsPipelineFlags::CONSERVATIVE_RASTERIZATION,
         depth: Default::default(),
     });
 
     let dim_size = 2048;
     let total_size = 2048;
     let output_buffer_size = 2_000_000_000;
-    let scale = 7500.0;
+    let scale = 125.0;
     let num_tiles_on_side = dbg!(total_size / dim_size);
 
     staging_buffer.finish(&device);
