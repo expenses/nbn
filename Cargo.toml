@@ -29,6 +29,7 @@ env_logger = "0.11.9"
 gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "updates", features = ["visualizer"]}
 egui-winit = "0.31.1"
 image = { version = "0.25.9", default-features = false, features = ["exr"] }
+slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
 
 [features]
 default = ["image_loading", "egui"]
