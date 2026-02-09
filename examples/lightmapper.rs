@@ -12,17 +12,17 @@ fn main() {
     let device = Arc::new(nbn::Device::new(None));
 
     let mut staging_buffer =
-        nbn::StagingBuffer::new(&device, 16 * 1024 * 1024, nbn::QueueType::Compute);
+        nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
 
     let (gltf_data, model, lights) = load_gltf(
         &device,
         &mut staging_buffer,
-        &std::path::Path::new("./models/export/assassins.gltf"),
+        &std::path::Path::new(&std::env::args().nth(1).unwrap()),
     );
 
-    let num_lights = dbg!(lights.len());
+    //let num_lights = dbg!(lights.len());
 
-    let lights = staging_buffer.create_buffer_from_slice(&device, "lights", &lights);
+    //let lights = staging_buffer.create_buffer_from_slice(&device, "lights", &lights);
 
     let instance_buffer = staging_buffer.create_buffer_from_slice(
         &device,
@@ -70,7 +70,7 @@ fn load_gltf(
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
         _,
     ) = goth_gltf::Gltf::from_bytes(&bytes).unwrap();
-    assert!(buffer.is_none());
+    //assert!(buffer.is_none());
     dbg!(gltf.meshes.len(), gltf.meshes[0].primitives.len());
 
     let lights: Vec<_> = gltf
@@ -163,7 +163,10 @@ fn load_gltf(
         })
         .collect();
 
-    let buffer = std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
+    let buffer = buffer.map(|buffer| buffer.to_vec()).unwrap_or_else(|| {
+        std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap()
+    });
+    //let buffer = std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
 
     fn get_slice<'a, T: Copy>(
         buffer: &'a [u8],
@@ -187,10 +190,10 @@ fn load_gltf(
             let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
             assert_eq!(
                 indices_accessor.component_type,
-                goth_gltf::ComponentType::UnsignedShort
+                goth_gltf::ComponentType::UnsignedInt
             );
             let prim_indices =
-                &get_slice::<u16>(&buffer, &gltf, &indices_accessor)[..indices_accessor.count];
+                &get_slice::<u32>(&buffer, &gltf, &indices_accessor)[..indices_accessor.count];
             indices.extend(
                 prim_indices
                     .iter()
@@ -209,10 +212,12 @@ fn load_gltf(
             uv2s.extend_from_slice(get(primitive.attributes.texcoord_1, 2, "uv2s"));
             normals.extend_from_slice(get(primitive.attributes.normal, 3, "normals"));
 
-            let material_index = primitive.material.unwrap();
+            let material_index = primitive.material.unwrap_or(0);
 
-            image_indices
-                .extend((0..prim_indices.len() / 3).map(|_| material_to_image[material_index]));
+            image_indices.extend(
+                (0..prim_indices.len() / 3)
+                    .map(|_| material_to_image.get(material_index).cloned().unwrap_or(0)),
+            );
         }
     }
 
