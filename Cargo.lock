@@ -2025,6 +2025,7 @@ dependencies = [
  "notify",
  "parking_lot",
  "presser",
+ "slang_struct",
  "winit",
  "zstd",
 ]
