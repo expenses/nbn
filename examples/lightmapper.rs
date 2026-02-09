@@ -4,7 +4,7 @@ use winit::event::ElementState;
 use winit::keyboard::KeyCode;
 use winit::window::CursorGrabMode;
 
-slang_struct::slang_include!("shaders/lightmapper.slang");
+slang_struct::slang_include!("shaders/lightmapper_structs.slang");
 
 fn main() {
     env_logger::init();
@@ -14,11 +14,51 @@ fn main() {
     let mut staging_buffer =
         nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
 
+    let mut args = std::env::args().skip(1);
+
     let (gltf_data, model, lights) = load_gltf(
         &device,
         &mut staging_buffer,
-        &std::path::Path::new(&std::env::args().nth(1).unwrap()),
+        &std::path::Path::new(&args.next().unwrap()),
     );
+
+    let width = args.next().unwrap().parse::<u32>().unwrap();
+    let height = args.next().unwrap().parse::<u32>().unwrap();
+
+    let mut output_buffer = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "output",
+            size: width as u64 * height as u64 * 4 * 4,
+            ty: nbn::MemoryLocation::GpuToCpu,
+        })
+        .unwrap();
+
+    let output_image = device.create_image(nbn::ImageDescriptor {
+        name: "output image",
+        format: vk::Format::R32G32B32A32_SFLOAT,
+        extent: [width, height].into(),
+        usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        mip_levels: 1,
+    });
+
+    let pos_image = device.create_image(nbn::ImageDescriptor {
+        name: "pos image",
+        format: vk::Format::R32G32B32A32_SFLOAT,
+        extent: [width, height].into(),
+        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        mip_levels: 1,
+    });
+
+    let normal_image = device.create_image(nbn::ImageDescriptor {
+        name: "normal image",
+        format: vk::Format::R32G32B32A32_SFLOAT,
+        extent: [width, height].into(),
+        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        mip_levels: 1,
+    });
 
     //let num_lights = dbg!(lights.len());
 
@@ -58,6 +98,124 @@ fn main() {
     let blue_noise_buffers = nbn::blue_noise::BlueNoiseBuffers::new(&device, &mut staging_buffer);
 
     staging_buffer.finish(&device);
+
+    let shader = device.load_shader("shaders/compiled/lightmapper.spv");
+
+    let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+        name: "lightmapper pipeline",
+        shaders: nbn::GraphicsPipelineShaders::Legacy {
+            vertex: nbn::ShaderDesc {
+                module: &shader,
+                entry_point: c"vertex",
+            },
+            fragment: nbn::ShaderDesc {
+                module: &shader,
+                entry_point: c"fragment",
+            },
+        },
+        color_attachment_formats: &[vk::Format::R32G32B32A32_SFLOAT; 2],
+        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA); 2],
+        flags: Default::default(),
+        depth: Default::default(),
+    });
+
+    let mut command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
+
+    unsafe {
+        device
+            .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
+            .unwrap();
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &pos_image,
+            None,
+            nbn::BarrierOp::ColorAttachmentWrite,
+        );
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &normal_image,
+            None,
+            nbn::BarrierOp::ColorAttachmentWrite,
+        );
+        device.begin_rendering(
+            &command_buffer,
+            width,
+            height,
+            &[vk::RenderingAttachmentInfo::default()
+                .image_view(*pos_image.view)
+                .image_layout(vk::ImageLayout::GENERAL)
+                .clear_value(vk::ClearValue {
+                    color: vk::ClearColorValue { float32: [0.0; 4] },
+                })
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE), vk::RenderingAttachmentInfo::default()
+                    .image_view(*normal_image.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .clear_value(vk::ClearValue {
+                        color: vk::ClearColorValue { float32: [0.0; 4] },
+                    })
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)],
+            None,
+        );
+        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
+        device.push_constants::<PushConstants>(
+            &command_buffer,
+            PushConstants {
+                blue_noise_ranking_tile: *blue_noise_buffers.ranking_tile,
+                blue_noise_sobol: *blue_noise_buffers.sobol,
+                blue_noise_scrambling_tile: *blue_noise_buffers.scrambling_tile,
+                extent: [width, height],
+                lights: 0,
+                model: *model_buffer,
+                output: *output_buffer,
+                num_lights: 0,
+                tlas: *tlas,
+            },
+        );
+        device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
+
+        device.cmd_end_rendering(*command_buffer);
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &output_image,
+            None,//Some(nbn::BarrierOp::ColorAttachmentWrite),
+            nbn::BarrierOp::TransferWrite,
+        );
+        device.cmd_copy_image_to_buffer(
+            *command_buffer,
+            **output_image,
+            vk::ImageLayout::GENERAL,
+            *output_buffer.buffer,
+            &[vk::BufferImageCopy::default()
+                .image_extent(vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                })
+                .image_subresource(output_image.subresource_layer())],
+        );
+        device.end_command_buffer(*command_buffer).unwrap();
+
+        let fence = device.create_fence();
+
+        device
+            .queue_submit(
+                *device.graphics_queue,
+                &[vk::SubmitInfo::default().command_buffers(&[*command_buffer])],
+                *fence,
+            )
+            .unwrap();
+        device.wait_for_fences(&[*fence], true, !0).unwrap();
+    }
+
+    let output_slice = output_buffer.try_as_slice::<f32>().unwrap();
+
+    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
+        .unwrap()
+        .save("out.exr")
+        .unwrap();
 }
 
 fn load_gltf(
