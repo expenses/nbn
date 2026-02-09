@@ -107,6 +107,12 @@ pub enum ImageExtent {
     },
 }
 
+impl From<[u32; 2]> for ImageExtent {
+    fn from([width, height]: [u32; 2]) -> Self {
+        ImageExtent::D2 { width, height }
+    }
+}
+
 impl From<vk::Extent2D> for ImageExtent {
     fn from(extent: vk::Extent2D) -> Self {
         ImageExtent::D2 {
