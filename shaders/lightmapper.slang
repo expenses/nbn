@@ -1,74 +1,67 @@
+import lightmapper_structs;
 import shared.noise;
-import shared.restir;
-import shared.barycentrics;
+import shared.sampling;
+import shared.util;
 
-[Flags]
-enum ModelFlags {
-    Indices32Bit
+struct Interp {
+    float4 uv2_pos: SV_Position;
+    float3 pos;
+    float3 shading_normal;
 };
 
-struct Model {
-    float3* positions;
-    float2* uvs;
-    float2* uv2s;
-    float3* normals;
-    uint* indices;
-    uint* image_indices;
-    ModelFlags flags;
-    uint num_indices;
+[shader("vertex")] Interp vertex(uint vertex_index: SV_VertexID, uniform PushConstants push_constants) {
+    let index = push_constants.model.read_index(vertex_index);
+    let uv2 = push_constants.model.uv2s[index];
 
-    uint read_index(uint vertex_index) {
-        if (flags & ModelFlags::Indices32Bit) {
-            return indices[vertex_index];
-        } else {
-            uint16_t index = ((uint16_t*)indices)[vertex_index];
-            return uint(index);
-        }
-    }
+    Interp interp;
+    interp.uv2_pos = float4(uv2 * 2.0 - 1.0, 0.0, 1.0);
+    interp.pos = push_constants.model.positions[index];
+    interp.shading_normal = push_constants.model.normals[index];
+    return interp;
+}
 
-    uint3 read_indices(uint prim) {
-        return uint3(
-            read_index(prim * 3 + 0),
-            read_index(prim * 3 + 1),
-            read_index(prim * 3 + 2),
+struct FragOutput {
+    float4 pos: COLOR0;
+    float4 shading_normal: COLOR1;
+}
+
+[shader("pixel")] FragOutput fragment(Interp in, uniform PushConstants push_constants) {
+    FragOutput output;
+    output.pos = float4(in.pos, 1.0);
+    output.shading_normal = float4(in.shading_normal, 1.0);
+    return output;
+}
+
+[shader("pixel")] float4 fragment2(Interp in, uniform PushConstants push_constants) {
+    let tlas = RaytracingAccelerationStructure(push_constants.tlas);
+    let shading_normal = normalize(in.shading_normal);
+
+    var rand = ThreadBlueNoise(push_constants.blue_noise_data, uint2(in.uv2_pos.xy), 0, 0);
+    var accum = 0;
+
+    let tbn = build_tbn(shading_normal);
+
+    for (uint i = 0; i < 128; i++) {
+        let hemisphere_dir = sample_cosine_weighted_hemisphere(&rand);
+        let rotated_dir = mul(tbn, hemisphere_dir);
+
+        RayDesc desc;
+        desc.Direction = rotated_dir;
+        desc.Origin = in.pos;
+        desc.TMax = 200.0;
+        desc.TMin = 1e-5;
+
+        var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        query.TraceRayInline(
+            tlas,
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            0xff,
+            desc
         );
-    }
-};
+        query.Proceed();
 
-struct Light {
-    float3 emission;
-    float3 position;
-    float spotlight_angle_scale;
-    float spotlight_angle_offset;
-    float3 spotlight_direction;
-};
-
-struct PushConstants {
-    uint64_t tlas;
-    Model* model;
-    float[11]* lights;
-    int* blue_noise_sobol;
-    int* blue_noise_ranking_tile;
-    int* blue_noise_scrambling_tile;
-
-    uint2 extent;
-    uint num_lights;
-
-    property BlueNoiseData blue_noise_data {
-        get {
-            BlueNoiseData data;
-            data.sobol = blue_noise_sobol;
-            data.scrambling_tile = blue_noise_scrambling_tile;
-            data.ranking_tile = blue_noise_ranking_tile;
-            return data;
-        }
+        accum += uint(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
     }
 
-    uint thread_to_index(uint2 thread) {
-        return thread.x + thread.y * extent.x;
-    }
-
-    Light get_light(uint index) {
-        return reinterpret<Light>(lights[index]);
-    }
-};
+    return float4(float3(float(accum) / 128.0), 1.0);
+}
