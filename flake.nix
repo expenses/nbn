@@ -1,8 +1,15 @@
 {
   description = "Flake utils demo";
 
-  inputs.flake-utils.url = "github:numtide/flake-utils";
-  inputs.slang-gen-ninja.url = "github:expenses/slang-gen-ninja";
+  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+  inputs.flake-utils = {
+    inputs.nixpkgs.follows = "nixpkgs";
+    url = "github:numtide/flake-utils";
+  };
+  inputs.slang-gen-ninja = {
+    inputs.nixpkgs.follows = "nixpkgs";
+    url = "github:expenses/slang-gen-ninja";
+  };
 
   outputs = {
     self,
@@ -69,7 +76,7 @@
               '')
             ];
             buildInputs = [vulkan-loader];
-            LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon xorg.libXcursor xorg.libX11 xorg.libXi];
+            LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon libxcursor libx11 libxi];
           };
         devShells.slang-build = with pkgs;
           mkShell {
