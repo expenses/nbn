@@ -33,6 +33,14 @@ fn main() {
         })
         .unwrap();
 
+    let visbuffer_copy = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "visbuffer_copy",
+            size: width as u64 * height as u64 * 4,
+            ty: nbn::MemoryLocation::GpuToCpu,
+        })
+        .unwrap();
+
     let output_image = device.register_owned_image(
         device.create_image(nbn::ImageDescriptor {
             name: "output image",
@@ -50,7 +58,9 @@ fn main() {
             name: "visbuffer",
             format: vk::Format::R32_UINT,
             extent: [width, height].into(),
-            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                | vk::ImageUsageFlags::STORAGE
+                | vk::ImageUsageFlags::TRANSFER_SRC,
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels: 1,
         }),
@@ -181,6 +191,7 @@ fn main() {
             None,
             nbn::BarrierOp::ComputeStorageWrite,
         );
+        device.bind_internal_descriptor_sets_to_all(&command_buffer);
         device.begin_rendering(
             &command_buffer,
             width,
@@ -209,7 +220,6 @@ fn main() {
                     .store_op(vk::AttachmentStoreOp::STORE),
             ),
         );
-        device.bind_internal_descriptor_sets_to_all(&command_buffer);
         device.push_constants::<PushConstants>(
             &command_buffer,
             PushConstants {
@@ -227,13 +237,66 @@ fn main() {
         );
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
         device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
+        device.cmd_end_rendering(*command_buffer);
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &visbuffer.image,
+            Some(nbn::BarrierOp::ColorAttachmentWrite),
+            nbn::BarrierOp::TransferRead,
+        );
+        device.cmd_copy_image_to_buffer(
+            *command_buffer,
+            **visbuffer.image,
+            vk::ImageLayout::GENERAL,
+            *visbuffer_copy.buffer,
+            &[vk::BufferImageCopy::default()
+                .image_extent(vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                })
+                .image_subresource(visbuffer.image.subresource_layer())],
+        );
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &visbuffer.image,
+            Some(nbn::BarrierOp::TransferRead),
+            nbn::BarrierOp::ColorAttachmentWrite,
+        );
+        device.begin_rendering(
+            &command_buffer,
+            width,
+            height,
+            &[vk::RenderingAttachmentInfo::default()
+                .image_view(*visbuffer.image.view)
+                .image_layout(vk::ImageLayout::GENERAL)
+                .clear_value(vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        uint32: [u32::max_value(); 4],
+                    },
+                })
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)],
+            Some(
+                &vk::RenderingAttachmentInfo::default()
+                    .image_view(*depthbuffer.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .clear_value(vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 1.0,
+                            stencil: 0,
+                        },
+                    })
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE),
+            ),
+        );
         device.cmd_bind_pipeline(
             *command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
             *pipeline_conservative,
         );
         device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
-
         device.cmd_end_rendering(*command_buffer);
         device.insert_image_pipeline_barrier(
             &command_buffer,
@@ -247,6 +310,12 @@ fn main() {
             *compute_pipeline,
         );
         device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &output_image,
+            Some(nbn::BarrierOp::ComputeStorageWrite),
+            nbn::BarrierOp::TransferRead,
+        );
         device.cmd_copy_image_to_buffer(
             *command_buffer,
             **output_image.image,
@@ -273,6 +342,20 @@ fn main() {
             .unwrap();
         device.wait_for_fences(&[*fence], true, !0).unwrap();
     }
+
+    let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
+
+
+    let values: Vec<f32> = visbuffer_copy_slice
+        .iter()
+        .map(|&val| val != u32::max_value())
+        .flat_map(|b| [b as u32 as f32, b as u32 as f32, b as u32 as f32, 1.0])
+        .collect();
+
+    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, &values)
+        .unwrap()
+        .save("bools.exr")
+        .unwrap();
 
     let output_slice = output_buffer.try_as_slice::<f32>().unwrap();
 
