@@ -106,3 +106,35 @@ public float3x3 build_tbn(float3 n) {
 public float inv_lerp(float value, float from, float to){
   return (value - from) / (to - from);
 }
+
+// See Ray Tracing Gems II, Chapter 4, HACKING THE SHADOW TERMINATOR
+public float3 shadow_terminator_hack(
+    float3 P,
+    float3 A,
+    float3 B,
+    float3 C,
+    float3 nA,
+    float3 nB,
+    float3 nC,
+    float3 barycentrics
+) {
+    let u = barycentrics[0];
+    let v = barycentrics[1];
+    let w = barycentrics[2];
+
+    // get distance vectors from triangle vertices
+    var tmpu = P - A;
+    var tmpv = P - B;
+    var tmpw = P - C;
+    // project these onto the tangent planes
+    // defined by the shading normals
+    float dotu = min(0.0, dot(tmpu , nA));
+    float dotv = min(0.0, dot(tmpv , nB));
+    float dotw = min(0.0, dot(tmpw , nC));
+    tmpu -= dotu*nA;
+    tmpv -= dotv*nB;
+    tmpw -= dotw*nC;
+    // finally P' is the barycentric mean of these three
+    let Pp = P + u*tmpu + v*tmpv + w*tmpw;
+    return Pp;
+}
