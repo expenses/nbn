@@ -33,30 +33,36 @@ fn main() {
         })
         .unwrap();
 
-    let output_image = device.create_image(nbn::ImageDescriptor {
-        name: "output image",
-        format: vk::Format::R32G32B32A32_SFLOAT,
-        extent: [width, height].into(),
-        usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        mip_levels: 1,
-    });
+    let output_image = device.register_owned_image(
+        device.create_image(nbn::ImageDescriptor {
+            name: "output image",
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            extent: [width, height].into(),
+            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::STORAGE,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels: 1,
+        }),
+        true,
+    );
 
-    let pos_image = device.create_image(nbn::ImageDescriptor {
-        name: "pos image",
-        format: vk::Format::R32G32B32A32_SFLOAT,
-        extent: [width, height].into(),
-        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        mip_levels: 1,
-    });
+    let visbuffer = device.register_owned_image(
+        device.create_image(nbn::ImageDescriptor {
+            name: "visbuffer",
+            format: vk::Format::R32_UINT,
+            extent: [width, height].into(),
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels: 1,
+        }),
+        true,
+    );
 
-    let normal_image = device.create_image(nbn::ImageDescriptor {
-        name: "normal image",
-        format: vk::Format::R32G32B32A32_SFLOAT,
+    let depthbuffer = device.create_image(nbn::ImageDescriptor {
+        name: "depthbuffer",
+        format: vk::Format::D32_SFLOAT,
         extent: [width, height].into(),
-        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-        aspect_mask: vk::ImageAspectFlags::COLOR,
+        usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        aspect_mask: vk::ImageAspectFlags::DEPTH,
         mip_levels: 1,
     });
 
@@ -113,12 +119,43 @@ fn main() {
                 entry_point: c"fragment",
             },
         },
-        color_attachment_formats: &[vk::Format::R32G32B32A32_SFLOAT; 2],
+        color_attachment_formats: &[vk::Format::R32_UINT],
         blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA); 2],
+            .color_write_mask(vk::ColorComponentFlags::RGBA)],
         flags: Default::default(),
-        depth: Default::default(),
+        depth: nbn::GraphicsPipelineDepthDesc {
+            write_enable: true,
+            test_enable: true,
+            compare_op: vk::CompareOp::NOT_EQUAL,
+            format: vk::Format::D32_SFLOAT,
+        },
     });
+
+    let pipeline_conservative = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
+        name: "lightmapper pipeline",
+        shaders: nbn::GraphicsPipelineShaders::Legacy {
+            vertex: nbn::ShaderDesc {
+                module: &shader,
+                entry_point: c"vertex",
+            },
+            fragment: nbn::ShaderDesc {
+                module: &shader,
+                entry_point: c"fragment",
+            },
+        },
+        color_attachment_formats: &[vk::Format::R32_UINT],
+        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)],
+        flags: nbn::GraphicsPipelineFlags::CONSERVATIVE_RASTERIZATION,
+        depth: nbn::GraphicsPipelineDepthDesc {
+            write_enable: true,
+            test_enable: true,
+            compare_op: vk::CompareOp::NOT_EQUAL,
+            format: vk::Format::D32_SFLOAT,
+        },
+    });
+
+    let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
 
     let mut command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
@@ -128,38 +165,51 @@ fn main() {
             .unwrap();
         device.insert_image_pipeline_barrier(
             &command_buffer,
-            &pos_image,
+            &visbuffer,
             None,
             nbn::BarrierOp::ColorAttachmentWrite,
         );
         device.insert_image_pipeline_barrier(
             &command_buffer,
-            &normal_image,
+            &depthbuffer,
             None,
-            nbn::BarrierOp::ColorAttachmentWrite,
+            nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+        );
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &output_image,
+            None,
+            nbn::BarrierOp::ComputeStorageWrite,
         );
         device.begin_rendering(
             &command_buffer,
             width,
             height,
             &[vk::RenderingAttachmentInfo::default()
-                .image_view(*pos_image.view)
+                .image_view(*visbuffer.image.view)
                 .image_layout(vk::ImageLayout::GENERAL)
                 .clear_value(vk::ClearValue {
-                    color: vk::ClearColorValue { float32: [0.0; 4] },
+                    color: vk::ClearColorValue {
+                        uint32: [u32::max_value(); 4],
+                    },
                 })
                 .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE), vk::RenderingAttachmentInfo::default()
-                    .image_view(*normal_image.view)
+                .store_op(vk::AttachmentStoreOp::STORE)],
+            Some(
+                &vk::RenderingAttachmentInfo::default()
+                    .image_view(*depthbuffer.view)
                     .image_layout(vk::ImageLayout::GENERAL)
                     .clear_value(vk::ClearValue {
-                        color: vk::ClearColorValue { float32: [0.0; 4] },
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 1.0,
+                            stencil: 0,
+                        },
                     })
                     .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE)],
-            None,
+                    .store_op(vk::AttachmentStoreOp::STORE),
+            ),
         );
-        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
+        device.bind_internal_descriptor_sets_to_all(&command_buffer);
         device.push_constants::<PushConstants>(
             &command_buffer,
             PushConstants {
@@ -169,23 +219,37 @@ fn main() {
                 extent: [width, height],
                 lights: 0,
                 model: *model_buffer,
-                output: *output_buffer,
+                output: *output_image,
+                visbuffer: *visbuffer,
                 num_lights: 0,
                 tlas: *tlas,
             },
+        );
+        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
+        device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            *pipeline_conservative,
         );
         device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
 
         device.cmd_end_rendering(*command_buffer);
         device.insert_image_pipeline_barrier(
             &command_buffer,
-            &output_image,
-            None,//Some(nbn::BarrierOp::ColorAttachmentWrite),
-            nbn::BarrierOp::TransferWrite,
+            &visbuffer,
+            Some(nbn::BarrierOp::ColorAttachmentWrite),
+            nbn::BarrierOp::ComputeStorageRead,
         );
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *compute_pipeline,
+        );
+        device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
         device.cmd_copy_image_to_buffer(
             *command_buffer,
-            **output_image,
+            **output_image.image,
             vk::ImageLayout::GENERAL,
             *output_buffer.buffer,
             &[vk::BufferImageCopy::default()
@@ -194,7 +258,7 @@ fn main() {
                     height,
                     depth: 1,
                 })
-                .image_subresource(output_image.subresource_layer())],
+                .image_subresource(output_image.image.subresource_layer())],
         );
         device.end_command_buffer(*command_buffer).unwrap();
 
