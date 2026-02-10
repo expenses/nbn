@@ -2,11 +2,13 @@ import lightmapper_structs;
 import shared.noise;
 import shared.sampling;
 import shared.util;
+import shared.colour;
+import shared.constants;
+import fallback_bindings;
 
 struct Interp {
     float4 uv2_pos: SV_Position;
-    float3 pos;
-    float3 shading_normal;
+    uint triangle_index;
 };
 
 [shader("vertex")] Interp vertex(uint vertex_index: SV_VertexID, uniform PushConstants push_constants) {
@@ -15,23 +17,33 @@ struct Interp {
 
     Interp interp;
     interp.uv2_pos = float4(uv2 * 2.0 - 1.0, 0.0, 1.0);
-    interp.pos = push_constants.model.positions[index];
-    interp.shading_normal = push_constants.model.normals[index];
+    interp.triangle_index = vertex_index / 3;
     return interp;
 }
 
-struct FragOutput {
-    float4 pos: COLOR0;
-    float4 shading_normal: COLOR1;
+[shader("pixel")] uint fragment(Interp in) {
+    return in.triangle_index;
 }
 
-[shader("pixel")] FragOutput fragment(Interp in, uniform PushConstants push_constants) {
-    FragOutput output;
-    output.pos = float4(in.pos, 1.0);
-    output.shading_normal = float4(in.shading_normal, 1.0);
-    return output;
+[shader("compute")]
+[NumThreads(8,8,1)]
+void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_constants) {
+    if (any(thread >= push_constants.extent)) {
+        return;
+    }
+
+    Texture2D<uint> visbuffer = storage_images[push_constants.visbuffer];
+    let value = visbuffer[thread];
+    if (value == MAX_UINT_VALUE) {
+        return;
+    }
+
+    RWTexture2D<float4> output = storage_images[push_constants.output];
+
+    output[thread] = float4(colour_from_val(value), 1.0);
 }
 
+/*
 [shader("pixel")] float4 fragment2(Interp in, uniform PushConstants push_constants) {
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
     let shading_normal = normalize(in.shading_normal);
@@ -65,3 +77,4 @@ struct FragOutput {
 
     return float4(float3(float(accum) / 128.0), 1.0);
 }
+*/
