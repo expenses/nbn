@@ -270,24 +270,13 @@ fn main() {
             &[vk::RenderingAttachmentInfo::default()
                 .image_view(*visbuffer.image.view)
                 .image_layout(vk::ImageLayout::GENERAL)
-                .clear_value(vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        uint32: [u32::max_value(); 4],
-                    },
-                })
-                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .load_op(vk::AttachmentLoadOp::LOAD)
                 .store_op(vk::AttachmentStoreOp::STORE)],
             Some(
                 &vk::RenderingAttachmentInfo::default()
                     .image_view(*depthbuffer.view)
                     .image_layout(vk::ImageLayout::GENERAL)
-                    .clear_value(vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue {
-                            depth: 1.0,
-                            stencil: 0,
-                        },
-                    })
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .load_op(vk::AttachmentLoadOp::LOAD)
                     .store_op(vk::AttachmentStoreOp::STORE),
             ),
         );
@@ -344,7 +333,6 @@ fn main() {
     }
 
     let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
-
 
     let values: Vec<f32> = visbuffer_copy_slice
         .iter()
