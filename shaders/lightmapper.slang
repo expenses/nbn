@@ -58,7 +58,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         cross2d(coord_uv - a, c - a),
         cross2d(b - a, coord_uv - a)
     ) / denom;
-    //barycentrics = clamp(barycentrics, float2(0.1), float2(0.9));
+    barycentrics = clamp(barycentrics, float2(0), float2(1));
 
     let pos = interpolate_from_buffer(model.positions, indices, barycentrics);
     let normal = normalize(interpolate_from_buffer(model.normals, indices, barycentrics));

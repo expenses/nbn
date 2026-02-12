@@ -370,7 +370,7 @@ fn main() {
 
     device.submit_and_wait_on_command_buffer(&command_buffer);
 
-    let mut output_slice = output_buffer.try_as_slice_mut::<f32>().unwrap();
+    let output_slice = output_buffer.try_as_slice_mut::<f32>().unwrap();
 
     image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
         .unwrap()
@@ -380,7 +380,7 @@ fn main() {
     let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
 
     let (pixel_info, img) = compute_pixel_info(
-        &gltf_data.seam_edges,
+        &gltf_data.seams,
         &Coverage {
             visbuffer: visbuffer_copy_slice,
             width,
@@ -390,48 +390,37 @@ fn main() {
 
     dbg!(pixel_info.len());
 
-    let a_t_a = setup_ata_matrix(        &gltf_data.seam_edges, &pixel_info, &img, width, height);
+    let a_t_a = setup_ata_matrix(&gltf_data.seams, &pixel_info, &img, width, height);
 
-dbg!("data");
+    dbg!("data");
 
-    let data = setup_least_squares(&pixel_info, &output_slice, &Coverage {
-        visbuffer: visbuffer_copy_slice,
-        width,
-        height,
-    });
+    let data = setup_least_squares(
+        &pixel_info,
+        &output_slice,
+        &Coverage {
+            visbuffer: visbuffer_copy_slice,
+            width,
+            height,
+        },
+    );
 
     dbg!("running");
 
-    let solution_r = conjugate_gradient_optimize(
-        &a_t_a,
-        &data.initial_guess_r,
-        &data.a_tb_r,
-        10000,
-        10.0e-10,
-    );
+    let solution_r =
+        conjugate_gradient_optimize(&a_t_a, &data.initial_guess_r, &data.a_tb_r, 10000, 10.0e-10);
 
-    let solution_g = conjugate_gradient_optimize(
-        &a_t_a,
-        &data.initial_guess_g,
-        &data.a_tb_g,
-        10000,
-        10.0e-10,
-    );
+    let solution_g =
+        conjugate_gradient_optimize(&a_t_a, &data.initial_guess_g, &data.a_tb_g, 10000, 10.0e-10);
 
-    let solution_b = conjugate_gradient_optimize(
-        &a_t_a,
-        &data.initial_guess_b,
-        &data.a_tb_b,
-        10000,
-        10.0e-10,
-    );
+    let solution_b =
+        conjugate_gradient_optimize(&a_t_a, &data.initial_guess_b, &data.a_tb_b, 10000, 10.0e-10);
 
     for (i, pi) in pixel_info.iter().enumerate() {
         let index = (pi.y * width + pi.x) as usize;
-        output_slice[index*4] = solution_r[i];
-        output_slice[index*4+1] = solution_g[i];
-        output_slice[index*4+2] = solution_b[i];
-        output_slice[index*4+3] = 1.0;
+        output_slice[index * 4] = solution_r[i];
+        output_slice[index * 4 + 1] = solution_g[i];
+        output_slice[index * 4 + 2] = solution_b[i];
+        output_slice[index * 4 + 3] = 1.0;
     }
 
     image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
@@ -601,7 +590,7 @@ fn load_gltf(
         }
     }
 
-    let seam_edges = find_seam_edges(&indices, &positions, &uv2s);
+    let seams = find_seams(&indices, &positions, &uv2s);
 
     let num_vertices = positions.len() / 3;
     let num_indices = indices.len();
@@ -642,7 +631,7 @@ fn load_gltf(
     (
         CombinedModel {
             acceleration_structure,
-            seam_edges,
+            seams,
             _positions: positions,
             _indices: indices,
             _uvs: uvs,
@@ -658,7 +647,7 @@ fn load_gltf(
 
 struct CombinedModel {
     acceleration_structure: nbn::AccelerationStructure,
-    seam_edges: Vec<SeamEdge>,
+    seams: Vec<Seam>,
     _positions: nbn::Buffer,
     _indices: nbn::Buffer,
     _uvs: nbn::Buffer,
@@ -673,19 +662,20 @@ use std::collections::HashMap;
 
 use glam::{Vec2, Vec3};
 
+// A UV seam consisting of 2 edges. Both edges have the same world positions.
 #[derive(Debug)]
-struct SeamEdge {
+struct Seam {
     a: [Vec2; 2],
     b: [Vec2; 2],
 }
 
-// might need to be -0.5? but no clue why.
 fn uv_to_screen(uv: Vec2, w: u32, h: u32) -> Vec2 {
+    // Not really sure what the - 0.5 is doing here. It's important though!
     uv * Vec2::new(w as _, h as _) - 0.5
 }
 
-impl SeamEdge {
-    // The number of samples is based on the length of the lines in screen space.
+impl Seam {
+    // The number of samples is based on the length of the lines in uv screen space.
     fn num_samples(&self, w: u32, h: u32) -> u32 {
         let len_a = (uv_to_screen(self.a[0], w, h) - uv_to_screen(self.a[1], w, h)).length();
         let len_b = (uv_to_screen(self.b[0], w, h) - uv_to_screen(self.b[1], w, h)).length();
@@ -694,11 +684,11 @@ impl SeamEdge {
     }
 }
 
-fn find_seam_edges(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<SeamEdge> {
+fn find_seams(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<Seam> {
     let mut edge_map: HashMap<([OrderedFloat<f32>; 3], [OrderedFloat<f32>; 3]), (Vec2, Vec2), _> =
         HashMap::new();
 
-    let mut seam_edges = Vec::new();
+    let mut seams = Vec::new();
 
     let get_position = |index| {
         [
@@ -729,7 +719,7 @@ fn find_seam_edges(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<SeamE
                     let (other_from_uv, other_to_uv) = *entry.get();
                     if other_from_uv != to_uv || other_to_uv != from_uv {
                         // UV don't match, so we have a seam
-                        seam_edges.push(SeamEdge {
+                        seams.push(Seam {
                             a: [from_uv, to_uv],
                             // It's important that there are flipped!
                             b: [other_to_uv, other_from_uv],
@@ -742,7 +732,7 @@ fn find_seam_edges(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<SeamE
         }
     }
 
-    seam_edges
+    seams
 }
 
 struct Coverage<'a> {
@@ -774,14 +764,14 @@ fn wrap_coordinate(mut x: i32, size: u32) -> u32 {
     x as u32
 }
 
-fn compute_pixel_info(seam_edges: &[SeamEdge], coverage: &Coverage) -> (Vec<PixelInfo>, Vec<i32>) {
+fn compute_pixel_info(seams: &[Seam], coverage: &Coverage) -> (Vec<PixelInfo>, Vec<i32>) {
     let w = coverage.width;
     let h = coverage.height;
 
     let mut pixel_to_pixel_info_map = vec![-1; w as usize * h as usize];
     let mut pixel_info = Vec::new();
 
-    for s in seam_edges {
+    for s in seams {
         let num_samples = s.num_samples(w, h);
         for e in [s.a, s.b] {
             let e0 = uv_to_screen(e[0], w, h);
@@ -822,15 +812,6 @@ fn compute_pixel_info(seam_edges: &[SeamEdge], coverage: &Coverage) -> (Vec<Pixe
 use nalgebra::DVector;
 use nalgebra_sparse::{coo::CooMatrix, csr::CsrMatrix};
 
-struct Data {
-    a_tb_r: DVector<f32>,
-    a_tb_g: DVector<f32>,
-    a_tb_b: DVector<f32>,
-    initial_guess_r: DVector<f32>,
-    initial_guess_g: DVector<f32>,
-    initial_guess_b: DVector<f32>,
-}
-
 fn dilate_pixel(centerx: u32, centery: u32, image: &[f32], coverage: &Coverage) -> Vec3 {
     let mut num_pixels = 0;
     let mut sum = Vec3::ZERO;
@@ -854,7 +835,20 @@ fn dilate_pixel(centerx: u32, centery: u32, image: &[f32], coverage: &Coverage) 
     }
 }
 
-fn setup_least_squares(pixel_info: &[PixelInfo], image: &[f32], coverage: &Coverage) -> Data {
+struct LeastSquaresData {
+    a_tb_r: DVector<f32>,
+    a_tb_g: DVector<f32>,
+    a_tb_b: DVector<f32>,
+    initial_guess_r: DVector<f32>,
+    initial_guess_g: DVector<f32>,
+    initial_guess_b: DVector<f32>,
+}
+
+fn setup_least_squares(
+    pixel_info: &[PixelInfo],
+    image: &[f32],
+    coverage: &Coverage,
+) -> LeastSquaresData {
     let num_pixels_to_optimise = pixel_info.len();
 
     let mut a_tb_r = DVector::zeros(num_pixels_to_optimise);
@@ -894,7 +888,7 @@ fn setup_least_squares(pixel_info: &[PixelInfo], image: &[f32], coverage: &Cover
         initial_guess_b[i] = colour.z;
     }
 
-    Data {
+    LeastSquaresData {
         a_tb_r,
         a_tb_g,
         a_tb_b,
@@ -907,7 +901,6 @@ fn setup_least_squares(pixel_info: &[PixelInfo], image: &[f32], coverage: &Cover
 const COVERED_PIXELS_WEIGHT: f32 = 1.0;
 const NONCOVERED_PIXELS_WEIGHT: f32 = 0.1;
 const EDGE_CONSTRAINTS_WEIGHT: f32 = 5.0;
-
 
 fn conjugate_gradient_optimize(
     a: &CsrMatrix<f32>,
@@ -939,9 +932,8 @@ fn conjugate_gradient_optimize(
     solution
 }
 
-
 fn setup_ata_matrix(
-    seam_edges: &[SeamEdge],
+    seams: &[Seam],
     pixel_info: &[PixelInfo],
     pixel_to_pixel_info_map: &[i32],
     w: u32,
@@ -951,7 +943,7 @@ fn setup_ata_matrix(
 
     let mut matrix_map: HashMap<_, f32> = HashMap::with_capacity(num_pixels_to_optimise);
 
-    for s in seam_edges {
+    for s in seams {
         // Step through the samples of this edge, and compute sample locations for each side of the seam
         let num_samples = s.num_samples(w, h);
 
@@ -970,10 +962,18 @@ fn setup_ata_matrix(
         let mut second_half_edge_sample = second_half_edge_start;
         for _ in 0..num_samples {
             // Sample locations for the two corresponding sets of sample points
-            let (first_half_edge, first_half_edge_weights) =
-                calculate_samples_and_weights(pixel_to_pixel_info_map, first_half_edge_sample, w, h);
-            let (second_half_edge, second_half_edge_weights) =
-                calculate_samples_and_weights(pixel_to_pixel_info_map, second_half_edge_sample, w, h);
+            let (first_half_edge, first_half_edge_weights) = calculate_samples_and_weights(
+                pixel_to_pixel_info_map,
+                first_half_edge_sample,
+                w,
+                h,
+            );
+            let (second_half_edge, second_half_edge_weights) = calculate_samples_and_weights(
+                pixel_to_pixel_info_map,
+                second_half_edge_sample,
+                w,
+                h,
+            );
 
             /*
             Now, compute the covariance for the difference of these two vectors.
@@ -1032,9 +1032,12 @@ fn setup_ata_matrix(
     CsrMatrix::from(&coo_matrix)
 }
 
-
-
-fn calculate_samples_and_weights(pixel_map: &[i32], sample: Vec2, width: u32, height: u32) -> ([i32; 4], [f32; 4]) {
+fn calculate_samples_and_weights(
+    pixel_map: &[i32],
+    sample: Vec2,
+    width: u32,
+    height: u32,
+) -> ([i32; 4], [f32; 4]) {
     let truncu = sample.x as i32;
     let truncv = sample.y as i32;
 
