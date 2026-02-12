@@ -1,8 +1,5 @@
 use ash::vk;
 use std::sync::Arc;
-use winit::event::ElementState;
-use winit::keyboard::KeyCode;
-use winit::window::CursorGrabMode;
 
 slang_struct::slang_include!("shaders/lightmapper_structs.slang");
 
@@ -16,7 +13,7 @@ fn main() {
 
     let mut args = std::env::args().skip(1);
 
-    let (gltf_data, model, lights) = load_gltf(
+    let (gltf_data, model, _lights) = load_gltf(
         &device,
         &mut staging_buffer,
         &std::path::Path::new(&args.next().unwrap()),
@@ -25,7 +22,7 @@ fn main() {
     let width = args.next().unwrap().parse::<u32>().unwrap();
     let height = args.next().unwrap().parse::<u32>().unwrap();
 
-    let mut output_buffer = device
+    let output_buffer = device
         .create_buffer(nbn::BufferDescriptor {
             name: "output",
             size: width as u64 * height as u64 * 4 * 4,
@@ -167,8 +164,9 @@ fn main() {
 
     let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
 
-    let mut command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
+    let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
+    // Initial rasterization work.
     unsafe {
         device
             .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
@@ -233,6 +231,10 @@ fn main() {
                 visbuffer: *visbuffer,
                 num_lights: 0,
                 tlas: *tlas,
+                // Set later.
+                sample_index: 0,
+                samples_per_iter: 0,
+                total_samples: 0,
             },
         );
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
@@ -287,18 +289,60 @@ fn main() {
         );
         device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
         device.cmd_end_rendering(*command_buffer);
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &visbuffer,
-            Some(nbn::BarrierOp::ColorAttachmentWrite),
-            nbn::BarrierOp::ComputeStorageRead,
-        );
-        device.cmd_bind_pipeline(
-            *command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            *compute_pipeline,
-        );
-        device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
+        device.end_command_buffer(*command_buffer).unwrap();
+    }
+
+    device.submit_and_wait_on_command_buffer(&command_buffer);
+
+    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+    for i in 0..1000 {
+        let samples_per_iter = 4;
+
+        unsafe {
+            device
+                .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
+                .unwrap();
+
+            device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+
+            device.cmd_bind_pipeline(
+                *command_buffer,
+                vk::PipelineBindPoint::COMPUTE,
+                *compute_pipeline,
+            );
+            device.push_constants::<PushConstants>(
+                &command_buffer,
+                PushConstants {
+                    blue_noise_ranking_tile: *blue_noise_buffers.ranking_tile,
+                    blue_noise_sobol: *blue_noise_buffers.sobol,
+                    blue_noise_scrambling_tile: *blue_noise_buffers.scrambling_tile,
+                    extent: [width, height],
+                    lights: 0,
+                    model: *model_buffer,
+                    output: *output_image,
+                    visbuffer: *visbuffer,
+                    num_lights: 0,
+                    tlas: *tlas,
+                    sample_index: i * samples_per_iter,
+                    samples_per_iter,
+                    total_samples: samples_per_iter * 1000,
+                },
+            );
+            device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
+            device.end_command_buffer(*command_buffer).unwrap();
+        }
+
+        dbg!(i);
+        device.submit_and_wait_on_command_buffer(&command_buffer);
+        device.reset_command_buffer(&command_buffer);
+    }
+
+    unsafe {
+        device
+            .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
+            .unwrap();
+
         device.insert_image_pipeline_barrier(
             &command_buffer,
             &output_image,
@@ -319,18 +363,9 @@ fn main() {
                 .image_subresource(output_image.image.subresource_layer())],
         );
         device.end_command_buffer(*command_buffer).unwrap();
-
-        let fence = device.create_fence();
-
-        device
-            .queue_submit(
-                *device.graphics_queue,
-                &[vk::SubmitInfo::default().command_buffers(&[*command_buffer])],
-                *fence,
-            )
-            .unwrap();
-        device.wait_for_fences(&[*fence], true, !0).unwrap();
     }
+
+    device.submit_and_wait_on_command_buffer(&command_buffer);
 
     let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
 

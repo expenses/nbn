@@ -1,11 +1,13 @@
 import lightmapper_structs;
+import fallback_bindings;
+
 import shared.noise;
 import shared.sampling;
 import shared.util;
 import shared.colour;
 import shared.constants;
-import fallback_bindings;
 import shared.barycentrics;
+import shared.noise;
 
 struct Interp {
     float4 uv2_pos: SV_Position;
@@ -74,15 +76,15 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
 
-    var rand = ThreadBlueNoise(push_constants.blue_noise_data, thread, 0, 0);
     var accum = 0;
 
     let tbn = build_tbn(normal);
 
-    let num_samples = 256;
 
-    for (uint i = 0; i < num_samples; i++) {
-        let hemisphere_dir = sample_cosine_weighted_hemisphere(&rand);
+    for (uint i = 0; i < push_constants.samples_per_iter; i++) {
+        let rand2 = frac(push_constants.blue_noise_data.sample2(thread, 0) + R2(push_constants.sample_index + i));
+
+        let hemisphere_dir = sample_cosine_weighted_hemisphere(rand2);
         let rotated_dir = mul(tbn, hemisphere_dir);
 
         RayDesc desc;
@@ -104,5 +106,6 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     }
 
     RWTexture2D<float4> output = storage_images[push_constants.output];
-    output[thread] = float4(float3(float(accum) / float(num_samples)), 1.0);
+    output[thread].rgb += float3(float(accum) / float(push_constants.total_samples));
+    output[thread].a = 1.0;
 }
