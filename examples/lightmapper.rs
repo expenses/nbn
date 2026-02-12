@@ -731,7 +731,8 @@ fn find_seam_edges(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<SeamE
                         // UV don't match, so we have a seam
                         seam_edges.push(SeamEdge {
                             a: [from_uv, to_uv],
-                            b: [other_from_uv, other_to_uv],
+                            // It's important that there are flipped!
+                            b: [other_to_uv, other_from_uv],
                         });
                     }
                     // No longer need this edge, remove it to keep storage low
