@@ -57,6 +57,10 @@ struct PushConstants {
     uint2 extent;
     uint num_lights;
 
+    uint sample_index;
+    uint samples_per_iter;
+    uint total_samples;
+
     property BlueNoiseData blue_noise_data {
         get {
             BlueNoiseData data;
