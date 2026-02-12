@@ -946,8 +946,8 @@ impl Device {
                     image: &image,
                     src: None,
                     dst: BarrierOp::TransferWrite,
-                    src_queue_family_index: command_buffer.queue_family_index,
-                    dst_queue_family_index: command_buffer.queue_family_index,
+                    src_queue_family_index: self.get_queue(command_buffer.ty).index,
+                    dst_queue_family_index: self.get_queue(command_buffer.ty).index,
                 }
                 .into()]),
             );
@@ -990,7 +990,7 @@ impl Device {
                     image: &image,
                     src: Some(BarrierOp::TransferWrite),
                     dst: BarrierOp::AllCommandsSampledRead,
-                    src_queue_family_index: command_buffer.queue_family_index,
+                    src_queue_family_index: self.get_queue(command_buffer.ty).index,
                     dst_queue_family_index: self.get_queue(transition_to).index,
                 }
                 .into()]),
@@ -998,6 +998,20 @@ impl Device {
         }
 
         image
+    }
+
+    pub fn submit_and_wait_on_command_buffer(&self, command_buffer: &CommandBuffer) {
+        let fence = self.create_fence();
+
+        unsafe {
+            self.queue_submit(
+                **self.get_queue(command_buffer.ty),
+                &[vk::SubmitInfo::default().command_buffers(&[**command_buffer])],
+                *fence,
+            )
+            .unwrap();
+            self.wait_for_fences(&[*fence], true, !0).unwrap();
+        }
     }
 
     // Note: is not capable of switching images between queue
@@ -1016,8 +1030,8 @@ impl Device {
                     image,
                     src,
                     dst,
-                    src_queue_family_index: command_buffer.queue_family_index,
-                    dst_queue_family_index: command_buffer.queue_family_index,
+                    src_queue_family_index: self.get_queue(command_buffer.ty).index,
+                    dst_queue_family_index: self.get_queue(command_buffer.ty).index,
                 }
                 .into()]),
             );
@@ -1439,7 +1453,7 @@ impl Device {
             command_buffer: command_buffers[0],
             device: self.device.clone(),
             pool,
-            queue_family_index,
+            ty,
         }
     }
 
@@ -1844,7 +1858,7 @@ pub struct CommandBuffer {
     pub command_buffer: vk::CommandBuffer,
     pub pool: CommandPool,
     device: ash::Device,
-    pub queue_family_index: u32,
+    pub ty: QueueType,
 }
 
 impl std::ops::Deref for CommandBuffer {
@@ -1998,7 +2012,6 @@ pub struct StagingBuffer {
     staging_buffer: Buffer,
     command_buffer: CommandBuffer,
     buffer_size: u64,
-    queue_type: QueueType,
 }
 
 impl StagingBuffer {
@@ -2011,7 +2024,6 @@ impl StagingBuffer {
         };
 
         Self {
-            queue_type,
             offset: 0,
             buffer_size,
             staging_buffer: device
@@ -2026,20 +2038,12 @@ impl StagingBuffer {
     }
 
     pub fn flush(&mut self, device: &Device) {
-        let fence = device.create_fence();
         unsafe {
             device.end_command_buffer(*self.command_buffer).unwrap();
-            device
-                .queue_submit(
-                    **device.get_queue(self.queue_type),
-                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
-                    *fence,
-                )
-                .unwrap();
-
-            device.wait_for_fences(&[*fence], true, !0).unwrap();
-
-            device.reset_command_buffer(&self.command_buffer);
+        }
+        device.submit_and_wait_on_command_buffer(&self.command_buffer);
+        device.reset_command_buffer(&self.command_buffer);
+        unsafe {
             device
                 .begin_command_buffer(*self.command_buffer, &Default::default())
                 .unwrap()
@@ -2048,19 +2052,10 @@ impl StagingBuffer {
     }
 
     pub fn finish(self, device: &Device) {
-        let fence = device.create_fence();
         unsafe {
             device.end_command_buffer(*self.command_buffer).unwrap();
-            device
-                .queue_submit(
-                    **device.get_queue(self.queue_type),
-                    &[vk::SubmitInfo::default().command_buffers(&[*self.command_buffer])],
-                    *fence,
-                )
-                .unwrap();
-
-            device.wait_for_fences(&[*fence], true, !0).unwrap();
         }
+        device.submit_and_wait_on_command_buffer(&self.command_buffer);
     }
 
     fn allocate_with_alignment(
@@ -2173,8 +2168,8 @@ impl StagingBuffer {
                     image: &image,
                     src: None,
                     dst: BarrierOp::TransferWrite,
-                    src_queue_family_index: device.get_queue(self.queue_type).index,
-                    dst_queue_family_index: device.get_queue(self.queue_type).index,
+                    src_queue_family_index: device.get_queue(self.command_buffer.ty).index,
+                    dst_queue_family_index: device.get_queue(self.command_buffer.ty).index,
                 }
                 .into()]),
             );
@@ -2214,7 +2209,7 @@ impl StagingBuffer {
                     image: &image,
                     src: Some(BarrierOp::TransferWrite),
                     dst: BarrierOp::AllCommandsSampledRead,
-                    src_queue_family_index: device.get_queue(self.queue_type).index,
+                    src_queue_family_index: device.get_queue(self.command_buffer.ty).index,
                     dst_queue_family_index: device.get_queue(transition_to).index,
                 }
                 .into()]),
