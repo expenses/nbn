@@ -296,8 +296,11 @@ fn main() {
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
-    for i in 0..1000 {
-        let samples_per_iter = 4;
+    let samples_per_iter = 4;
+    let total_samples = 2048;
+
+    for i in 0..(total_samples/samples_per_iter) {
+        let sample_index = i * samples_per_iter;
 
         unsafe {
             device
@@ -324,16 +327,16 @@ fn main() {
                     visbuffer: *visbuffer,
                     num_lights: 0,
                     tlas: *tlas,
-                    sample_index: i * samples_per_iter,
+                    sample_index,
                     samples_per_iter,
-                    total_samples: samples_per_iter * 1000,
+                    total_samples,
                 },
             );
             device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
             device.end_command_buffer(*command_buffer).unwrap();
         }
 
-        dbg!(i);
+        dbg!(sample_index);
         device.submit_and_wait_on_command_buffer(&command_buffer);
         device.reset_command_buffer(&command_buffer);
     }
