@@ -431,6 +431,7 @@ dbg!("data");
         output_slice[index*4] = solution_r[i];
         output_slice[index*4+1] = solution_g[i];
         output_slice[index*4+2] = solution_b[i];
+        output_slice[index*4+3] = 1.0;
     }
 
     image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
@@ -680,7 +681,7 @@ struct SeamEdge {
 
 // might need to be -0.5? but no clue why.
 fn uv_to_screen(uv: Vec2, w: u32, h: u32) -> Vec2 {
-    uv * Vec2::new(w as _, h as _)
+    uv * Vec2::new(w as _, h as _) - 0.5
 }
 
 impl SeamEdge {
