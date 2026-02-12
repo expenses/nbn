@@ -159,7 +159,7 @@ uint interleave_32bit(uint2 v)
 // https://github.com/electronicarts/fastnoise/blob/main/FastNoiseDesign.md#references
 // R2 is from http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
 // R2 Low discrepancy sequence
-float2 R2(int index)
+public float2 R2(int index)
 {
 	static const float g  = 1.32471795724474602596f;
 	static const float a1 = 1 / g;
