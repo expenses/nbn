@@ -299,7 +299,7 @@ fn main() {
     let samples_per_iter = 4;
     let total_samples = 2048;
 
-    for i in 0..(total_samples/samples_per_iter) {
+    for i in 0..(total_samples / samples_per_iter) {
         let sample_index = i * samples_per_iter;
 
         unsafe {
@@ -552,6 +552,8 @@ fn load_gltf(
         }
     }
 
+    dbg!(find_seam_edges(&indices, &positions, &uv2s));
+
     let num_vertices = positions.len() / 3;
     let num_indices = indices.len();
     let indices = staging_buffer.create_buffer_from_slice(device, "indices", &indices);
@@ -613,4 +615,78 @@ struct CombinedModel {
     _normals: nbn::Buffer,
     _image_indices: nbn::Buffer,
     _images: Vec<nbn::IndexedImage>,
+}
+
+use ordered_float::OrderedFloat;
+use std::collections::HashMap;
+
+use glam::Vec2;
+
+#[derive(Debug)]
+struct SeamEdge {
+    a: [Vec2; 2],
+    b: [Vec2; 2],
+}
+
+fn uv_to_screen(uv: Vec2, w: u32, h: u32) -> Vec2 {
+    uv * Vec2::new(w as _, h as _)
+}
+
+impl SeamEdge {
+    fn num_samples(&self, w: u32, h: u32) -> u32 {
+        let e0 = (uv_to_screen(self.a[0], w, h) - uv_to_screen(self.a[1], w, h)).length();
+        let e1 = (uv_to_screen(self.b[0], w, h) - uv_to_screen(self.b[1], w, h)).length();
+        let len = e0.max(e1).max(2.0);
+        (len * 3.0) as u32
+    }
+}
+
+fn find_seam_edges(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<SeamEdge> {
+    let mut edge_map: HashMap<([OrderedFloat<f32>; 3], [OrderedFloat<f32>; 3]), (Vec2, Vec2), _> =
+        HashMap::new();
+
+    let mut seam_edges = Vec::new();
+
+    let get_position = |index| {
+        [
+            OrderedFloat(positions[index * 3]),
+            OrderedFloat(positions[index * 3 + 1]),
+            OrderedFloat(positions[index * 3 + 2]),
+        ]
+    };
+
+    let get_uv = |index| Vec2::new(uvs[index * 2], uvs[index * 2 + 1]);
+
+    for tri in indices.chunks(3) {
+        for (from, to) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            let from_pos = get_position(from as usize);
+            let to_pos = get_position(to as usize);
+            let from_uv = get_uv(from as usize);
+            let to_uv = get_uv(to as usize);
+
+            let other_edge_key = (to_pos, from_pos);
+
+            match edge_map.entry((to_pos, from_pos)) {
+                std::collections::hash_map::Entry::Vacant(_) => {
+                    edge_map.insert((from_pos, to_pos), (from_uv, to_uv));
+                }
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // This edge has already been added once, so we have enough information to see if it's a normal edge, or a "seam edge".
+                    let (other_from_uv, other_to_uv) = *entry.get();
+                    if other_from_uv != to_uv || other_to_uv != from_uv {
+                        // UV don't match, so we have a seam
+                        let s = SeamEdge {
+                            a: [from_uv, to_uv],
+                            b: [other_from_uv, other_to_uv],
+                        };
+                        seam_edges.push(s);
+                    }
+                    // No longer need this edge, remove it to keep storage low
+                    entry.remove();
+                }
+            }
+        }
+    }
+
+    seam_edges
 }
