@@ -297,7 +297,7 @@ fn main() {
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
     let samples_per_iter = 16;
-    let total_samples = 256;
+    let total_samples = 128;
 
     for i in 0..(total_samples / samples_per_iter) {
         let sample_index = i * samples_per_iter;
@@ -407,13 +407,13 @@ fn main() {
     dbg!("running");
 
     let solution_r =
-        conjugate_gradient_optimize(&a_t_a, &data.initial_guess_r, &data.a_tb_r, 10000, 10.0e-10);
+        conjugate_gradient_optimize(&a_t_a, data.initial_guess_r, &data.a_tb_r, 10000, 1e-3);
 
     let solution_g =
-        conjugate_gradient_optimize(&a_t_a, &data.initial_guess_g, &data.a_tb_g, 10000, 10.0e-10);
+        conjugate_gradient_optimize(&a_t_a, data.initial_guess_g, &data.a_tb_g, 10000, 1e-3);
 
     let solution_b =
-        conjugate_gradient_optimize(&a_t_a, &data.initial_guess_b, &data.a_tb_b, 10000, 10.0e-10);
+        conjugate_gradient_optimize(&a_t_a, data.initial_guess_b, &data.a_tb_b, 10000, 1e-3);
 
     for (i, pi) in pixel_info.iter().enumerate() {
         let index = (pi.y * width + pi.x) as usize;
@@ -780,12 +780,11 @@ fn compute_pixel_info(seams: &[Seam], coverage: &Coverage) -> (Vec<PixelInfo>, V
             let mut sample_point = e0;
 
             for _ in 0..num_samples {
+                let s_x = sample_point.x as u32;
+                let s_y = sample_point.y as u32;
                 // Go through the four bilinear sample taps
-                let xs = [sample_point.x as u32; 4];
-                let ys = [sample_point.y as u32; 4];
-
-                let xs = [sample_point.x as u32, xs[0] + 1, xs[0] + 1, xs[0]];
-                let ys = [sample_point.y as u32, ys[0], ys[0] + 1, ys[0] + 1];
+                let xs = [s_x, s_x + 1, s_x, s_x + 1];
+                let ys = [s_y, s_y, s_y + 1, s_y + 1];
 
                 for tap in 0..4 {
                     let x = wrap_coordinate(xs[tap] as i32, w);
@@ -904,28 +903,31 @@ const EDGE_CONSTRAINTS_WEIGHT: f32 = 5.0;
 
 fn conjugate_gradient_optimize(
     a: &CsrMatrix<f32>,
-    guess: &DVector<f32>,
+    guess: DVector<f32>,
     b: &DVector<f32>,
     num_iterations: u32,
     tolerance: f32,
 ) -> DVector<f32> {
-    let n = guess.len();
-    let mut solution = guess.clone();
-    let mut r = b - a * &solution;
-    let mut p = r.clone();
-    let mut rsq = DVector::dot(&r, &r);
+    let mut solution: DVector<f32> = guess;
+    let mut r: DVector<f32> = b - a * &solution;
+    let mut p: DVector<f32> = r.clone();
+    let mut rsq: f32 = r.norm_squared();
+    let tolerance_sq: f32 = tolerance * tolerance;
     for i in 0..num_iterations {
-        let a_p = a * &p;
-        let alpha = rsq / DVector::dot(&p, &a_p);
-        solution += alpha * &p;
-        r -= alpha * &a_p;
-        let rsqnew = DVector::dot(&r, &r);
-        if (rsqnew - rsq).abs() < tolerance * n as f32 {
+        let a_p: DVector<f32> = a * &p;
+        let alpha: f32 = rsq / p.dot(&a_p);
+        solution.axpy(alpha, &p, 1.0);
+        r.axpy(-alpha, &a_p, 1.0);
+        let rsqnew: f32 = r.norm_squared();
+        if rsqnew < tolerance_sq {
             dbg!(i);
             break;
         }
-        let beta = rsqnew / rsq;
-        p = &r + beta * &p;
+        if i % 10 == 0 {
+            dbg!(rsqnew.sqrt());
+        }
+        let beta: f32 = rsqnew / rsq;
+        p.axpy(1.0, &r, beta);
         rsq = rsqnew;
     }
 
