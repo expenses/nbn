@@ -5,11 +5,11 @@ edition = "2024"
 
 [dependencies]
 nbn = {path = ".."}
-goth-gltf = { git = "https://github.com/expenses/goth-gltf", version = "0.1.1", features = [
-    "primitive_reader",
+goth-gltf = { git = "https://github.com/expenses/goth-gltf", features = [
+    "names",
 ] }
-env_logger = "0.11.8"
-glam = "0.31.0"
+env_logger = "0.11.9"
+glam = "0.31.1"
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
 ddsfile = "0.5.2"
 ktx2 = "0.4.0"
