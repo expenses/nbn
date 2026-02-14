@@ -109,7 +109,6 @@ public float inv_lerp(float value, float from, float to){
 
 // See Ray Tracing Gems II, Chapter 4, HACKING THE SHADOW TERMINATOR
 public float3 shadow_terminator_hack(
-    float3 P,
     float3 A,
     float3 B,
     float3 C,
@@ -118,9 +117,11 @@ public float3 shadow_terminator_hack(
     float3 nC,
     float3 barycentrics
 ) {
-    let u = barycentrics[0];
-    let v = barycentrics[1];
-    let w = barycentrics[2];
+    let u = barycentrics.x;
+    let v = barycentrics.y;
+    let w = barycentrics.z;
+
+    let P = A * u + B * v + C * w;
 
     // get distance vectors from triangle vertices
     var tmpu = P - A;
