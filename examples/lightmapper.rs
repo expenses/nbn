@@ -557,7 +557,7 @@ fn load_gltf(
     for mesh in gltf.meshes.iter() {
         for primitive in mesh.primitives.iter() {
             let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
-            let prim_indices = match indices_accessor.component_type {
+            match indices_accessor.component_type {
                 goth_gltf::ComponentType::UnsignedInt => {
                     indices.extend(
                         get_slice::<u32>(&buffer, &gltf, &indices_accessor)
@@ -574,7 +574,7 @@ fn load_gltf(
                             .map(|&index| positions.len() as u32 / 3 + index as u32),
                     );
                 }
-            };
+            }
 
             let get = |accessor_index: Option<usize>, size: usize, error: &str| {
                 let accessor = &gltf.accessors[accessor_index.expect(error)];
