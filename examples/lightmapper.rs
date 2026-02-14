@@ -50,18 +50,26 @@ fn main() {
         true,
     );
 
-    let visbuffer = device.register_owned_image(
-        device.create_image(nbn::ImageDescriptor {
-            name: "visbuffer",
-            format: vk::Format::R32_UINT,
-            extent: [width, height].into(),
-            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
-                | vk::ImageUsageFlags::STORAGE
-                | vk::ImageUsageFlags::TRANSFER_SRC,
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_levels: 1,
-        }),
-        true,
+    let create_attachment = |name, format, extra_flags| {
+        device.register_owned_image(
+            device.create_image(nbn::ImageDescriptor {
+                name,
+                format,
+                extent: [width, height].into(),
+                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
+                    | vk::ImageUsageFlags::STORAGE
+                    | extra_flags,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_levels: 1,
+            }),
+            true,
+        )
+    };
+
+    let visbuffer = create_attachment(
+        "visbuffer",
+        vk::Format::R32_UINT,
+        vk::ImageUsageFlags::TRANSFER_SRC,
     );
 
     let depthbuffer = device.create_image(nbn::ImageDescriptor {
@@ -114,8 +122,8 @@ fn main() {
 
     let shader = device.load_shader("shaders/compiled/lightmapper.spv");
 
-    let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        name: "lightmapper pipeline",
+    let base_pipeline_descriptor = nbn::GraphicsPipelineDesc {
+        name: "normal pipeline",
         shaders: nbn::GraphicsPipelineShaders::Legacy {
             vertex: nbn::ShaderDesc {
                 module: &shader,
@@ -136,30 +144,14 @@ fn main() {
             compare_op: vk::CompareOp::NOT_EQUAL,
             format: vk::Format::D32_SFLOAT,
         },
-    });
+    };
+
+    let pipeline = device.create_graphics_pipeline(base_pipeline_descriptor.clone());
 
     let pipeline_conservative = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        name: "lightmapper pipeline",
-        shaders: nbn::GraphicsPipelineShaders::Legacy {
-            vertex: nbn::ShaderDesc {
-                module: &shader,
-                entry_point: c"vertex",
-            },
-            fragment: nbn::ShaderDesc {
-                module: &shader,
-                entry_point: c"fragment",
-            },
-        },
-        color_attachment_formats: &[vk::Format::R32_UINT],
-        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA)],
+        name: "conservative pipeline",
         flags: nbn::GraphicsPipelineFlags::CONSERVATIVE_RASTERIZATION,
-        depth: nbn::GraphicsPipelineDepthDesc {
-            write_enable: true,
-            test_enable: true,
-            compare_op: vk::CompareOp::NOT_EQUAL,
-            format: vk::Format::D32_SFLOAT,
-        },
+        ..base_pipeline_descriptor
     });
 
     let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
@@ -345,7 +337,6 @@ fn main() {
         device
             .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
             .unwrap();
-
         device.insert_image_pipeline_barrier(
             &command_buffer,
             &output_image,
