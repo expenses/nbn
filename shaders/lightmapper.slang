@@ -89,9 +89,9 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
         RayDesc desc;
         desc.Direction = rotated_dir;
-        desc.Origin = pushed_pos;
+        desc.Origin = offset_ray(pushed_pos, normal);
         desc.TMax = 200.0;
-        desc.TMin = 1e-4;
+        desc.TMin = 0;
 
         var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         query.TraceRayInline(
