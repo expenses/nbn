@@ -24,8 +24,86 @@ struct Interp {
     return interp;
 }
 
-[shader("pixel")] uint fragment(Interp in) {
-    return in.triangle_index;
+Optional<float3> hit_backface(float3 position, float3 unnormalized_dir, PushConstants push_constants) {
+    let as = RaytracingAccelerationStructure(push_constants.tlas);
+
+    RayDesc desc;
+    desc.Origin = position;
+    desc.Direction = unnormalized_dir;
+    desc.TMax = 1;
+    desc.TMin = 0;
+
+    var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+    query.TraceRayInline(
+        as,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        0xff,
+        desc
+    );
+    query.Proceed();
+
+    if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT || query.CommittedRayFrontFace()) {
+        return none;
+    }
+
+    let triangle_index = query.CommittedPrimitiveIndex();
+    let barycentrics = query.CommittedTriangleBarycentrics();
+
+    let indices = push_constants.model.read_indices(triangle_index);
+
+    let a = push_constants.model.positions[indices.x];
+    let b = push_constants.model.positions[indices.y];
+    let c = push_constants.model.positions[indices.z];
+
+    let normal = normalize(cross(b - a, c - a));
+
+    let position = interpolate_ray_barycentrics(a, b, c, barycentrics);
+
+    return offset_ray(position, normal);
+}
+
+struct Output {
+    uint triangle_index: COLOR0;
+    float3 position: COLOR1;
+}
+
+[shader("pixel")] Output fragment(Interp in, float3 barycentrics: SV_Barycentrics, uniform PushConstants push_constants) {
+    Output output;
+    output.triangle_index = in.triangle_index;
+
+    //barycentrics.yz = clamp(barycentrics.yz, float2(0), float2(1));
+    //barycentrics.x = 1.0 - barycentrics.y - barycentrics.z;
+
+    let indices = push_constants.model.read_indices(in.triangle_index);
+
+    let a = push_constants.model.positions[indices.x];
+    let b = push_constants.model.positions[indices.y];
+    let c = push_constants.model.positions[indices.z];
+    var position = a * barycentrics.x + b * barycentrics.y + c * barycentrics.z;
+
+    let ddx = ddx(position);
+    let ddy = ddy(position);
+
+    let geom_normal = normalize(cross(b - a, c - a));
+
+    output.position = offset_ray(shadow_terminator_hack(
+        a, b, c,
+        push_constants.model.normals[indices.x],
+        push_constants.model.normals[indices.y],
+        push_constants.model.normals[indices.z],
+        barycentrics
+    ), geom_normal);
+
+    float3[4] dirs = float3[4](ddx, ddy, -ddx, -ddy);
+
+    for (uint i = 0; i < 4; i++) {
+        if (let position = hit_backface(output.position, dirs[i], push_constants)) {
+            output.position = position;
+            break;
+        }
+    }
+
+    return output;
 }
 
 // 2D cross product
@@ -60,19 +138,11 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     ) / denom;
     barycentrics = clamp(barycentrics, float2(0), float2(1));
 
-    let pos = interpolate_from_buffer(model.positions, indices, barycentrics);
     let normal = normalize(interpolate_from_buffer(model.normals, indices, barycentrics));
 
-    let pushed_pos = shadow_terminator_hack(
-        pos,
-        model.positions[indices.x],
-        model.positions[indices.y],
-        model.positions[indices.z],
-        model.normals[indices.x],
-        model.normals[indices.y],
-        model.normals[indices.z],
-        float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
-    );
+    Texture2D<float3> positions_buffer = storage_images[push_constants.positions];
+
+    let pushed_pos = positions_buffer[thread];
 
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
 
