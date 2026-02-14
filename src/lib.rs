@@ -1878,13 +1878,14 @@ impl Drop for CommandBuffer {
     }
 }
 
+#[derive(Clone)]
 pub struct ShaderDesc<'a> {
     pub entry_point: &'a ffi::CStr,
     pub module: &'a ShaderModule,
 }
 
 bitflags::bitflags! {
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     pub struct GraphicsPipelineFlags: u8 {
         const CONSERVATIVE_RASTERIZATION = 1;
         const POINTS = 1 << 1;
@@ -1892,6 +1893,7 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Clone)]
 pub struct GraphicsPipelineDesc<'a> {
     pub name: &'a str,
     pub shaders: GraphicsPipelineShaders<'a>,
@@ -1901,6 +1903,7 @@ pub struct GraphicsPipelineDesc<'a> {
     pub depth: GraphicsPipelineDepthDesc,
 }
 
+#[derive(Clone)]
 pub enum GraphicsPipelineShaders<'a> {
     Legacy {
         vertex: ShaderDesc<'a>,
@@ -1917,7 +1920,7 @@ pub enum GraphicsPipelineShaders<'a> {
     },
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct GraphicsPipelineDepthDesc {
     pub write_enable: bool,
     pub test_enable: bool,
