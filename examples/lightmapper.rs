@@ -72,6 +72,12 @@ fn main() {
         vk::ImageUsageFlags::TRANSFER_SRC,
     );
 
+    let position_buffer = create_attachment(
+        "position buffer",
+        vk::Format::R32G32B32A32_SFLOAT,
+        Default::default(),
+    );
+
     let depthbuffer = device.create_image(nbn::ImageDescriptor {
         name: "depthbuffer",
         format: vk::Format::D32_SFLOAT,
@@ -134,9 +140,9 @@ fn main() {
                 entry_point: c"fragment",
             },
         },
-        color_attachment_formats: &[vk::Format::R32_UINT],
+        color_attachment_formats: &[vk::Format::R32_UINT, vk::Format::R32G32B32A32_SFLOAT],
         blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA)],
+            .color_write_mask(vk::ColorComponentFlags::RGBA); 2],
         flags: Default::default(),
         depth: nbn::GraphicsPipelineDepthDesc {
             write_enable: true,
@@ -171,6 +177,12 @@ fn main() {
         );
         device.insert_image_pipeline_barrier(
             &command_buffer,
+            &position_buffer,
+            None,
+            nbn::BarrierOp::ColorAttachmentWrite,
+        );
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
             &depthbuffer,
             None,
             nbn::BarrierOp::DepthStencilAttachmentReadWrite,
@@ -194,6 +206,11 @@ fn main() {
                         uint32: [u32::max_value(); 4],
                     },
                 })
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE),
+            vk::RenderingAttachmentInfo::default()
+                .image_view(*position_buffer.image.view)
+                .image_layout(vk::ImageLayout::GENERAL)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .store_op(vk::AttachmentStoreOp::STORE)],
             Some(
@@ -221,6 +238,7 @@ fn main() {
                 model: *model_buffer,
                 output: *output_image,
                 visbuffer: *visbuffer,
+                positions: *position_buffer,
                 num_lights: 0,
                 tlas: *tlas,
                 // Set later.
@@ -263,6 +281,11 @@ fn main() {
             height,
             &[vk::RenderingAttachmentInfo::default()
                 .image_view(*visbuffer.image.view)
+                .image_layout(vk::ImageLayout::GENERAL)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::STORE),
+            vk::RenderingAttachmentInfo::default()
+                .image_view(*position_buffer.image.view)
                 .image_layout(vk::ImageLayout::GENERAL)
                 .load_op(vk::AttachmentLoadOp::LOAD)
                 .store_op(vk::AttachmentStoreOp::STORE)],
@@ -317,6 +340,7 @@ fn main() {
                     model: *model_buffer,
                     output: *output_image,
                     visbuffer: *visbuffer,
+                    positions: *position_buffer,
                     num_lights: 0,
                     tlas: *tlas,
                     sample_index,

@@ -57,6 +57,8 @@ struct PushConstants {
     uint2 extent;
     uint num_lights;
 
+    uint positions;
+
     uint sample_index;
     uint samples_per_iter;
     uint total_samples;
