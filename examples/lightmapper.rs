@@ -557,17 +557,24 @@ fn load_gltf(
     for mesh in gltf.meshes.iter() {
         for primitive in mesh.primitives.iter() {
             let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
-            assert_eq!(
-                indices_accessor.component_type,
-                goth_gltf::ComponentType::UnsignedInt
-            );
-            let prim_indices =
-                &get_slice::<u32>(&buffer, &gltf, &indices_accessor)[..indices_accessor.count];
-            indices.extend(
-                prim_indices
-                    .iter()
-                    .map(|&index| positions.len() as u32 / 3 + index as u32),
-            );
+            let prim_indices = match indices_accessor.component_type {
+                goth_gltf::ComponentType::UnsignedInt => {
+                    indices.extend(
+                        get_slice::<u32>(&buffer, &gltf, &indices_accessor)
+                            [..indices_accessor.count]
+                            .iter()
+                            .map(|&index| positions.len() as u32 / 3 + index as u32),
+                    );
+                }
+                _ => {
+                    indices.extend(
+                        get_slice::<u16>(&buffer, &gltf, &indices_accessor)
+                            [..indices_accessor.count]
+                            .iter()
+                            .map(|&index| positions.len() as u32 / 3 + index as u32),
+                    );
+                }
+            };
 
             let get = |accessor_index: Option<usize>, size: usize, error: &str| {
                 let accessor = &gltf.accessors[accessor_index.expect(error)];
@@ -584,7 +591,7 @@ fn load_gltf(
             let material_index = primitive.material.unwrap_or(0);
 
             image_indices.extend(
-                (0..prim_indices.len() / 3)
+                (0..indices_accessor.count / 3)
                     .map(|_| material_to_image.get(material_index).cloned().unwrap_or(0)),
             );
         }
