@@ -138,3 +138,30 @@ public float3 shadow_terminator_hack(
     let Pp = P + u*tmpu + v*tmpv + w*tmpw;
     return Pp;
 }
+
+// See Ray Tracing Gems I, Chapter 6
+
+constexpr float origin() { return 1.0f / 32.0f; }
+constexpr float float_scale() { return 1.0f / 65536.0f; }
+constexpr float int_scale() { return 256.0f; }
+
+// Normal points outward for rays exiting the surface, else is flipped.
+public float3 offset_ray(const float3 p, const float3 n) {
+    int3 of_i = int3(
+        int(int_scale() * n.x),
+        int(int_scale() * n.y),
+        int(int_scale() * n.z)
+    );
+
+    float3 p_i = float3(
+        asfloat(asint(p.x)+((p.x < 0) ? -of_i.x : of_i.x)),
+        asfloat(asint(p.y)+((p.y < 0) ? -of_i.y : of_i.y)),
+        asfloat(asint(p.z)+((p.z < 0) ? -of_i.z : of_i.z))
+    );
+
+    return float3(
+        abs(p.x) < origin() ? p.x+float_scale()*n.x : p_i.x,
+        abs(p.y) < origin() ? p.y+float_scale()*n.y : p_i.y,
+        abs(p.z) < origin() ? p.z+float_scale()*n.z : p_i.z
+    );
+}
