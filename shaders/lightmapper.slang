@@ -69,9 +69,8 @@ Optional<float3> hit_backface(float3 position, float3 unnormalized_dir, PushCons
 }
 
 struct Output {
-    uint triangle_index: COLOR0;
-    float3 position: COLOR1;
-    float3 normal: COLOR2;
+    float4 position: COLOR0;
+    float3 normal: COLOR1;
 }
 
 [shader("pixel")] Output fragment(Interp in, float3 barycentrics: SV_Barycentrics, uniform PushConstants push_constants) {
@@ -79,7 +78,6 @@ struct Output {
     let ddy = ddy(in.position);
 
     Output output;
-    output.triangle_index = in.triangle_index;
     output.normal = normalize(in.normal);
 
     //barycentrics.yz = clamp(barycentrics.yz, float2(0), float2(1));
@@ -93,29 +91,24 @@ struct Output {
 
     let geom_normal = normalize(cross(b - a, c - a));
 
-    output.position = offset_ray(shadow_terminator_hack(
+    output.position = float4(offset_ray(shadow_terminator_hack(
         a, b, c,
         push_constants.model.normals[indices.x],
         push_constants.model.normals[indices.y],
         push_constants.model.normals[indices.z],
         barycentrics
-    ), geom_normal);
+    ), geom_normal), 1.0);
 
     float3[4] dirs = float3[4](ddx, ddy, -ddx, -ddy);
 
     for (uint i = 0; i < 4; i++) {
-        if (let position = hit_backface(output.position, dirs[i], push_constants)) {
-            output.position = position;
+        if (let position = hit_backface(output.position.xyz, dirs[i], push_constants)) {
+            output.position.xyz = position;
             break;
         }
     }
 
     return output;
-}
-
-// 2D cross product
-float cross2d(float2 a, float2 b) {
-    return a.x * b.y - a.y * b.x;
 }
 
 [shader("compute")]
@@ -125,28 +118,22 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         return;
     }
 
-    Texture2D<uint> visbuffer = storage_images[push_constants.visbuffer];
-    let triangle_index = visbuffer[thread];
-    if (triangle_index == MAX_UINT_VALUE) {
+    Texture2D<float4> positions_buffer = storage_images[push_constants.positions];
+    Texture2D<float3> normal_buffer = storage_images[push_constants.normals];
+
+    let pos_value = positions_buffer[thread];
+
+    if (pos_value.a < 0.5) {
         return;
     }
 
-    let model = push_constants.model;
-
-    Texture2D<float3> normal_buffer = storage_images[push_constants.normals];
-
+    let pos = pos_value.xyz;
     let normal = normal_buffer[thread];
-
-    Texture2D<float3> positions_buffer = storage_images[push_constants.positions];
-
-    let pos = positions_buffer[thread];
+    let tbn = build_tbn(normal);
 
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
 
     var accum = 0;
-
-    let tbn = build_tbn(normal);
-
 
     for (uint i = 0; i < push_constants.samples_per_iter; i++) {
         let rand2 = frac(push_constants.blue_noise_data.sample2(thread, 0) + R2(push_constants.sample_index + i));
