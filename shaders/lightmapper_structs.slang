@@ -51,10 +51,9 @@ struct PushConstants {
     int* blue_noise_ranking_tile;
     int* blue_noise_scrambling_tile;
 
-    uint visbuffer;
-    uint output;
-
     uint2 extent;
+
+    uint output;
     uint num_lights;
 
     uint positions;

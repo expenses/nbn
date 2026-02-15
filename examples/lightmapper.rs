@@ -30,10 +30,10 @@ fn main() {
         })
         .unwrap();
 
-    let visbuffer_copy = device
+    let positions_copy = device
         .create_buffer(nbn::BufferDescriptor {
-            name: "visbuffer_copy",
-            size: width as u64 * height as u64 * 4,
+            name: "positions copy",
+            size: width as u64 * height as u64 * 4 * 4,
             ty: nbn::MemoryLocation::GpuToCpu,
         })
         .unwrap();
@@ -78,16 +78,10 @@ fn main() {
         )
     };
 
-    let visbuffer = create_attachment(
-        "visbuffer",
-        vk::Format::R32_UINT,
-        vk::ImageUsageFlags::TRANSFER_SRC,
-    );
-
     let position_buffer = create_attachment(
         "position buffer",
         vk::Format::R32G32B32A32_SFLOAT,
-        Default::default(),
+        vk::ImageUsageFlags::TRANSFER_SRC,
     );
 
     let normal_buffer = create_attachment(
@@ -158,9 +152,12 @@ fn main() {
                 entry_point: c"fragment",
             },
         },
-        color_attachment_formats: &[vk::Format::R32_UINT, vk::Format::R32G32B32A32_SFLOAT, vk::Format::R32G32B32A32_SFLOAT],
+        color_attachment_formats: &[
+            vk::Format::R32G32B32A32_SFLOAT,
+            vk::Format::R32G32B32A32_SFLOAT,
+        ],
         blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA); 3],
+            .color_write_mask(vk::ColorComponentFlags::RGBA); 2],
         flags: Default::default(),
         depth: nbn::GraphicsPipelineDepthDesc {
             write_enable: true,
@@ -191,7 +188,6 @@ fn main() {
         lights: 0,
         model: *model_buffer,
         output: *output_image,
-        visbuffer: *visbuffer,
         positions: *position_buffer,
         normals: *normal_buffer,
         temp: *temp_image,
@@ -208,12 +204,6 @@ fn main() {
         device
             .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
             .unwrap();
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &visbuffer,
-            None,
-            nbn::BarrierOp::ColorAttachmentWrite,
-        );
         device.insert_image_pipeline_barrier(
             &command_buffer,
             &position_buffer,
@@ -249,26 +239,18 @@ fn main() {
             &command_buffer,
             width,
             height,
-            &[vk::RenderingAttachmentInfo::default()
-                .image_view(*visbuffer.image.view)
-                .image_layout(vk::ImageLayout::GENERAL)
-                .clear_value(vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        uint32: [u32::max_value(); 4],
-                    },
-                })
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE),
-            vk::RenderingAttachmentInfo::default()
-                .image_view(*position_buffer.image.view)
-                .image_layout(vk::ImageLayout::GENERAL)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE),
-            vk::RenderingAttachmentInfo::default()
-                .image_view(*normal_buffer.image.view)
-                .image_layout(vk::ImageLayout::GENERAL)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)],
+            &[
+                vk::RenderingAttachmentInfo::default()
+                    .image_view(*position_buffer.image.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE),
+                vk::RenderingAttachmentInfo::default()
+                    .image_view(*normal_buffer.image.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE),
+            ],
             Some(
                 &vk::RenderingAttachmentInfo::default()
                     .image_view(*depthbuffer.view)
@@ -283,35 +265,32 @@ fn main() {
                     .store_op(vk::AttachmentStoreOp::STORE),
             ),
         );
-        device.push_constants::<PushConstants>(
-            &command_buffer,
-            push_constants,
-        );
+        device.push_constants::<PushConstants>(&command_buffer, push_constants);
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
         device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
         device.cmd_end_rendering(*command_buffer);
         device.insert_image_pipeline_barrier(
             &command_buffer,
-            &visbuffer.image,
+            &position_buffer.image,
             Some(nbn::BarrierOp::ColorAttachmentWrite),
             nbn::BarrierOp::TransferRead,
         );
         device.cmd_copy_image_to_buffer(
             *command_buffer,
-            **visbuffer.image,
+            **position_buffer.image,
             vk::ImageLayout::GENERAL,
-            *visbuffer_copy.buffer,
+            *positions_copy.buffer,
             &[vk::BufferImageCopy::default()
                 .image_extent(vk::Extent3D {
                     width,
                     height,
                     depth: 1,
                 })
-                .image_subresource(visbuffer.image.subresource_layer())],
+                .image_subresource(position_buffer.image.subresource_layer())],
         );
         device.insert_image_pipeline_barrier(
             &command_buffer,
-            &visbuffer.image,
+            &position_buffer.image,
             Some(nbn::BarrierOp::TransferRead),
             nbn::BarrierOp::ColorAttachmentWrite,
         );
@@ -319,21 +298,18 @@ fn main() {
             &command_buffer,
             width,
             height,
-            &[vk::RenderingAttachmentInfo::default()
-                .image_view(*visbuffer.image.view)
-                .image_layout(vk::ImageLayout::GENERAL)
-                .load_op(vk::AttachmentLoadOp::LOAD)
-                .store_op(vk::AttachmentStoreOp::STORE),
-            vk::RenderingAttachmentInfo::default()
-                .image_view(*position_buffer.image.view)
-                .image_layout(vk::ImageLayout::GENERAL)
-                .load_op(vk::AttachmentLoadOp::LOAD)
-                .store_op(vk::AttachmentStoreOp::STORE),
-            vk::RenderingAttachmentInfo::default()
-                .image_view(*normal_buffer.image.view)
-                .image_layout(vk::ImageLayout::GENERAL)
-                .load_op(vk::AttachmentLoadOp::LOAD)
-                .store_op(vk::AttachmentStoreOp::STORE)],
+            &[
+                vk::RenderingAttachmentInfo::default()
+                    .image_view(*position_buffer.image.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .load_op(vk::AttachmentLoadOp::LOAD)
+                    .store_op(vk::AttachmentStoreOp::STORE),
+                vk::RenderingAttachmentInfo::default()
+                    .image_view(*normal_buffer.image.view)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .load_op(vk::AttachmentLoadOp::LOAD)
+                    .store_op(vk::AttachmentStoreOp::STORE),
+            ],
             Some(
                 &vk::RenderingAttachmentInfo::default()
                     .image_view(*depthbuffer.view)
@@ -397,10 +373,7 @@ fn main() {
             .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
             .unwrap();
         device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
-        device.push_constants::<PushConstants>(
-            &command_buffer,
-            push_constants,
-        );
+        device.push_constants::<PushConstants>(&command_buffer, push_constants);
         device.cmd_bind_pipeline(
             *command_buffer,
             vk::PipelineBindPoint::COMPUTE,
