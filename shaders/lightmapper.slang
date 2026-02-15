@@ -12,6 +12,7 @@ import shared.noise;
 struct Interp {
     float4 uv2_pos: SV_Position;
     float3 position;
+    float3 normal;
     uint triangle_index;
 };
 
@@ -23,6 +24,7 @@ struct Interp {
     interp.uv2_pos = float4(uv2 * 2.0 - 1.0, 0.0, 1.0);
     interp.triangle_index = vertex_index / 3;
     interp.position = push_constants.model.positions[index];
+    interp.normal = push_constants.model.normals[index];
     return interp;
 }
 
@@ -69,6 +71,7 @@ Optional<float3> hit_backface(float3 position, float3 unnormalized_dir, PushCons
 struct Output {
     uint triangle_index: COLOR0;
     float3 position: COLOR1;
+    float3 normal: COLOR2;
 }
 
 [shader("pixel")] Output fragment(Interp in, float3 barycentrics: SV_Barycentrics, uniform PushConstants push_constants) {
@@ -77,6 +80,7 @@ struct Output {
 
     Output output;
     output.triangle_index = in.triangle_index;
+    output.normal = normalize(in.normal);
 
     //barycentrics.yz = clamp(barycentrics.yz, float2(0), float2(1));
     //barycentrics.x = 1.0 - barycentrics.y - barycentrics.z;
@@ -129,19 +133,9 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
     let model = push_constants.model;
 
-    let indices = model.read_indices(triangle_index);
-    let coord_uv = thread_to_uv(thread, push_constants.extent);
-    let a = model.uv2s[indices.x];
-    let b = model.uv2s[indices.y];
-    let c = model.uv2s[indices.z];
-    let denom = cross2d(b - a, c - a);
-    var barycentrics = float2(
-        cross2d(coord_uv - a, c - a),
-        cross2d(b - a, coord_uv - a)
-    ) / denom;
-    barycentrics = clamp(barycentrics, float2(0), float2(1));
+    Texture2D<float3> normal_buffer = storage_images[push_constants.normals];
 
-    let normal = normalize(interpolate_from_buffer(model.normals, indices, barycentrics));
+    let normal = normal_buffer[thread];
 
     Texture2D<float3> positions_buffer = storage_images[push_constants.positions];
 
