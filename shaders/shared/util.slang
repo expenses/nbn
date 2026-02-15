@@ -166,3 +166,33 @@ public float3 offset_ray(const float3 p, const float3 n) {
         abs(p.z) < origin() ? p.z+float_scale()*n.z : p_i.z
     );
 }
+
+public uint random_bit(uint64_t bitmask, float rand) {
+    let bit = uint(floor(float(countbits(bitmask)) * rand));
+
+    var current_bit = 0;
+
+    for (uint i = 0; i < 64; i++) {
+        if (bool((bitmask >> i) & 1)) {
+            if (bit == current_bit) {
+                return i;
+            }
+            current_bit ++;
+        }
+    }
+
+    return 0;
+}
+
+// 2D cross product
+public float cross2d(float2 a, float2 b) {
+    return a.x * b.y - a.y * b.x;
+}
+
+public float2 barycentrics2d(float2 p, float2 a, float2 b, float2 c) {
+    let denom = cross2d(b - a, c - a);
+    return float2(
+        cross2d(p - a, c - a),
+        cross2d(b - a, p - a)
+    ) / denom;
+}
