@@ -174,6 +174,7 @@ fn main() {
 
     let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
 
+    let dilation_pipeline = device.create_compute_pipeline(&shader, c"dilation");
     let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
     let push_constants = PushConstants {
@@ -372,6 +373,17 @@ fn main() {
         device
             .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
             .unwrap();
+        device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+        device.push_constants::<PushConstants>(
+            &command_buffer,
+            push_constants,
+        );
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *dilation_pipeline,
+        );
+        device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
         device.insert_image_pipeline_barrier(
             &command_buffer,
             &output_image,
