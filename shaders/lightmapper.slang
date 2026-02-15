@@ -32,7 +32,9 @@ Optional<float3> hit_backface(float3 position, float3 unnormalized_dir, PushCons
     RayDesc desc;
     desc.Origin = position;
     desc.Direction = unnormalized_dir;
-    desc.TMax = 1;
+    // Setting this to 1.0 results in the point being pushed too far sometimes.
+    // 0.9 probably isn't a perfect value but it's better so whatever.
+    desc.TMax = 0.9;
     desc.TMin = 0;
 
     var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
