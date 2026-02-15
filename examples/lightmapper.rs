@@ -38,6 +38,18 @@ fn main() {
         })
         .unwrap();
 
+    let temp_image = device.register_owned_image(
+        device.create_image(nbn::ImageDescriptor {
+            name: "temp image",
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            extent: [width, height].into(),
+            usage: vk::ImageUsageFlags::STORAGE,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_levels: 1,
+        }),
+        true,
+    );
+
     let output_image = device.register_owned_image(
         device.create_image(nbn::ImageDescriptor {
             name: "output image",
@@ -164,6 +176,25 @@ fn main() {
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
+    let push_constants = PushConstants {
+        blue_noise_ranking_tile: *blue_noise_buffers.ranking_tile,
+        blue_noise_sobol: *blue_noise_buffers.sobol,
+        blue_noise_scrambling_tile: *blue_noise_buffers.scrambling_tile,
+        extent: [width, height],
+        lights: 0,
+        model: *model_buffer,
+        output: *output_image,
+        visbuffer: *visbuffer,
+        positions: *position_buffer,
+        temp: *temp_image,
+        num_lights: 0,
+        tlas: *tlas,
+        // Set later.
+        sample_index: 0,
+        samples_per_iter: 0,
+        total_samples: 0,
+    };
+
     // Initial rasterization work.
     unsafe {
         device
@@ -190,6 +221,12 @@ fn main() {
         device.insert_image_pipeline_barrier(
             &command_buffer,
             &output_image,
+            None,
+            nbn::BarrierOp::ComputeStorageWrite,
+        );
+        device.insert_image_pipeline_barrier(
+            &command_buffer,
+            &temp_image,
             None,
             nbn::BarrierOp::ComputeStorageWrite,
         );
@@ -229,23 +266,7 @@ fn main() {
         );
         device.push_constants::<PushConstants>(
             &command_buffer,
-            PushConstants {
-                blue_noise_ranking_tile: *blue_noise_buffers.ranking_tile,
-                blue_noise_sobol: *blue_noise_buffers.sobol,
-                blue_noise_scrambling_tile: *blue_noise_buffers.scrambling_tile,
-                extent: [width, height],
-                lights: 0,
-                model: *model_buffer,
-                output: *output_image,
-                visbuffer: *visbuffer,
-                positions: *position_buffer,
-                num_lights: 0,
-                tlas: *tlas,
-                // Set later.
-                sample_index: 0,
-                samples_per_iter: 0,
-                total_samples: 0,
-            },
+            push_constants,
         );
         device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
         device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
@@ -332,17 +353,6 @@ fn main() {
             device.push_constants::<PushConstants>(
                 &command_buffer,
                 PushConstants {
-                    blue_noise_ranking_tile: *blue_noise_buffers.ranking_tile,
-                    blue_noise_sobol: *blue_noise_buffers.sobol,
-                    blue_noise_scrambling_tile: *blue_noise_buffers.scrambling_tile,
-                    extent: [width, height],
-                    lights: 0,
-                    model: *model_buffer,
-                    output: *output_image,
-                    visbuffer: *visbuffer,
-                    positions: *position_buffer,
-                    num_lights: 0,
-                    tlas: *tlas,
                     sample_index,
                     samples_per_iter,
                     total_samples,
