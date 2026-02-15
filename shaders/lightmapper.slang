@@ -139,7 +139,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
     Texture2D<float3> positions_buffer = storage_images[push_constants.positions];
 
-    let pushed_pos = positions_buffer[thread];
+    let pos = positions_buffer[thread];
 
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
 
@@ -156,7 +156,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
         RayDesc desc;
         desc.Direction = rotated_dir;
-        desc.Origin = offset_ray(pushed_pos, normal);
+        desc.Origin = pos;
         desc.TMax = 200.0;
         desc.TMin = 0;
 
