@@ -11,6 +11,7 @@ import shared.noise;
 
 struct Interp {
     float4 uv2_pos: SV_Position;
+    float3 position;
     uint triangle_index;
 };
 
@@ -21,6 +22,7 @@ struct Interp {
     Interp interp;
     interp.uv2_pos = float4(uv2 * 2.0 - 1.0, 0.0, 1.0);
     interp.triangle_index = vertex_index / 3;
+    interp.position = push_constants.model.positions[index];
     return interp;
 }
 
@@ -68,6 +70,9 @@ struct Output {
 }
 
 [shader("pixel")] Output fragment(Interp in, float3 barycentrics: SV_Barycentrics, uniform PushConstants push_constants) {
+    let ddx = ddx(in.position);
+    let ddy = ddy(in.position);
+
     Output output;
     output.triangle_index = in.triangle_index;
 
@@ -79,10 +84,6 @@ struct Output {
     let a = push_constants.model.positions[indices.x];
     let b = push_constants.model.positions[indices.y];
     let c = push_constants.model.positions[indices.z];
-    var position = a * barycentrics.x + b * barycentrics.y + c * barycentrics.z;
-
-    let ddx = ddx(position);
-    let ddy = ddy(position);
 
     let geom_normal = normalize(cross(b - a, c - a));
 
