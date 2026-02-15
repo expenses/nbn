@@ -103,12 +103,12 @@ struct Output {
 
     float3[4] dirs = float3[4](ddx, ddy, -ddx, -ddy);
 
-    for (uint i = 0; i < 4; i++) {
-        if (let position = hit_backface(output.position.xyz, dirs[i], push_constants)) {
-            output.position.xyz = position;
-            break;
-        }
-    }
+    //for (uint i = 0; i < 4; i++) {
+    //    if (let position = hit_backface(output.position.xyz, dirs[i], push_constants)) {
+    //        output.position.xyz = position;
+    //        break;
+    //    }
+    //}
 
     return output;
 }
@@ -175,5 +175,5 @@ void dilation(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
     Texture2D<float4> temp = storage_images[push_constants.temp];
     WTexture2D<float4> output = storage_images[push_constants.output];
-    output.Store(thread, dilate(temp, thread, push_constants.extent));
+    output.Store(thread, temp[thread]);
 }
