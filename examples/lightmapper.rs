@@ -356,6 +356,7 @@ fn main() {
                     sample_index,
                     samples_per_iter,
                     total_samples,
+                    ..push_constants
                 },
             );
             device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
