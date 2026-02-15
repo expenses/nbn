@@ -20,8 +20,10 @@ struct Interp {
     let index = push_constants.model.read_index(vertex_index);
     let uv2 = push_constants.model.uv2s[index];
 
+    let offset = float2(push_constants.offset) / float2(push_constants.extent);
+
     Interp interp;
-    interp.uv2_pos = float4(uv2 * 2.0 - 1.0, 0.0, 1.0);
+    interp.uv2_pos = float4(uv2 * 2.0 - 1.0 + offset, 0.0, 1.0);
     interp.triangle_index = vertex_index / 3;
     interp.position = push_constants.model.positions[index];
     interp.normal = push_constants.model.normals[index];
@@ -34,9 +36,9 @@ Optional<float3> hit_backface(float3 position, float3 unnormalized_dir, PushCons
     RayDesc desc;
     desc.Origin = position;
     desc.Direction = unnormalized_dir;
-    // Setting this to 1.0 results in the point being pushed too far sometimes.
-    // 0.9 probably isn't a perfect value but it's better so whatever.
-    desc.TMax = 0.9;
+    // There is no good setting for this. 1.0 isn't great, 0.9 isn't great, 0.75 isn't great, 0.5 isn't great.
+    // but it's what https://ndotl.wordpress.com/2018/08/29/baking-artifact-free-lightmaps/ uses.
+    desc.TMax = 0.5;
     desc.TMin = 0;
 
     var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
