@@ -58,6 +58,7 @@ struct PushConstants {
     uint num_lights;
 
     uint positions;
+    uint normals;
     uint temp;
 
     uint sample_index;
