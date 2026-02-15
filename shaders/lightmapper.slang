@@ -178,7 +178,19 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         accum += uint(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
     }
 
-    RWTexture2D<float4> output = storage_images[push_constants.output];
-    output[thread].rgb += float3(float(accum) / float(push_constants.total_samples));
-    output[thread].a = 1.0;
+    RWTexture2D<float4> temp = storage_images[push_constants.temp];
+    temp[thread].rgb += float3(float(accum) / float(push_constants.total_samples));
+    temp[thread].a = 1.0;
+}
+
+[shader("compute")]
+[NumThreads(8,8,1)]
+void dilation(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_constants) {
+    if (any(thread >= push_constants.extent)) {
+        return;
+    }
+
+    Texture2D<float4> temp = storage_images[push_constants.temp];
+    WTexture2D<float4> output = storage_images[push_constants.output];
+    output.Store(thread, dilate(temp, thread, push_constants.extent));
 }
