@@ -197,6 +197,7 @@ fn main() {
         sample_index: 0,
         samples_per_iter: 0,
         total_samples: 0,
+        offset: [0; 2],
     };
 
     // Initial rasterization work.
@@ -318,6 +319,47 @@ fn main() {
                     .store_op(vk::AttachmentStoreOp::STORE),
             ),
         );
+        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
+        // Subpixel offsets from
+        // https://ndotl.wordpress.com/2018/08/29/baking-artifact-free-lightmaps/
+        for offset in [
+            [0, 1],
+            [0, -1],
+            [1, 0],
+            [-1, 0],
+            [1, -1],
+            [1, 1],
+            [-1, 1],
+            [-1, -1],
+            [0, 2],
+            [0, -2],
+            [2, 0],
+            [-2, 0],
+            [1, 2],
+            [-1, 2],
+            [2, 1],
+            [-2, 1],
+            [2, -1],
+            [-2, -1],
+            [1, -2],
+            [-1, -2],
+            [2, 2],
+            [-2, 2],
+            [2, -2],
+            [-2, -2],
+        ] {
+            device.push_constants::<PushConstants>(
+                &command_buffer,
+                PushConstants {
+                    offset,
+                    ..push_constants
+                },
+            );
+            device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
+        }
+
+        // Conservative rasterization for very thin tris
+        // not 100% sure this is required.
         device.cmd_bind_pipeline(
             *command_buffer,
             vk::PipelineBindPoint::GRAPHICS,

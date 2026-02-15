@@ -53,6 +53,8 @@ struct PushConstants {
 
     uint2 extent;
 
+    int2 offset;
+
     uint output;
     uint num_lights;
 
