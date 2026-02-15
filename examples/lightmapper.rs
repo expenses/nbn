@@ -3,24 +3,41 @@ use std::sync::Arc;
 
 slang_struct::slang_include!("shaders/lightmapper_structs.slang");
 
+use clap::Parser;
+
+#[derive(Parser)]
+struct Args {
+    path: std::path::PathBuf,
+    #[structopt(short, default_value_t = 2048)]
+    dimensions: u32,
+    #[structopt(short, default_value_t = 4)]
+    supersampling: u32,
+    #[structopt(short, default_value_t = 1024)]
+    num_samples: u32,
+}
+
 fn main() {
     env_logger::init();
+
+    let args = Args::parse();
 
     let device = Arc::new(nbn::Device::new(None));
 
     let mut staging_buffer =
         nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
 
-    let mut args = std::env::args().skip(1);
-
     let (gltf_data, model, _lights) = load_gltf(
         &device,
         &mut staging_buffer,
-        &std::path::Path::new(&args.next().unwrap()),
+        &args.path,
     );
 
-    let width = args.next().unwrap().parse::<u32>().unwrap();
-    let height = args.next().unwrap().parse::<u32>().unwrap();
+    let width = args.dimensions * args.supersampling;
+    let height = args.dimensions * args.supersampling;
+    let samples_per_iter = 16;
+    let total_samples = args.num_samples.div_ceil(args.supersampling * args.supersampling);
+
+    dbg!(total_samples);
 
     let mut output_buffer = device
         .create_buffer(nbn::BufferDescriptor {
@@ -355,7 +372,7 @@ fn main() {
                     ..push_constants
                 },
             );
-            device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
+            //device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
         }
 
         // Conservative rasterization for very thin tris
@@ -365,7 +382,7 @@ fn main() {
             vk::PipelineBindPoint::GRAPHICS,
             *pipeline_conservative,
         );
-        device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
+        //device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
         device.cmd_end_rendering(*command_buffer);
         device.end_command_buffer(*command_buffer).unwrap();
     }
@@ -373,9 +390,6 @@ fn main() {
     device.submit_and_wait_on_command_buffer(&command_buffer);
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
-
-    let samples_per_iter = 16;
-    let total_samples = 128;
 
     for i in 0..(total_samples / samples_per_iter) {
         let sample_index = i * samples_per_iter;
@@ -453,6 +467,7 @@ fn main() {
         .save("out.exr")
         .unwrap();
 
+    /*
     let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
 
     let (pixel_info, img) = compute_pixel_info(
@@ -503,6 +518,7 @@ fn main() {
         .unwrap()
         .save("seamless.exr")
         .unwrap();
+    */
 }
 
 fn load_gltf(
