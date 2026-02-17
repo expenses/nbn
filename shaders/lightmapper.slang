@@ -9,108 +9,6 @@ import shared.constants;
 import shared.barycentrics;
 import shared.noise;
 
-struct Interp {
-    float4 uv2_pos: SV_Position;
-    float3 position;
-    float3 normal;
-    uint triangle_index;
-};
-
-[shader("vertex")] Interp vertex(uint vertex_index: SV_VertexID, uniform PushConstants push_constants) {
-    let index = push_constants.model.read_index(vertex_index);
-    let uv2 = push_constants.model.uv2s[index];
-
-    Interp interp;
-    interp.uv2_pos = float4(uv2 * 2.0 - 1.0, 0.0, 1.0);
-    interp.triangle_index = vertex_index / 3;
-    interp.position = push_constants.model.positions[index];
-    interp.normal = push_constants.model.normals[index];
-    return interp;
-}
-
-Optional<float3> hit_backface(float3 position, float3 unnormalized_dir, PushConstants push_constants) {
-    let as = RaytracingAccelerationStructure(push_constants.tlas);
-
-    RayDesc desc;
-    desc.Origin = position;
-    desc.Direction = unnormalized_dir;
-    // There is no good setting for this. 1.0 isn't great, 0.9 isn't great, 0.75 isn't great, 0.5 isn't great.
-    // but it's what https://ndotl.wordpress.com/2018/08/29/baking-artifact-free-lightmaps/ uses.
-    desc.TMax = 0.5;
-    desc.TMin = 0;
-
-    var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-    query.TraceRayInline(
-        as,
-        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-        0xff,
-        desc
-    );
-    query.Proceed();
-
-    if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT || query.CommittedRayFrontFace()) {
-        return none;
-    }
-
-    let triangle_index = query.CommittedPrimitiveIndex();
-    let barycentrics = query.CommittedTriangleBarycentrics();
-
-    let indices = push_constants.model.read_indices(triangle_index);
-
-    let a = push_constants.model.positions[indices.x];
-    let b = push_constants.model.positions[indices.y];
-    let c = push_constants.model.positions[indices.z];
-
-    let normal = normalize(cross(b - a, c - a));
-
-    let position = interpolate_ray_barycentrics(a, b, c, barycentrics);
-
-    return offset_ray(position, normal);
-}
-
-struct Output {
-    float4 position: COLOR0;
-    float3 normal: COLOR1;
-}
-
-[shader("pixel")] Output fragment(Interp in, float3 barycentrics: SV_Barycentrics, uniform PushConstants push_constants) {
-    let ddx = ddx(in.position);
-    let ddy = ddy(in.position);
-
-    Output output;
-    output.normal = normalize(in.normal);
-
-    //barycentrics.yz = clamp(barycentrics.yz, float2(0), float2(1));
-    //barycentrics.x = 1.0 - barycentrics.y - barycentrics.z;
-
-    let indices = push_constants.model.read_indices(in.triangle_index);
-
-    let a = push_constants.model.positions[indices.x];
-    let b = push_constants.model.positions[indices.y];
-    let c = push_constants.model.positions[indices.z];
-
-    let geom_normal = normalize(cross(b - a, c - a));
-
-    output.position = float4(offset_ray(shadow_terminator_hack(
-        a, b, c,
-        push_constants.model.normals[indices.x],
-        push_constants.model.normals[indices.y],
-        push_constants.model.normals[indices.z],
-        barycentrics
-    ), geom_normal), 1.0);
-
-    float3[4] dirs = float3[4](ddx, ddy, -ddx, -ddy);
-
-    //for (uint i = 0; i < 4; i++) {
-    //    if (let position = hit_backface(output.position.xyz, dirs[i], push_constants)) {
-    //        output.position.xyz = position;
-    //        break;
-    //    }
-    //}
-
-    return output;
-}
-
 [shader("compute")]
 [NumThreads(8,8,1)]
 void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_constants) {
@@ -118,34 +16,39 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         return;
     }
 
-    Texture2D<float4> positions_buffer = storage_images[push_constants.positions];
-    Texture2D<float3> normal_buffer = storage_images[push_constants.normals];
-
-    let pos_value = positions_buffer[thread];
-
-    if (pos_value.a < 0.5) {
-        return;
-    }
-
-    let pos = pos_value.xyz;
-    let normal = normal_buffer[thread];
-    let tbn = build_tbn(normal);
-
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
+    let uv_tlas = RaytracingAccelerationStructure(push_constants.uv_tlas);
+    let loc = thread.y * push_constants.extent.x + thread.x;
 
-    var accum = 0;
+    var accum = float3(0);
 
     for (uint i = 0; i < push_constants.samples_per_iter; i++) {
+        let uv_ray_offset = frac(push_constants.blue_noise_data.sample2(thread, 1) + R2(push_constants.sample_index + i));
+
+        RayDesc tri_desc;
+        tri_desc.Origin = float3(
+            (float2(thread)+uv_ray_offset)/push_constants.extent,
+            1
+        );
+        tri_desc.Direction = float3(0,0,-1);
+        tri_desc.TMax = 2.0;
+        tri_desc.TMin = 0;
+
+        var tri_query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        tri_query.TraceRayInline(
+            uv_tlas,
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            0xff,
+            tri_desc
+        );
+        tri_query.Proceed();
+
+        if (tri_query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+            continue;
+        }
+
         let rand2 = frac(push_constants.blue_noise_data.sample2(thread, 0) + R2(push_constants.sample_index + i));
-
-        let hemisphere_dir = sample_cosine_weighted_hemisphere(rand2);
-        let rotated_dir = mul(tbn, hemisphere_dir);
-
-        RayDesc desc;
-        desc.Direction = rotated_dir;
-        desc.Origin = pos;
-        desc.TMax = 200.0;
-        desc.TMin = 0;
+        let desc = trace_from(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), rand2, push_constants);
 
         var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         query.TraceRayInline(
@@ -156,12 +59,45 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         );
         query.Proceed();
 
-        accum += uint(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
+        let missed = query.CommittedStatus() != COMMITTED_TRIANGLE_HIT;
+
+        accum += float(missed);
+        push_constants.valid[loc] += missed || query.CommittedRayFrontFace();
     }
 
-    let loc = thread.y * push_constants.extent.x + thread.x;
-    push_constants.temp[loc].rgb += float3(float(accum) / float(push_constants.total_samples));
+    push_constants.temp[loc].rgb += accum / float(push_constants.total_samples);
     push_constants.temp[loc].a = 1.0;
+}
+
+RayDesc trace_from(float2 barycentrics, uint triangle_index, float2 rand2, PushConstants push_constants) {
+    let indices = push_constants.model.read_indices(triangle_index);
+    let a = push_constants.model.positions[indices.x];
+    let b = push_constants.model.positions[indices.y];
+    let c = push_constants.model.positions[indices.z];
+
+    let geom_normal = normalize(cross(b - a, c - a));
+
+    let pos = offset_ray(shadow_terminator_hack(
+        a, b, c,
+        push_constants.model.normals[indices.x],
+        push_constants.model.normals[indices.y],
+        push_constants.model.normals[indices.z],
+        float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
+    ), geom_normal);
+
+    let normal = normalize(interpolate_from_buffer(push_constants.model.normals, indices, barycentrics));
+    let tbn = build_tbn(normal);
+
+    let hemisphere_dir = sample_cosine_weighted_hemisphere(rand2);
+    let rotated_dir = mul(tbn, hemisphere_dir);
+
+    RayDesc desc;
+    desc.Direction = rotated_dir;
+    desc.Origin = pos;
+    desc.TMax = 200.0;
+    desc.TMin = 0;
+
+    return desc;
 }
 
 [shader("compute")]
@@ -178,32 +114,16 @@ void dilation(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 [shader("compute")]
 [NumThreads(8,8,1)]
 void downsampling(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_constants) {
-    let supersampling = push_constants.supersampling;
-    let extent = push_constants.extent;
-    let output_extent = extent / supersampling;
-
-    if (any(thread >= output_extent)) {
+    if (any(thread >= push_constants.extent)) {
         return;
     }
 
-    var output = float4(0);
-    var count = 0;
+    let loc = thread.y * push_constants.extent.x + thread.x;
 
+    let fraction = float(push_constants.valid[loc]) / float(push_constants.total_samples);
 
-    for (var y = thread.y * supersampling; y < (thread.y + 1) * supersampling; y++) {
-        for (var x = thread.x * supersampling; x < (thread.x + 1) * supersampling; x++) {
-            let src_loc = extent.x * y + x;
-            if (push_constants.temp[src_loc].a > 0.5) {
-                output += push_constants.temp[src_loc];
-                count ++;
-            }
-        }
+    if (fraction > 0.5) {
+        push_constants.output[loc].rgb = push_constants.temp[loc].rgb / fraction;
+        push_constants.output[loc].a = 1.0;
     }
-
-    if (count > 0) {
-        output /= float(count);
-    }
-
-    let loc = thread.y * output_extent.x + thread.x;
-    push_constants.output[loc] = output;
 }
