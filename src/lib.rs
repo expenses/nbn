@@ -1754,7 +1754,6 @@ impl Device {
         }
     }
 }
-
 impl std::ops::Deref for Device {
     type Target = ash::Device;
 
@@ -2040,7 +2039,7 @@ impl Drop for Image {
 pub struct StagingBuffer {
     offset: usize,
     staging_buffer: Buffer,
-    command_buffer: CommandBuffer,
+    pub command_buffer: CommandBuffer,
     buffer_size: u64,
 }
 
