@@ -2420,3 +2420,55 @@ impl TransferFunction {
         }
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct AccelerationStructureInstance {
+    pub transform: glam::Mat4,
+    pub custom_index: u32,
+    pub mask: u8,
+    pub sbt_offset: u32,
+    pub flags: vk::GeometryInstanceFlagsKHR,
+    pub acceleration_structure: u64,
+}
+
+impl AccelerationStructureInstance {
+    pub fn to_vk(self) -> vk::AccelerationStructureInstanceKHR {
+        self.into()
+    }
+}
+
+impl Default for AccelerationStructureInstance {
+    fn default() -> Self {
+        Self {
+            transform: glam::Mat4::IDENTITY,
+            custom_index: 0,
+            mask: 0xff,
+            sbt_offset: 0,
+            flags: Default::default(),
+            acceleration_structure: 0,
+        }
+    }
+}
+
+impl From<AccelerationStructureInstance> for vk::AccelerationStructureInstanceKHR {
+    fn from(instance: AccelerationStructureInstance) -> Self {
+        Self {
+            transform: vk::TransformMatrixKHR {
+                matrix: instance.transform.transpose().to_cols_array()[..12]
+                    .try_into()
+                    .unwrap(),
+            },
+            instance_custom_index_and_mask: vk::Packed24_8::new(
+                instance.custom_index,
+                instance.mask,
+            ),
+            instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
+                instance.sbt_offset,
+                instance.flags.as_raw() as _,
+            ),
+            acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
+                device_handle: instance.acceleration_structure,
+            },
+        }
+    }
+}
