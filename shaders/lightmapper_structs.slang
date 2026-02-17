@@ -50,21 +50,20 @@ struct PushConstants {
     int* blue_noise_sobol;
     int* blue_noise_ranking_tile;
     int* blue_noise_scrambling_tile;
+    float4* output;
+    float4* temp;
 
     uint2 extent;
 
-    int2 offset;
-
-    uint output;
     uint num_lights;
 
     uint positions;
     uint normals;
-    uint temp;
 
     uint sample_index;
     uint samples_per_iter;
     uint total_samples;
+    uint supersampling;
 
     property BlueNoiseData blue_noise_data {
         get {

@@ -20,10 +20,8 @@ struct Interp {
     let index = push_constants.model.read_index(vertex_index);
     let uv2 = push_constants.model.uv2s[index];
 
-    let offset = float2(push_constants.offset) / float2(push_constants.extent);
-
     Interp interp;
-    interp.uv2_pos = float4(uv2 * 2.0 - 1.0 + offset, 0.0, 1.0);
+    interp.uv2_pos = float4(uv2 * 2.0 - 1.0, 0.0, 1.0);
     interp.triangle_index = vertex_index / 3;
     interp.position = push_constants.model.positions[index];
     interp.normal = push_constants.model.normals[index];
@@ -161,9 +159,9 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         accum += uint(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
     }
 
-    RWTexture2D<float4> temp = storage_images[push_constants.temp];
-    temp[thread].rgb += float3(float(accum) / float(push_constants.total_samples));
-    temp[thread].a = 1.0;
+    let loc = thread.y * push_constants.extent.x + thread.x;
+    push_constants.temp[loc].rgb += float3(float(accum) / float(push_constants.total_samples));
+    push_constants.temp[loc].a = 1.0;
 }
 
 [shader("compute")]
@@ -173,7 +171,39 @@ void dilation(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         return;
     }
 
-    Texture2D<float4> temp = storage_images[push_constants.temp];
-    WTexture2D<float4> output = storage_images[push_constants.output];
-    output.Store(thread, temp[thread]);
+    let loc = thread.y * push_constants.extent.x + thread.x;
+    push_constants.output[loc] = push_constants.temp[loc];
+}
+
+[shader("compute")]
+[NumThreads(8,8,1)]
+void downsampling(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_constants) {
+    let supersampling = push_constants.supersampling;
+    let extent = push_constants.extent;
+    let output_extent = extent / supersampling;
+
+    if (any(thread >= output_extent)) {
+        return;
+    }
+
+    var output = float4(0);
+    var count = 0;
+
+
+    for (var y = thread.y * supersampling; y < (thread.y + 1) * supersampling; y++) {
+        for (var x = thread.x * supersampling; x < (thread.x + 1) * supersampling; x++) {
+            let src_loc = extent.x * y + x;
+            if (push_constants.temp[src_loc].a > 0.5) {
+                output += push_constants.temp[src_loc];
+                count ++;
+            }
+        }
+    }
+
+    if (count > 0) {
+        output /= float(count);
+    }
+
+    let loc = thread.y * output_extent.x + thread.x;
+    push_constants.output[loc] = output;
 }
