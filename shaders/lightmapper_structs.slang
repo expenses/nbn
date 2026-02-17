@@ -45,6 +45,7 @@ struct Light {
 
 struct PushConstants {
     uint64_t tlas;
+    uint64_t uv_tlas;
     Model* model;
     float[11]* lights;
     int* blue_noise_sobol;
@@ -52,13 +53,11 @@ struct PushConstants {
     int* blue_noise_scrambling_tile;
     float4* output;
     float4* temp;
+    uint* valid;
 
     uint2 extent;
 
     uint num_lights;
-
-    uint positions;
-    uint normals;
 
     uint sample_index;
     uint samples_per_iter;
