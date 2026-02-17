@@ -1726,6 +1726,33 @@ impl Device {
             dispatch_depth,
         );
     }
+
+    pub fn create_tlas_from_instances(
+        &self,
+        staging_buffer: &mut StagingBuffer,
+        name: &str,
+        instances: &[vk::AccelerationStructureInstanceKHR],
+    ) -> TlasWithInstances {
+        let num_instances = instances.len();
+
+        let instances = staging_buffer.create_buffer_from_slice(
+            self,
+            &format!("{} instances", name),
+            instances,
+        );
+
+        TlasWithInstances {
+            tlas: self.create_acceleration_structure(
+                &format!("{} tlas", name),
+                AccelerationStructureData::Instances {
+                    buffer_address: *instances,
+                    count: num_instances as _,
+                },
+                staging_buffer,
+            ),
+            instances,
+        }
+    }
 }
 
 impl std::ops::Deref for Device {
@@ -2275,6 +2302,11 @@ impl Deref for AccelerationStructure {
     fn deref(&self) -> &Self::Target {
         &self.address
     }
+}
+
+pub struct TlasWithInstances {
+    pub tlas: AccelerationStructure,
+    pub instances: Buffer,
 }
 
 pub struct ImageBarrier<I, S = BarrierOp, D = BarrierOp> {
