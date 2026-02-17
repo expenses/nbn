@@ -42,7 +42,7 @@ fn main() {
     let mut output_buffer = device
         .create_buffer(nbn::BufferDescriptor {
             name: "output",
-            size: width as u64 * height as u64 * 4 * 4,
+            size: args.dimensions as u64 * args.dimensions as u64 * 4 * 4,
             ty: nbn::MemoryLocation::GpuToCpu,
         })
         .unwrap();
@@ -55,29 +55,13 @@ fn main() {
         })
         .unwrap();
 
-    let temp_image = device.register_owned_image(
-        device.create_image(nbn::ImageDescriptor {
-            name: "temp image",
-            format: vk::Format::R32G32B32A32_SFLOAT,
-            extent: [width, height].into(),
-            usage: vk::ImageUsageFlags::STORAGE,
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_levels: 1,
-        }),
-        true,
-    );
-
-    let output_image = device.register_owned_image(
-        device.create_image(nbn::ImageDescriptor {
-            name: "output image",
-            format: vk::Format::R32G32B32A32_SFLOAT,
-            extent: [width, height].into(),
-            usage: vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::STORAGE,
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_levels: 1,
-        }),
-        true,
-    );
+    let mut temp_buffer = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "temp buffer",
+            size: width as u64 * height as u64 * 4 * 4,
+            ty: nbn::MemoryLocation::GpuOnly,
+        })
+        .unwrap();
 
     let create_attachment = |name, format, extra_flags| {
         device.register_owned_image(
@@ -195,6 +179,7 @@ fn main() {
     let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
 
     let dilation_pipeline = device.create_compute_pipeline(&shader, c"dilation");
+    let downsampling_pipeline = device.create_compute_pipeline(&shader, c"downsampling");
     let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
 
     let push_constants = PushConstants {
@@ -204,17 +189,17 @@ fn main() {
         extent: [width, height],
         lights: 0,
         model: *model_buffer,
-        output: *output_image,
+        output: *output_buffer,
         positions: *position_buffer,
         normals: *normal_buffer,
-        temp: *temp_image,
+        temp: *temp_buffer,
         num_lights: 0,
         tlas: *tlas,
         // Set later.
         sample_index: 0,
-        samples_per_iter: 0,
-        total_samples: 0,
-        offset: [0; 2],
+        samples_per_iter,
+        total_samples,
+        supersampling: args.supersampling
     };
 
     // Initial rasterization work.
@@ -239,18 +224,6 @@ fn main() {
             &depthbuffer,
             None,
             nbn::BarrierOp::DepthStencilAttachmentReadWrite,
-        );
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &output_image,
-            None,
-            nbn::BarrierOp::ComputeStorageWrite,
-        );
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &temp_image,
-            None,
-            nbn::BarrierOp::ComputeStorageWrite,
         );
         device.bind_internal_descriptor_sets_to_all(&command_buffer);
         device.begin_rendering(
@@ -336,45 +309,6 @@ fn main() {
                     .store_op(vk::AttachmentStoreOp::STORE),
             ),
         );
-        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
-        // Subpixel offsets from
-        // https://ndotl.wordpress.com/2018/08/29/baking-artifact-free-lightmaps/
-        for offset in [
-            [0, 1],
-            [0, -1],
-            [1, 0],
-            [-1, 0],
-            [1, -1],
-            [1, 1],
-            [-1, 1],
-            [-1, -1],
-            [0, 2],
-            [0, -2],
-            [2, 0],
-            [-2, 0],
-            [1, 2],
-            [-1, 2],
-            [2, 1],
-            [-2, 1],
-            [2, -1],
-            [-2, -1],
-            [1, -2],
-            [-1, -2],
-            [2, 2],
-            [-2, 2],
-            [2, -2],
-            [-2, -2],
-        ] {
-            device.push_constants::<PushConstants>(
-                &command_buffer,
-                PushConstants {
-                    offset,
-                    ..push_constants
-                },
-            );
-            //device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
-        }
-
         // Conservative rasterization for very thin tris
         // not 100% sure this is required.
         device.cmd_bind_pipeline(
@@ -410,8 +344,6 @@ fn main() {
                 &command_buffer,
                 PushConstants {
                     sample_index,
-                    samples_per_iter,
-                    total_samples,
                     ..push_constants
                 },
             );
@@ -433,28 +365,9 @@ fn main() {
         device.cmd_bind_pipeline(
             *command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            *dilation_pipeline,
+            *downsampling_pipeline,
         );
-        device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &output_image,
-            Some(nbn::BarrierOp::ComputeStorageWrite),
-            nbn::BarrierOp::TransferRead,
-        );
-        device.cmd_copy_image_to_buffer(
-            *command_buffer,
-            **output_image.image,
-            vk::ImageLayout::GENERAL,
-            *output_buffer.buffer,
-            &[vk::BufferImageCopy::default()
-                .image_extent(vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1,
-                })
-                .image_subresource(output_image.image.subresource_layer())],
-        );
+        device.cmd_dispatch(*command_buffer, args.dimensions.div_ceil(8), args.dimensions.div_ceil(8), 1);
         device.end_command_buffer(*command_buffer).unwrap();
     }
 
@@ -462,7 +375,7 @@ fn main() {
 
     let output_slice = output_buffer.try_as_slice_mut::<f32>().unwrap();
 
-    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
+    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(args.dimensions, args.dimensions, output_slice)
         .unwrap()
         .save("out.exr")
         .unwrap();
