@@ -62,7 +62,6 @@ struct PushConstants {
     uint sample_index;
     uint samples_per_iter;
     uint total_samples;
-    uint supersampling;
 
     property BlueNoiseData blue_noise_data {
         get {

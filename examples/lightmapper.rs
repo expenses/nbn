@@ -10,8 +10,6 @@ struct Args {
     path: std::path::PathBuf,
     #[structopt(short, default_value_t = 2048)]
     dimensions: u32,
-    #[structopt(short, default_value_t = 4)]
-    supersampling: u32,
     #[structopt(short, default_value_t = 1024)]
     num_samples: u32,
 }
@@ -26,16 +24,13 @@ fn main() {
     let mut staging_buffer =
         nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
 
-    let (gltf_data, model, _lights) = load_gltf(
-        &device,
-        &mut staging_buffer,
-        &args.path,
-    );
+    let (gltf_data, model, _lights) = load_gltf(&device, &mut staging_buffer, &args.path);
 
-    let width = args.dimensions * args.supersampling;
-    let height = args.dimensions * args.supersampling;
-    let samples_per_iter = 16;
-    let total_samples = args.num_samples.div_ceil(args.supersampling * args.supersampling);
+    let width = args.dimensions;
+    let height = args.dimensions;
+    let samples_per_iter = 64;
+    let total_samples = args
+        .num_samples;
 
     dbg!(total_samples);
 
@@ -43,14 +38,6 @@ fn main() {
         .create_buffer(nbn::BufferDescriptor {
             name: "output",
             size: args.dimensions as u64 * args.dimensions as u64 * 4 * 4,
-            ty: nbn::MemoryLocation::GpuToCpu,
-        })
-        .unwrap();
-
-    let positions_copy = device
-        .create_buffer(nbn::BufferDescriptor {
-            name: "positions copy",
-            size: width as u64 * height as u64 * 4 * 4,
             ty: nbn::MemoryLocation::GpuToCpu,
         })
         .unwrap();
@@ -63,118 +50,50 @@ fn main() {
         })
         .unwrap();
 
-    let create_attachment = |name, format, extra_flags| {
-        device.register_owned_image(
-            device.create_image(nbn::ImageDescriptor {
-                name,
-                format,
-                extent: [width, height].into(),
-                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT
-                    | vk::ImageUsageFlags::STORAGE
-                    | extra_flags,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_levels: 1,
-            }),
-            true,
-        )
-    };
-
-    let position_buffer = create_attachment(
-        "position buffer",
-        vk::Format::R32G32B32A32_SFLOAT,
-        vk::ImageUsageFlags::TRANSFER_SRC,
-    );
-
-    let normal_buffer = create_attachment(
-        "normal buffer",
-        vk::Format::R32G32B32A32_SFLOAT,
-        Default::default(),
-    );
-
-    let depthbuffer = device.create_image(nbn::ImageDescriptor {
-        name: "depthbuffer",
-        format: vk::Format::D32_SFLOAT,
-        extent: [width, height].into(),
-        usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-        aspect_mask: vk::ImageAspectFlags::DEPTH,
-        mip_levels: 1,
-    });
-
-    //let num_lights = dbg!(lights.len());
-
-    //let lights = staging_buffer.create_buffer_from_slice(&device, "lights", &lights);
-
-    let instance_buffer = staging_buffer.create_buffer_from_slice(
-        &device,
-        "Instances",
-        &[vk::AccelerationStructureInstanceKHR {
-            transform: vk::TransformMatrixKHR {
-                matrix: glam::Mat4::IDENTITY.transpose().to_cols_array()[..12]
-                    .try_into()
-                    .unwrap(),
-            },
-            instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
-            instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
-                0,
-                ash::vk::GeometryInstanceFlagsKHR::default().as_raw() as _,
-            ),
-            acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-                device_handle: *gltf_data.acceleration_structure,
-            },
-        }],
-    );
+    let valid_buffer = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "valid buffer",
+            size: width as u64 * height as u64 * 4,
+            ty: nbn::MemoryLocation::GpuOnly,
+        })
+        .unwrap();
 
     let model_buffer = staging_buffer.create_buffer_from_slice(&device, "models", &[model]);
 
-    let tlas = device.create_acceleration_structure(
-        "tlas",
-        nbn::AccelerationStructureData::Instances {
-            buffer_address: *instance_buffer,
-            count: 1,
-        },
+    let tlas = device.create_tlas_from_instances(
         &mut staging_buffer,
+        "model",
+        &[nbn::AccelerationStructureInstance {
+            acceleration_structure: *gltf_data.acceleration_structure,
+            ..Default::default()
+        }
+        .to_vk()],
+    );
+    let uv_tlas = device.create_tlas_from_instances(
+        &mut staging_buffer,
+        "uv_tlas",
+        &[nbn::AccelerationStructureInstance {
+            acceleration_structure: *gltf_data.uv_acceleration_structure,
+            ..Default::default()
+        }
+        .to_vk()],
     );
 
     let blue_noise_buffers = nbn::blue_noise::BlueNoiseBuffers::new(&device, &mut staging_buffer);
 
+    // unsafe {
+    //     device.cmd_fill_buffer(
+    //         *staging_buffer.command_buffer,
+    //         *valid_buffer.buffer,
+    //         0,
+    //         vk::WHOLE_SIZE,
+    //         0,
+    //     );
+    // }
+
     staging_buffer.finish(&device);
 
     let shader = device.load_shader("shaders/compiled/lightmapper.spv");
-
-    let base_pipeline_descriptor = nbn::GraphicsPipelineDesc {
-        name: "normal pipeline",
-        shaders: nbn::GraphicsPipelineShaders::Legacy {
-            vertex: nbn::ShaderDesc {
-                module: &shader,
-                entry_point: c"vertex",
-            },
-            fragment: nbn::ShaderDesc {
-                module: &shader,
-                entry_point: c"fragment",
-            },
-        },
-        color_attachment_formats: &[
-            vk::Format::R32G32B32A32_SFLOAT,
-            vk::Format::R32G32B32A32_SFLOAT,
-        ],
-        blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
-            .color_write_mask(vk::ColorComponentFlags::RGBA); 2],
-        flags: Default::default(),
-        depth: nbn::GraphicsPipelineDepthDesc {
-            write_enable: true,
-            test_enable: true,
-            compare_op: vk::CompareOp::NOT_EQUAL,
-            format: vk::Format::D32_SFLOAT,
-        },
-    };
-
-    let pipeline = device.create_graphics_pipeline(base_pipeline_descriptor.clone());
-
-    let pipeline_conservative = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
-        name: "conservative pipeline",
-        flags: nbn::GraphicsPipelineFlags::CONSERVATIVE_RASTERIZATION,
-        ..base_pipeline_descriptor
-    });
 
     let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
 
@@ -190,138 +109,16 @@ fn main() {
         lights: 0,
         model: *model_buffer,
         output: *output_buffer,
-        positions: *position_buffer,
-        normals: *normal_buffer,
         temp: *temp_buffer,
         num_lights: 0,
-        tlas: *tlas,
+        tlas: *tlas.tlas,
+        uv_tlas: *uv_tlas.tlas,
+        valid: *valid_buffer,
         // Set later.
         sample_index: 0,
         samples_per_iter,
         total_samples,
-        supersampling: args.supersampling
     };
-
-    // Initial rasterization work.
-    unsafe {
-        device
-            .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
-            .unwrap();
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &position_buffer,
-            None,
-            nbn::BarrierOp::ColorAttachmentWrite,
-        );
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &normal_buffer,
-            None,
-            nbn::BarrierOp::ColorAttachmentWrite,
-        );
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &depthbuffer,
-            None,
-            nbn::BarrierOp::DepthStencilAttachmentReadWrite,
-        );
-        device.bind_internal_descriptor_sets_to_all(&command_buffer);
-        device.begin_rendering(
-            &command_buffer,
-            width,
-            height,
-            &[
-                vk::RenderingAttachmentInfo::default()
-                    .image_view(*position_buffer.image.view)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE),
-                vk::RenderingAttachmentInfo::default()
-                    .image_view(*normal_buffer.image.view)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE),
-            ],
-            Some(
-                &vk::RenderingAttachmentInfo::default()
-                    .image_view(*depthbuffer.view)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .clear_value(vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue {
-                            depth: 1.0,
-                            stencil: 0,
-                        },
-                    })
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE),
-            ),
-        );
-        device.push_constants::<PushConstants>(&command_buffer, push_constants);
-        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
-        device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
-        device.cmd_end_rendering(*command_buffer);
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &position_buffer.image,
-            Some(nbn::BarrierOp::ColorAttachmentWrite),
-            nbn::BarrierOp::TransferRead,
-        );
-        device.cmd_copy_image_to_buffer(
-            *command_buffer,
-            **position_buffer.image,
-            vk::ImageLayout::GENERAL,
-            *positions_copy.buffer,
-            &[vk::BufferImageCopy::default()
-                .image_extent(vk::Extent3D {
-                    width,
-                    height,
-                    depth: 1,
-                })
-                .image_subresource(position_buffer.image.subresource_layer())],
-        );
-        device.insert_image_pipeline_barrier(
-            &command_buffer,
-            &position_buffer.image,
-            Some(nbn::BarrierOp::TransferRead),
-            nbn::BarrierOp::ColorAttachmentWrite,
-        );
-        device.begin_rendering(
-            &command_buffer,
-            width,
-            height,
-            &[
-                vk::RenderingAttachmentInfo::default()
-                    .image_view(*position_buffer.image.view)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .load_op(vk::AttachmentLoadOp::LOAD)
-                    .store_op(vk::AttachmentStoreOp::STORE),
-                vk::RenderingAttachmentInfo::default()
-                    .image_view(*normal_buffer.image.view)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .load_op(vk::AttachmentLoadOp::LOAD)
-                    .store_op(vk::AttachmentStoreOp::STORE),
-            ],
-            Some(
-                &vk::RenderingAttachmentInfo::default()
-                    .image_view(*depthbuffer.view)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .load_op(vk::AttachmentLoadOp::LOAD)
-                    .store_op(vk::AttachmentStoreOp::STORE),
-            ),
-        );
-        // Conservative rasterization for very thin tris
-        // not 100% sure this is required.
-        device.cmd_bind_pipeline(
-            *command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            *pipeline_conservative,
-        );
-        //device.cmd_draw(*command_buffer, model.num_indices, 1, 0, 0);
-        device.cmd_end_rendering(*command_buffer);
-        device.end_command_buffer(*command_buffer).unwrap();
-    }
-
-    device.submit_and_wait_on_command_buffer(&command_buffer);
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
@@ -367,7 +164,12 @@ fn main() {
             vk::PipelineBindPoint::COMPUTE,
             *downsampling_pipeline,
         );
-        device.cmd_dispatch(*command_buffer, args.dimensions.div_ceil(8), args.dimensions.div_ceil(8), 1);
+        device.cmd_dispatch(
+            *command_buffer,
+            args.dimensions.div_ceil(8),
+            args.dimensions.div_ceil(8),
+            1,
+        );
         device.end_command_buffer(*command_buffer).unwrap();
     }
 
@@ -375,10 +177,14 @@ fn main() {
 
     let output_slice = output_buffer.try_as_slice_mut::<f32>().unwrap();
 
-    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(args.dimensions, args.dimensions, output_slice)
-        .unwrap()
-        .save("out.exr")
-        .unwrap();
+    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(
+        args.dimensions,
+        args.dimensions,
+        output_slice,
+    )
+    .unwrap()
+    .save("out.exr")
+    .unwrap();
 
     /*
     let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
@@ -558,6 +364,7 @@ fn load_gltf(
     let mut normals = Vec::new();
     let mut image_indices = Vec::new();
     let mut uv2s = Vec::new();
+    let mut uv2s_3d = Vec::new();
 
     for mesh in gltf.meshes.iter() {
         for primitive in mesh.primitives.iter() {
@@ -591,6 +398,11 @@ fn load_gltf(
             positions.extend_from_slice(positions_slice);
             uvs.extend_from_slice(get(primitive.attributes.texcoord_0, 2, "uvs"));
             uv2s.extend_from_slice(get(primitive.attributes.texcoord_1, 2, "uv2s"));
+            uv2s_3d.extend(
+                get(primitive.attributes.texcoord_1, 2, "uv2s_3d")
+                    .chunks(2)
+                    .flat_map(|c| [c[0], c[1], 0.0]),
+            );
             normals.extend_from_slice(get(primitive.attributes.normal, 3, "normals"));
 
             let material_index = primitive.material.unwrap_or(0);
@@ -610,12 +422,27 @@ fn load_gltf(
     let positions = staging_buffer.create_buffer_from_slice(device, "positions", &positions);
     dbg!(image_indices.len());
 
+    let uv2s_3d = staging_buffer.create_buffer_from_slice(device, "uv2s_3d", &uv2s_3d);
+
     let acceleration_structure = device.create_acceleration_structure(
         &format!("{} acceleration structure", path.display(),),
         nbn::AccelerationStructureData::Triangles {
             index_type: vk::IndexType::UINT32,
             opaque: true,
             vertices_buffer_address: *positions,
+            indices_buffer_address: *indices,
+            num_vertices: num_vertices as _,
+            num_indices: num_indices as _,
+        },
+        staging_buffer,
+    );
+
+    let uv_acceleration_structure = device.create_acceleration_structure(
+        &format!("{} uv acceleration structure", path.display(),),
+        nbn::AccelerationStructureData::Triangles {
+            index_type: vk::IndexType::UINT32,
+            opaque: true,
+            vertices_buffer_address: *uv2s_3d,
             indices_buffer_address: *indices,
             num_vertices: num_vertices as _,
             num_indices: num_indices as _,
@@ -643,11 +470,13 @@ fn load_gltf(
     (
         CombinedModel {
             acceleration_structure,
+            uv_acceleration_structure,
             seams,
             _positions: positions,
             _indices: indices,
             _uvs: uvs,
             _uv2s: uv2s,
+            _uv2s_3d: uv2s_3d,
             _normals: normals,
             _image_indices: image_indices,
             _images: images,
@@ -659,11 +488,13 @@ fn load_gltf(
 
 struct CombinedModel {
     acceleration_structure: nbn::AccelerationStructure,
+    uv_acceleration_structure: nbn::AccelerationStructure,
     seams: Vec<Seam>,
     _positions: nbn::Buffer,
     _indices: nbn::Buffer,
     _uvs: nbn::Buffer,
     _uv2s: nbn::Buffer,
+    _uv2s_3d: nbn::Buffer,
     _normals: nbn::Buffer,
     _image_indices: nbn::Buffer,
     _images: Vec<nbn::IndexedImage>,
