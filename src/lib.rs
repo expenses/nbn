@@ -1648,10 +1648,16 @@ impl Device {
             self.cmd_pipeline_barrier2(
                 *staging_buffer.command_buffer,
                 &vk::DependencyInfo::default().memory_barriers(&[vk::MemoryBarrier2::default()
-                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(
+                        vk::PipelineStageFlags2::COPY
+                            | vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
+                    )
+                    .src_access_mask(
+                        vk::AccessFlags2::TRANSFER_WRITE
+                            | vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR,
+                    )
                     .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)]),
+                    .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)]),
             );
         }
 
