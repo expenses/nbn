@@ -50,10 +50,10 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         let rand2 = frac(push_constants.blue_noise_data.sample2(thread, 0) + R2(push_constants.sample_index + i));
         let desc = trace_from(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), rand2, push_constants);
 
-        var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        var query = RayQuery<RAY_FLAG_NONE>();
         query.TraceRayInline(
             tlas,
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            RAY_FLAG_NONE,
             0xff,
             desc
         );
