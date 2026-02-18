@@ -299,47 +299,49 @@ fn load_gltf(
         })
         .collect();
 
-    let images = gltf
-        .images
-        .iter()
-        //.zip(&images)
-        .map(|image| {
-            let path = path.with_file_name(image.uri.as_ref().unwrap());
-            let data = image::open(&path).unwrap().to_rgba8();
-            let image = staging_buffer.create_sampled_image(
-                &device,
-                nbn::SampledImageDescriptor {
-                    name: image.uri.as_ref().unwrap(),
-                    extent: vk::Extent3D {
-                        width: data.width(),
-                        height: data.height(),
-                        depth: 1,
-                    }
-                    .into(),
-                    format: vk::Format::R8G8B8A8_SRGB,
-                },
-                &data,
-                nbn::QueueType::Compute,
-                &[0],
-            );
-            nbn::IndexedImage {
-                index: device.register_image(*image.view, false),
-                image,
-            }
-        })
-        .collect::<Vec<_>>();
+    let images: Vec<nbn::IndexedImage> = vec![];
+    //let images = gltf
+    //     .images
+    //     .iter()
+    //     //.zip(&images)
+    //     .map(|image| {
+    //         let path = path.with_file_name(image.uri.as_ref().unwrap());
+    //         let data = image::open(&path).unwrap().to_rgba8();
+    //         let image = staging_buffer.create_sampled_image(
+    //             &device,
+    //             nbn::SampledImageDescriptor {
+    //                 name: image.uri.as_ref().unwrap(),
+    //                 extent: vk::Extent3D {
+    //                     width: data.width(),
+    //                     height: data.height(),
+    //                     depth: 1,
+    //                 }
+    //                 .into(),
+    //                 format: vk::Format::R8G8B8A8_SRGB,
+    //             },
+    //             &data,
+    //             nbn::QueueType::Compute,
+    //             &[0],
+    //         );
+    //         nbn::IndexedImage {
+    //             index: device.register_image(*image.view, false),
+    //             image,
+    //         }
+    //     })
+    //     .collect::<Vec<_>>();
 
     let material_to_image: Vec<u32> = gltf
         .materials
         .iter()
-        .map(|mat| {
-            let texture_index = mat
-                .pbr_metallic_roughness
-                .base_color_texture
-                .as_ref()
-                .unwrap()
-                .index;
-            *images[gltf.textures[texture_index].source.unwrap()].index
+        .map(|_mat| {
+            0
+            // let texture_index = mat
+            //     .pbr_metallic_roughness
+            //     .base_color_texture
+            //     .as_ref()
+            //     .unwrap()
+            //     .index;
+            // *images[gltf.textures[texture_index].source.unwrap()].index
         })
         .collect();
 
@@ -366,53 +368,60 @@ fn load_gltf(
     let mut uv2s = Vec::new();
     let mut uv2s_3d = Vec::new();
 
-    for mesh in gltf.meshes.iter() {
-        for primitive in mesh.primitives.iter() {
-            let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
-            match indices_accessor.component_type {
-                goth_gltf::ComponentType::UnsignedInt => {
-                    indices.extend(
-                        get_slice::<u32>(&buffer, &gltf, &indices_accessor)
-                            [..indices_accessor.count]
-                            .iter()
-                            .map(|&index| positions.len() as u32 / 3 + index as u32),
-                    );
+    gltf.nodes
+        .iter()
+        .filter_map(|node| node.mesh.map(|mesh_index| (node, &gltf.meshes[mesh_index])))
+        .for_each(|(node, mesh)| {
+            dbg!(node.transform());
+
+            for primitive in mesh.primitives.iter() {
+                let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
+                match indices_accessor.component_type {
+                    goth_gltf::ComponentType::UnsignedInt => {
+                        indices.extend(
+                            get_slice::<u32>(&buffer, &gltf, &indices_accessor)
+                                [..indices_accessor.count]
+                                .iter()
+                                .map(|&index| positions.len() as u32 / 3 + index as u32),
+                        );
+                    }
+                    _ => {
+                        indices.extend(
+                            get_slice::<u16>(&buffer, &gltf, &indices_accessor)
+                                [..indices_accessor.count]
+                                .iter()
+                                .map(|&index| positions.len() as u32 / 3 + index as u32),
+                        );
+                    }
                 }
-                _ => {
-                    indices.extend(
-                        get_slice::<u16>(&buffer, &gltf, &indices_accessor)
-                            [..indices_accessor.count]
-                            .iter()
-                            .map(|&index| positions.len() as u32 / 3 + index as u32),
-                    );
-                }
+
+                let get = |accessor_index: Option<usize>, size: usize, error: &str| {
+                    let accessor = &gltf.accessors[accessor_index.expect(error)];
+                    assert_eq!(accessor.component_type, goth_gltf::ComponentType::Float);
+                    &get_slice::<f32>(&buffer, &gltf, accessor)[..accessor.count * size]
+                };
+
+                let positions_slice = get(primitive.attributes.position, 3, "positions");
+
+                let uv2s_vec = match primitive.attributes.texcoord_1 {
+                    Some(_) => get(primitive.attributes.texcoord_1, 2, "uv2s").to_vec(),
+                    _ => vec![0.0; (positions_slice.len() / 3) * 2],
+                };
+
+                positions.extend_from_slice(positions_slice);
+                uvs.extend_from_slice(get(primitive.attributes.texcoord_0, 2, "uvs"));
+                uv2s.extend_from_slice(&uv2s_vec);
+                uv2s_3d.extend(uv2s_vec.chunks(2).flat_map(|c| [c[0], c[1], 0.0]));
+                normals.extend_from_slice(get(primitive.attributes.normal, 3, "normals"));
+
+                let material_index = primitive.material.unwrap_or(0);
+
+                image_indices.extend(
+                    (0..indices_accessor.count / 3)
+                        .map(|_| material_to_image.get(material_index).cloned().unwrap_or(0)),
+                );
             }
-
-            let get = |accessor_index: Option<usize>, size: usize, error: &str| {
-                let accessor = &gltf.accessors[accessor_index.expect(error)];
-                assert_eq!(accessor.component_type, goth_gltf::ComponentType::Float);
-                &get_slice::<f32>(&buffer, &gltf, accessor)[..accessor.count * size]
-            };
-
-            let positions_slice = get(primitive.attributes.position, 3, "positions");
-            positions.extend_from_slice(positions_slice);
-            uvs.extend_from_slice(get(primitive.attributes.texcoord_0, 2, "uvs"));
-            uv2s.extend_from_slice(get(primitive.attributes.texcoord_1, 2, "uv2s"));
-            uv2s_3d.extend(
-                get(primitive.attributes.texcoord_1, 2, "uv2s_3d")
-                    .chunks(2)
-                    .flat_map(|c| [c[0], c[1], 0.0]),
-            );
-            normals.extend_from_slice(get(primitive.attributes.normal, 3, "normals"));
-
-            let material_index = primitive.material.unwrap_or(0);
-
-            image_indices.extend(
-                (0..indices_accessor.count / 3)
-                    .map(|_| material_to_image.get(material_index).cloned().unwrap_or(0)),
-            );
-        }
-    }
+        });
 
     let seams = find_seams(&indices, &positions, &uv2s);
 
