@@ -81,3 +81,12 @@ struct PushConstants {
         return reinterpret<Light>(lights[index]);
     }
 };
+
+struct ViewerConstants {
+float4x4 view_inv;
+    float4x4 proj_inv;
+        uint64_t tlas;
+
+    uint2 extent;
+    uint image;
+}
