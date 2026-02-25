@@ -1,5 +1,6 @@
 use ash::vk;
 use std::sync::Arc;
+use winit::{event::ElementState, keyboard::KeyCode};
 
 slang_struct::slang_include!("shaders/lightmapper_structs.slang");
 
@@ -8,6 +9,8 @@ use clap::Parser;
 #[derive(Parser)]
 struct Args {
     path: std::path::PathBuf,
+    #[structopt(short, long)]
+    viewer: bool,
     #[structopt(short, default_value_t = 2048)]
     dimensions: u32,
     #[structopt(short, default_value_t = 1024)]
@@ -19,6 +22,15 @@ fn main() {
 
     let args = Args::parse();
 
+    if args.viewer {
+        let event_loop = winit::event_loop::EventLoop::new().unwrap();
+        event_loop.run_app(&mut App { state: None }).unwrap();
+    } else {
+        lightmap(&args);
+    }
+}
+
+fn lightmap(args: &Args) {
     let device = Arc::new(nbn::Device::new(None));
 
     let mut staging_buffer =
@@ -29,8 +41,7 @@ fn main() {
     let width = args.dimensions;
     let height = args.dimensions;
     let samples_per_iter = 64;
-    let total_samples = args
-        .num_samples;
+    let total_samples = args.num_samples;
 
     dbg!(total_samples);
 
@@ -238,6 +249,248 @@ fn main() {
         .save("seamless.exr")
         .unwrap();
     */
+}
+
+struct State {
+    device: nbn::Device,
+    window: winit::window::Window,
+    swapchain: nbn::Swapchain,
+    sync_resources: nbn::SyncResources,
+    per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
+    swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
+    render_pipeline: nbn::Pipeline,
+    tlas: nbn::TlasWithInstances,
+    _model: CombinedModel,
+    freecam: nbn::freecam::FreeCam,
+}
+
+struct App {
+    state: Option<State>,
+}
+
+impl winit::application::ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let args = Args::parse();
+
+        let window = event_loop
+            .create_window(winit::window::WindowAttributes::default().with_resizable(true))
+            .unwrap();
+        let device = nbn::Device::new(Some(&window));
+
+        let swapchain = device.create_swapchain(
+            &window,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+            nbn::SurfaceSelectionCriteria {
+                force_8_bit: false,
+                desire_hdr: false,
+            },
+        );
+
+        let mut staging_buffer =
+            nbn::StagingBuffer::new(&device, 128 * 1024 * 1024, nbn::QueueType::Compute);
+
+        let (gltf_data, _model, _lights) = load_gltf(&device, &mut staging_buffer, &args.path);
+
+        let tlas = device.create_tlas_from_instances(
+            &mut staging_buffer,
+            "model",
+            &[nbn::AccelerationStructureInstance {
+                acceleration_structure: *gltf_data.acceleration_structure,
+                ..Default::default()
+            }
+            .to_vk()],
+        );
+
+        staging_buffer.finish(&device);
+
+        let shader = device.load_shader("shaders/compiled/lightmapper.spv");
+
+        let render_pipeline = device.create_compute_pipeline(&shader, c"render");
+
+        self.state = Some(State {
+            per_frame_command_buffers: [
+                device.create_command_buffer(nbn::QueueType::Graphics),
+                device.create_command_buffer(nbn::QueueType::Graphics),
+                device.create_command_buffer(nbn::QueueType::Graphics),
+            ],
+            sync_resources: device.create_sync_resources(),
+            swapchain_image_heap_indices: swapchain
+                .images
+                .iter()
+                .map(|image| device.register_image(*image.view, true))
+                .collect(),
+            device,
+            window,
+            swapchain,
+            render_pipeline,
+            tlas,
+            _model: gltf_data,
+            freecam: nbn::freecam::FreeCam::new(Default::default()),
+        })
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let Some(state) = self.state.as_mut() {
+            state.freecam.handle_device_event(event);
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: winit::event::WindowEvent,
+    ) {
+        let state = self.state.as_mut().unwrap();
+        let device = &state.device;
+
+        if state.freecam.handle_window_event(&state.window, &event) {
+            return;
+        }
+
+        match event {
+            winit::event::WindowEvent::Resized(new_size) => {
+                state.swapchain.create_info.image_extent = vk::Extent2D {
+                    width: new_size.width,
+                    height: new_size.height,
+                };
+                unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
+                device.recreate_swapchain(&mut state.swapchain);
+                state.swapchain_image_heap_indices.clear();
+                state.swapchain_image_heap_indices.extend(
+                    state
+                        .swapchain
+                        .images
+                        .iter()
+                        .map(|image| device.register_image(*image.view, true)),
+                );
+            }
+            winit::event::WindowEvent::RedrawRequested => unsafe {
+                let current_frame = state.sync_resources.current_frame;
+                let command_buffer = &state.per_frame_command_buffers[current_frame];
+
+                let mut frame = state.sync_resources.wait_for_frame(device);
+
+                let (next_image, _suboptimal) = device
+                    .swapchain_loader
+                    .acquire_next_image(
+                        *state.swapchain,
+                        !0,
+                        *frame.image_available_semaphore,
+                        vk::Fence::null(),
+                    )
+                    .unwrap();
+                let image = &state.swapchain.images[next_image as usize];
+
+                device.reset_command_buffer(command_buffer);
+                device
+                    .begin_command_buffer(**command_buffer, &vk::CommandBufferBeginInfo::default())
+                    .unwrap();
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ColorAttachmentWrite,
+                );
+                let extent = state.swapchain.create_info.image_extent;
+
+                device.bind_internal_descriptor_sets_to_all(command_buffer);
+
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.render_pipeline,
+                );
+
+                let (view, proj) = state
+                    .freecam
+                    .update(extent.width, extent.height, 1.0 / 60.0);
+
+                device.push_constants(
+                    command_buffer,
+                    ViewerConstants {
+                        extent: [extent.width, extent.height],
+                        image: *state.swapchain_image_heap_indices[next_image as usize],
+                        view_inv: view.inverse().to_cols_array(),
+                        proj_inv: proj.inverse().to_cols_array(),
+                        tlas: *state.tlas.tlas,
+                    },
+                );
+
+                device.cmd_dispatch(
+                    **command_buffer,
+                    extent.width.div_ceil(8),
+                    extent.height.div_ceil(8),
+                    1,
+                );
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::ComputeStorageWrite),
+                    nbn::BarrierOp::Present,
+                );
+                device.end_command_buffer(**command_buffer).unwrap();
+
+                frame.submit(
+                    device,
+                    &image,
+                    &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
+                );
+                device
+                    .swapchain_loader
+                    .queue_present(
+                        *device.graphics_queue,
+                        &vk::PresentInfoKHR::default()
+                            .wait_semaphores(&[*image.render_finished_semaphore])
+                            .swapchains(&[*state.swapchain])
+                            .image_indices(&[next_image]),
+                    )
+                    .unwrap();
+            },
+            winit::event::WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        physical_key: winit::keyboard::PhysicalKey::Code(code),
+                        state: element_state,
+                        ..
+                    },
+                ..
+            } => {
+                let pressed = element_state == ElementState::Pressed;
+
+                match code {
+                    KeyCode::Escape if pressed => {
+                        event_loop.exit();
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn exiting(&mut self, _: &winit::event_loop::ActiveEventLoop) {
+        let device = &self.state.as_ref().unwrap().device;
+
+        unsafe {
+            device.device_wait_idle().unwrap();
+        }
+
+        self.state = None;
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        if let Some(state) = self.state.as_mut() {
+            state.window.request_redraw();
+        }
+    }
 }
 
 fn load_gltf(
