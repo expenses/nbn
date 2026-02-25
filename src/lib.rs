@@ -16,6 +16,8 @@ use winit::window::Window;
 pub mod blue_noise;
 #[cfg(feature = "egui")]
 pub mod egui;
+#[cfg(feature = "freecam")]
+pub mod freecam;
 #[cfg(feature = "image_loading")]
 pub mod image_loading;
 

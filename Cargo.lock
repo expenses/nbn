@@ -2013,6 +2013,7 @@ dependencies = [
  "bitflags 2.10.0",
  "blue-noise-sampler",
  "ddsfile",
+ "dolly",
  "egui 0.31.1",
  "egui-winit 0.31.1",
  "env_logger",
