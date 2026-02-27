@@ -53,7 +53,7 @@ struct PushConstants {
     int* blue_noise_scrambling_tile;
     float4* output;
     float4* temp;
-    uint* valid;
+    uint64_t* location_bitmasks;
 
     uint2 extent;
 
@@ -71,6 +71,10 @@ struct PushConstants {
             data.ranking_tile = blue_noise_ranking_tile;
             return data;
         }
+    }
+
+    float2 rand2(uint2 thread, uint value_index, uint iter) {
+        return frac(blue_noise_data.sample2(thread, value_index) + R2(iter));
     }
 
     uint thread_to_index(uint2 thread) {
