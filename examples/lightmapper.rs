@@ -12,6 +12,8 @@ struct Args {
     width: u32,
     height: u32,
     #[structopt(short, long)]
+    envmap: std::path::PathBuf,
+    #[structopt(short, long)]
     viewer: bool,
     #[structopt(short, default_value_t = 1024)]
     num_samples: u32,
@@ -35,6 +37,20 @@ fn lightmap(args: &Args) {
 
     let mut staging_buffer =
         nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
+
+    let envmap = image::open(&args.envmap).unwrap().to_rgba32f();
+    let envmap = staging_buffer.create_sampled_image(
+        &device,
+        nbn::SampledImageDescriptor {
+            name: "envmap",
+            format: vk::Format::R32G32B32A32_SFLOAT,
+            extent: [envmap.width(), envmap.height()].into(),
+        },
+        nbn::cast_slice(&*envmap),
+        nbn::QueueType::Graphics,
+        &[0],
+    );
+    let envmap = device.register_owned_image(envmap, false);
 
     let (gltf_data, model, _lights) = load_gltf(&device, &mut staging_buffer, &args.path);
 
@@ -109,6 +125,7 @@ fn lightmap(args: &Args) {
         sample_index: 0,
         samples_per_iter,
         total_samples,
+        envmap: *envmap,
     };
 
     let shader = device.load_shader("shaders/compiled/lightmapper.spv");
@@ -256,6 +273,7 @@ struct State {
     tlas: nbn::TlasWithInstances,
     _model: CombinedModel,
     freecam: nbn::freecam::FreeCam,
+    envmap: nbn::IndexedImage,
 }
 
 struct App {
@@ -282,6 +300,20 @@ impl winit::application::ApplicationHandler for App {
 
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 128 * 1024 * 1024, nbn::QueueType::Compute);
+
+        let envmap = image::open(&args.envmap).unwrap().to_rgba32f();
+        let envmap = staging_buffer.create_sampled_image(
+            &device,
+            nbn::SampledImageDescriptor {
+                name: "envmap",
+                format: vk::Format::R32G32B32A32_SFLOAT,
+                extent: [envmap.width(), envmap.height()].into(),
+            },
+            nbn::cast_slice(&*envmap),
+            nbn::QueueType::Graphics,
+            &[0],
+        );
+        let envmap = device.register_owned_image(envmap, false);
 
         let (gltf_data, _model, _lights) = load_gltf(&device, &mut staging_buffer, &args.path);
 
@@ -320,6 +352,7 @@ impl winit::application::ApplicationHandler for App {
             tlas,
             _model: gltf_data,
             freecam: nbn::freecam::FreeCam::new(Default::default()),
+            envmap,
         })
     }
 
@@ -414,6 +447,7 @@ impl winit::application::ApplicationHandler for App {
                         view_inv: view.inverse().to_cols_array(),
                         proj_inv: proj.inverse().to_cols_array(),
                         tlas: *state.tlas.tlas,
+                        envmap: *state.envmap,
                     },
                 );
 

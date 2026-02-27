@@ -9,6 +9,13 @@ import shared.constants;
 import shared.barycentrics;
 import shared.noise;
 
+float2 envmap_uv(float3 direction) {
+    return float2(
+        atan2(direction.z, direction.x) / (2.0 * PI) + 0.5,
+        asin(-direction.y) / PI + 0.5
+    );
+}
+
 [shader("compute")]
 [NumThreads(8,8,1)]
 void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_constants) {
@@ -22,6 +29,8 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     if (location_bitmask == 0) {
         return;
     }
+
+    Sampler2D envmap = sampled_images[push_constants.envmap];
 
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
     var accum = float3(0);
@@ -52,8 +61,9 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         query.Proceed();
 
         let missed = query.CommittedStatus() != COMMITTED_TRIANGLE_HIT;
+        let value = envmap.SampleLevel(envmap_uv(desc.Direction), 0).rgb;
 
-        accum += float(missed);
+        accum += float(missed) * value;
     }
 
     push_constants.temp[loc].rgb += accum / float(push_constants.total_samples);
@@ -263,6 +273,9 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         let barycentrics = query.CommittedTriangleBarycentrics();
         value = float3(1.0 - barycentrics.x - barycentrics.y, barycentrics);
+    } else {
+        Sampler2D image = sampled_images[constants.envmap];
+        value = image.SampleLevel(envmap_uv(direction), 0).rgb;
     }
 
     WTexture2D<float4> output = storage_images[constants.image];

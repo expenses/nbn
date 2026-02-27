@@ -62,6 +62,7 @@ struct PushConstants {
     uint sample_index;
     uint samples_per_iter;
     uint total_samples;
+    uint envmap;
 
     property BlueNoiseData blue_noise_data {
         get {
@@ -89,8 +90,9 @@ struct PushConstants {
 struct ViewerConstants {
 float4x4 view_inv;
     float4x4 proj_inv;
-        uint64_t tlas;
+    uint64_t tlas;
 
     uint2 extent;
     uint image;
+    uint envmap;
 }
