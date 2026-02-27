@@ -9,10 +9,10 @@ use clap::Parser;
 #[derive(Parser)]
 struct Args {
     path: std::path::PathBuf,
+    width: u32,
+    height: u32,
     #[structopt(short, long)]
     viewer: bool,
-    #[structopt(short, default_value_t = 2048)]
-    dimensions: u32,
     #[structopt(short, default_value_t = 1024)]
     num_samples: u32,
 }
@@ -38,8 +38,8 @@ fn lightmap(args: &Args) {
 
     let (gltf_data, model, _lights) = load_gltf(&device, &mut staging_buffer, &args.path);
 
-    let width = args.dimensions;
-    let height = args.dimensions;
+    let width = args.width;
+    let height = args.height;
     let samples_per_iter = 64;
     let total_samples = args.num_samples;
 
@@ -48,7 +48,7 @@ fn lightmap(args: &Args) {
     let mut output_buffer = device
         .create_buffer(nbn::BufferDescriptor {
             name: "output",
-            size: args.dimensions as u64 * args.dimensions as u64 * 4 * 4,
+            size: width as u64 * height as u64 * 4 * 4,
             ty: nbn::MemoryLocation::GpuToCpu,
         })
         .unwrap();
@@ -61,10 +61,10 @@ fn lightmap(args: &Args) {
         })
         .unwrap();
 
-    let valid_buffer = device
+    let location_bitmasks_buffer = device
         .create_buffer(nbn::BufferDescriptor {
-            name: "valid buffer",
-            size: width as u64 * height as u64 * 4,
+            name: "location_bitmasks_buffer",
+            size: width as u64 * height as u64 * 8,
             ty: nbn::MemoryLocation::GpuOnly,
         })
         .unwrap();
@@ -92,26 +92,6 @@ fn lightmap(args: &Args) {
 
     let blue_noise_buffers = nbn::blue_noise::BlueNoiseBuffers::new(&device, &mut staging_buffer);
 
-    // unsafe {
-    //     device.cmd_fill_buffer(
-    //         *staging_buffer.command_buffer,
-    //         *valid_buffer.buffer,
-    //         0,
-    //         vk::WHOLE_SIZE,
-    //         0,
-    //     );
-    // }
-
-    staging_buffer.finish(&device);
-
-    let shader = device.load_shader("shaders/compiled/lightmapper.spv");
-
-    let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
-
-    let dilation_pipeline = device.create_compute_pipeline(&shader, c"dilation");
-    let downsampling_pipeline = device.create_compute_pipeline(&shader, c"downsampling");
-    let command_buffer = device.create_command_buffer(nbn::QueueType::Graphics);
-
     let push_constants = PushConstants {
         blue_noise_ranking_tile: *blue_noise_buffers.ranking_tile,
         blue_noise_sobol: *blue_noise_buffers.sobol,
@@ -124,12 +104,35 @@ fn lightmap(args: &Args) {
         num_lights: 0,
         tlas: *tlas.tlas,
         uv_tlas: *uv_tlas.tlas,
-        valid: *valid_buffer,
+        location_bitmasks: *location_bitmasks_buffer,
         // Set later.
         sample_index: 0,
         samples_per_iter,
         total_samples,
     };
+
+    let shader = device.load_shader("shaders/compiled/lightmapper.spv");
+
+    let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
+    let dilation_pipeline = device.create_compute_pipeline(&shader, c"dilation");
+    let check_locations_pipeline = device.create_compute_pipeline(&shader, c"check_locations");
+
+    unsafe {
+        device.cmd_bind_pipeline(
+            *staging_buffer.command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *check_locations_pipeline,
+        );
+        device.push_constants::<PushConstants>(&staging_buffer.command_buffer, push_constants);
+        device.cmd_dispatch(
+            *staging_buffer.command_buffer,
+            width.div_ceil(8),
+            height.div_ceil(8),
+            1,
+        );
+    }
+
+    staging_buffer.finish(&device);
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
@@ -173,14 +176,9 @@ fn lightmap(args: &Args) {
         device.cmd_bind_pipeline(
             *command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            *downsampling_pipeline,
+            *dilation_pipeline,
         );
-        device.cmd_dispatch(
-            *command_buffer,
-            args.dimensions.div_ceil(8),
-            args.dimensions.div_ceil(8),
-            1,
-        );
+        device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
         device.end_command_buffer(*command_buffer).unwrap();
     }
 
@@ -188,14 +186,10 @@ fn lightmap(args: &Args) {
 
     let output_slice = output_buffer.try_as_slice_mut::<f32>().unwrap();
 
-    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(
-        args.dimensions,
-        args.dimensions,
-        output_slice,
-    )
-    .unwrap()
-    .save("out.exr")
-    .unwrap();
+    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
+        .unwrap()
+        .save("out.exr")
+        .unwrap();
 
     /*
     let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
