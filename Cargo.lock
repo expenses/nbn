@@ -47,6 +47,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "alias-table"
+version = "0.1.0"
+
+[[package]]
 name = "aligned"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
