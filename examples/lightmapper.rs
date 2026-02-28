@@ -52,7 +52,7 @@ fn lightmap(args: &Args) {
     );
     let envmap = device.register_owned_image(envmap, false);
 
-    let (gltf_data, model, _lights) = load_gltf(&device, &mut staging_buffer, &args.path);
+    let (gltf_data, model, lights) = load_gltf(&device, &mut staging_buffer, &args.path);
 
     let width = args.width;
     let height = args.height;
@@ -86,6 +86,8 @@ fn lightmap(args: &Args) {
         .unwrap();
 
     let model_buffer = staging_buffer.create_buffer_from_slice(&device, "models", &[model]);
+    let num_lights = dbg!(lights.len() as _);
+    let lights = staging_buffer.create_buffer_from_slice(&device, "lights", &lights);
 
     let tlas = device.create_tlas_from_instances(
         &mut staging_buffer,
@@ -113,11 +115,11 @@ fn lightmap(args: &Args) {
         blue_noise_sobol: *blue_noise_buffers.sobol,
         blue_noise_scrambling_tile: *blue_noise_buffers.scrambling_tile,
         extent: [width, height],
-        lights: 0,
+        lights: *lights,
         model: *model_buffer,
         output: *output_buffer,
         temp: *temp_buffer,
-        num_lights: 0,
+        num_lights,
         tlas: *tlas.tlas,
         uv_tlas: *uv_tlas.tlas,
         location_bitmasks: *location_bitmasks_buffer,

@@ -48,22 +48,70 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
             return;
         }
 
-        let rand2 = push_constants.rand2(thread, 0, push_constants.sample_index + i);
-        let desc = trace_from(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), rand2, push_constants);
+        let info = generate_hit(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants);
 
-        var query = RayQuery<RAY_FLAG_NONE>();
-        query.TraceRayInline(
-            tlas,
-            RAY_FLAG_NONE,
-            0xff,
-            desc
-        );
-        query.Proceed();
+        var rand2 = push_constants.rand2(thread, 0, push_constants.sample_index + i);
 
-        let missed = query.CommittedStatus() != COMMITTED_TRIANGLE_HIT;
-        let value = envmap.SampleLevel(envmap_uv(desc.Direction), 0).rgb;
+        let skybox_or_lights = partition_rand(rand2.x, 2);
+        rand2.x = skybox_or_lights.rand;
 
-        accum += float(missed) * value;
+        var inv_probability = skybox_or_lights.inv_probability;
+
+        var value = float3(0);
+
+        if (skybox_or_lights.index == 0) {
+            let hemisphere_dir = sample_cosine_weighted_hemisphere(rand2);
+            let rotated_dir = mul(build_tbn(info.normal), hemisphere_dir);
+
+            RayDesc desc;
+            desc.Direction = rotated_dir;
+            desc.Origin = info.position;
+            desc.TMax = 200.0;
+            desc.TMin = 0;
+
+            var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+            query.TraceRayInline(
+                tlas,
+                RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+                0xff,
+                desc
+            );
+            query.Proceed();
+
+            if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+                value = envmap.SampleLevel(envmap_uv(desc.Direction), 0).rgb;
+            }
+        } else {
+            let light_index = partition_rand(rand2.x, push_constants.num_lights);
+            rand2.x = light_index.rand;
+            inv_probability *= light_index.inv_probability;
+            let light = push_constants.get_light(light_index.index);
+            let vector = light.position - info.position;
+            let distance_sq = dot(vector,vector);
+            let distance = sqrt(distance_sq);
+            let direction = vector / distance;
+
+            RayDesc desc;
+            desc.Direction = direction;
+            desc.Origin = info.position;
+            desc.TMax = distance;
+            desc.TMin = 0;
+
+            var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+            query.TraceRayInline(
+                tlas,
+                RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+                0xff,
+                desc
+            );
+            query.Proceed();
+
+            if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+                value += light.emission * abs(dot(info.normal, direction)) / distance_sq;
+            }
+        }
+
+        accum += value * inv_probability;
     }
 
     push_constants.temp[loc].rgb += accum / float(push_constants.total_samples);
@@ -160,6 +208,48 @@ void check_locations(uint2 thread : SV_DispatchThreadID, uniform PushConstants p
     }
 
     push_constants.location_bitmasks[loc] = bitmask;
+}
+
+struct PartitionedRand {
+    uint index;
+    float rand;
+    float inv_probability;
+};
+
+PartitionedRand partition_rand(float rand, uint num_values) {
+    let scaled = rand * num_values;
+    PartitionedRand part;
+    part.index = uint(scaled);
+    part.rand = frac(rand);
+    part.inv_probability = float(num_values);
+    return part;
+}
+
+struct HitInfo {
+    float3 position;
+    float3 normal;
+};
+
+HitInfo generate_hit(float2 barycentrics, uint triangle_index, PushConstants push_constants) {
+    let indices = push_constants.model.read_indices(triangle_index);
+    let a = push_constants.model.positions[indices.x];
+    let b = push_constants.model.positions[indices.y];
+    let c = push_constants.model.positions[indices.z];
+
+    let geom_normal = normalize(cross(b - a, c - a));
+
+    HitInfo info;
+    info.position = offset_ray(shadow_terminator_hack(
+        a, b, c,
+        push_constants.model.normals[indices.x],
+        push_constants.model.normals[indices.y],
+        push_constants.model.normals[indices.z],
+        float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
+    ), geom_normal);
+
+    info.normal = normalize(interpolate_from_buffer(push_constants.model.normals, indices, barycentrics));
+
+    return info;
 }
 
 RayDesc trace_from(float2 barycentrics, uint triangle_index, float2 rand2, PushConstants push_constants) {
