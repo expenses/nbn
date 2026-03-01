@@ -1,31 +1,37 @@
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Alias {
-    pub prob: f32,
-    pub pdf: f32,
-    pub index: u32,
+    pub threshold: f32,
+    pub inv_pdf: f32,
+    pub fallback: u32,
 }
 
 // Based on https://idarago.github.io/the-alias-method/
-pub fn construct(values: &[f32]) -> Vec<Alias> {
-    if values.is_empty() {
-        return Vec::new();
-    }
+pub fn construct<I: IntoIterator<Item = (f32, f32)>>(values: I) -> Vec<Alias> {
+    let mut sum = 0.0;
 
-    let sum = values.iter().sum::<f32>();
-    let mean = sum / values.len() as f32;
+    let mut aliases: Vec<_> =  values.into_iter().map(|(weight, sample_weight)| {
+        sum += weight;
 
-    let mut small_values = Vec::with_capacity(values.len() / 2);
-    let mut large_values = Vec::with_capacity(values.len() / 2);
-    let mut aliases = Vec::with_capacity(values.len());
+         Alias {
+            threshold: weight,
+            // Some values should give lower values even after adjusting for the weight.
+            // e.g. values at high latitudes in environment maps need to be smaller as the pixels are thinner.
+            inv_pdf: sample_weight,
+            fallback: 0,
+        }
+    }).collect();
 
-    for (i, &value) in values.iter().enumerate() {
-        let alias = Alias {
-            prob: value / mean,
-            pdf: value / sum,
-            index: 0
-        };
-        aliases.push(alias);
-        if alias.prob <= 1.0 {
+    let mean = sum / aliases.len() as f32;
+
+    let mut small_values = Vec::with_capacity(aliases.len() / 2);
+    let mut large_values = Vec::with_capacity(aliases.len() / 2);
+
+    for (i, alias) in aliases.iter_mut().enumerate() {
+        let weight = alias.threshold;
+        alias.threshold /= mean;
+        alias.inv_pdf *= mean / weight;
+        if alias.threshold <= 1.0 {
             small_values.push(i);
         } else {
             large_values.push(i);
@@ -33,10 +39,10 @@ pub fn construct(values: &[f32]) -> Vec<Alias> {
     }
 
     while let (Some(large), Some(small)) = (large_values.pop(), small_values.pop()) {
-        aliases[small].index = large as _;
-        aliases[large].prob = aliases[large].prob + aliases[small].prob - 1.0;
+        aliases[small].fallback = large as _;
+        aliases[large].threshold = aliases[large].threshold + aliases[small].threshold - 1.0;
 
-        if aliases[large].prob < 1.0 {
+        if aliases[large].threshold < 1.0 {
             small_values.push(large);
         } else {
             large_values.push(large);
@@ -44,10 +50,10 @@ pub fn construct(values: &[f32]) -> Vec<Alias> {
     }
 
     for i in large_values {
-        aliases[i].prob = 1.0;
+        aliases[i].threshold = 1.0;
     }
     for i in small_values {
-        aliases[i].prob = 1.0;
+        aliases[i].threshold = 1.0;
     }
 
     aliases
@@ -57,39 +63,39 @@ pub fn construct(values: &[f32]) -> Vec<Alias> {
 fn test_basic() {
     // Test with values from https://bfraboni.github.io/data/alias2022/alias-table.pdf
     assert_eq!(
-        construct(&[7.0, 3.0, 4.0, 1.0, 6.0, 3.0]),
+        construct([7.0_f32, 3.0, 4.0, 1.0, 6.0, 3.0].iter().copied().map(|x| (x,1.0))),
         [
             Alias {
-                prob: 1.0,
-                index: 0,
-                pdf: 0.29166666
+                threshold: 1.0,
+                inv_pdf: 0.5714286,
+                fallback: 0
             },
             Alias {
-                prob: 0.75,
-                index: 0,
-                pdf: 0.125
+                threshold: 0.75,
+                inv_pdf: 1.3333334,
+                fallback: 0
             },
             Alias {
-                prob: 1.0,
-                index: 0,
-                pdf: 0.16666667
+                threshold: 1.0,
+                inv_pdf: 1.0,
+                fallback: 0
             },
             Alias {
-                prob: 0.25,
-                index: 4,
-                pdf: 0.041666668
+                threshold: 0.25,
+                inv_pdf: 4.0,
+                fallback: 4
             },
             Alias {
-                prob: 0.5,
-                index: 0,
-                pdf: 0.25
+                threshold: 0.5,
+                inv_pdf: 0.6666667,
+                fallback: 0
             },
             Alias {
-                prob: 0.75,
-                index: 4,
-                pdf: 0.125
+                threshold: 0.75,
+                inv_pdf: 1.3333334,
+                fallback: 4
             }
         ]
     );
-    assert_eq!(construct(&[]), []);
+    assert_eq!(construct(std::iter::empty()), []);
 }
