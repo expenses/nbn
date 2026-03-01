@@ -10,17 +10,20 @@ pub struct Alias {
 pub fn construct<I: IntoIterator<Item = (f32, f32)>>(values: I) -> Vec<Alias> {
     let mut sum = 0.0;
 
-    let mut aliases: Vec<_> =  values.into_iter().map(|(weight, sample_weight)| {
-        sum += weight;
+    let mut aliases: Vec<_> = values
+        .into_iter()
+        .map(|(weight, sample_weight)| {
+            sum += weight;
 
-         Alias {
-            threshold: weight,
-            // Some values should give lower values even after adjusting for the weight.
-            // e.g. values at high latitudes in environment maps need to be smaller as the pixels are thinner.
-            inv_pdf: sample_weight,
-            fallback: 0,
-        }
-    }).collect();
+            Alias {
+                threshold: weight,
+                // Some values should give lower values even after adjusting for the weight.
+                // e.g. values at high latitudes in environment maps need to be smaller as the pixels are thinner.
+                inv_pdf: sample_weight,
+                fallback: 0,
+            }
+        })
+        .collect();
 
     let mean = sum / aliases.len() as f32;
 
@@ -30,7 +33,7 @@ pub fn construct<I: IntoIterator<Item = (f32, f32)>>(values: I) -> Vec<Alias> {
     for (i, alias) in aliases.iter_mut().enumerate() {
         let weight = alias.threshold;
         alias.threshold /= mean;
-        alias.inv_pdf *= mean / weight;
+        alias.inv_pdf *= if weight == 0.0 { 0.0 } else { mean / weight };
         if alias.threshold <= 1.0 {
             small_values.push(i);
         } else {
@@ -63,7 +66,12 @@ pub fn construct<I: IntoIterator<Item = (f32, f32)>>(values: I) -> Vec<Alias> {
 fn test_basic() {
     // Test with values from https://bfraboni.github.io/data/alias2022/alias-table.pdf
     assert_eq!(
-        construct([7.0_f32, 3.0, 4.0, 1.0, 6.0, 3.0].iter().copied().map(|x| (x,1.0))),
+        construct(
+            [7.0_f32, 3.0, 4.0, 1.0, 6.0, 3.0]
+                .iter()
+                .copied()
+                .map(|x| (x, 1.0))
+        ),
         [
             Alias {
                 threshold: 1.0,
