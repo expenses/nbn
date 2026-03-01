@@ -11,8 +11,18 @@ import shared.noise;
 
 float2 envmap_uv(float3 direction) {
     return float2(
-        atan2(direction.z, direction.x) / (2.0 * PI) + 0.5,
-        asin(-direction.y) / PI + 0.5
+        atan2(direction.z, direction.x) / (2.0 * PI),
+        acos(direction.y) / PI
+    );
+}
+
+float3 uv_to_direction(float2 uv) {
+    let phi   = uv.x * 2.0 * PI;
+    let theta = uv.y * PI;
+    return float3(
+        sin(theta) * cos(phi),
+        cos(theta),
+        sin(theta) * sin(phi),
     );
 }
 
@@ -36,10 +46,10 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     var accum = float3(0);
 
     for (uint i = 0; i < push_constants.samples_per_iter; i++) {
-        let rand = push_constants.rand2(thread, 1, push_constants.sample_index + i).x;
+        let location_rand = push_constants.rand2(thread, 0, push_constants.sample_index + i).x;
 
         var tri_query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        hit_uv_tlas(thread, random_bit(location_bitmask, rand), push_constants, tri_query);
+        hit_uv_tlas(thread, random_bit(location_bitmask, location_rand), push_constants, tri_query);
         tri_query.Proceed();
 
         if (tri_query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
@@ -50,18 +60,27 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
         let info = generate_hit(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants);
 
-        var rand2 = push_constants.rand2(thread, 0, push_constants.sample_index + i);
+        var selection_rand2 = push_constants.rand2(thread, 1, push_constants.sample_index + i);
 
-        let skybox_or_lights = partition_rand(rand2.x, 2);
-        rand2.x = skybox_or_lights.rand;
+        let skybox_or_lights = partition_rand(selection_rand2.x, 2);
+        selection_rand2.x = skybox_or_lights.rand;
 
         var inv_probability = skybox_or_lights.inv_probability;
 
         var value = float3(0);
 
         if (skybox_or_lights.index == 0) {
-            let hemisphere_dir = sample_cosine_weighted_hemisphere(rand2);
-            let rotated_dir = mul(build_tbn(info.normal), hemisphere_dir);
+            var index = uint(selection_rand2.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
+            var alias = push_constants.get_alias(index);
+            if (selection_rand2.y > alias.threshold) {
+                index = alias.fallback;
+                alias = push_constants.get_alias(alias.fallback);
+            }
+            let uv = (float2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x) + 0.5) / float2(push_constants.envmap_size);
+
+            inv_probability *= alias.inv_pdf;
+
+            let rotated_dir = uv_to_direction(uv);
 
             RayDesc desc;
             desc.Direction = rotated_dir;
@@ -79,11 +98,11 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
             query.Proceed();
 
             if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-                value = envmap.SampleLevel(envmap_uv(desc.Direction), 0).rgb;
+                value = envmap.SampleLevel(uv, 0).rgb * max(dot(info.normal, rotated_dir), 0.0);
             }
         } else {
-            let light_index = partition_rand(rand2.x, push_constants.num_lights);
-            rand2.x = light_index.rand;
+            let light_index = partition_rand(selection_rand2.x, push_constants.num_lights);
+            selection_rand2.x = light_index.rand;
             inv_probability *= light_index.inv_probability;
             let light = push_constants.get_light(light_index.index);
             let vector = light.position - info.position;
@@ -107,7 +126,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
             query.Proceed();
 
             if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-                value += light.emission * abs(dot(info.normal, direction)) / distance_sq;
+                value += light.emission * max(dot(info.normal, direction), 0.0) / distance_sq;
             }
         }
 

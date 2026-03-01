@@ -39,6 +39,22 @@ fn lightmap(args: &Args) {
         nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
 
     let envmap = image::open(&args.envmap).unwrap().to_rgba32f();
+
+    let envmap_size = dbg!([envmap.width(), envmap.height()]);
+
+    let alias_table =
+        alias_table::construct(envmap.rows().enumerate().flat_map(|(row, pixels)| {
+            let height = envmap.height() as usize;
+            let theta = std::f32::consts::PI * (row as f32 + 0.5) / height as f32;
+            let sin_theta = theta.sin();
+            pixels.map(move |p| {
+                use image::Pixel;
+                (p.to_luma()[0] * sin_theta, sin_theta)
+            })
+        }));
+
+    let alias_table = staging_buffer.create_buffer_from_slice(&device, "alias_table", &alias_table);
+
     let envmap = staging_buffer.create_sampled_image(
         &device,
         nbn::SampledImageDescriptor {
@@ -128,6 +144,8 @@ fn lightmap(args: &Args) {
         samples_per_iter,
         total_samples,
         envmap: *envmap,
+        envmap_size,
+        alias_table: *alias_table,
     };
 
     let shader = device.load_shader("shaders/compiled/lightmapper.spv");
@@ -276,6 +294,8 @@ struct State {
     _model: CombinedModel,
     freecam: nbn::freecam::FreeCam,
     envmap: nbn::IndexedImage,
+    alias_table: nbn::Buffer,
+    envmap_size: [u32; 2],
 }
 
 struct App {
@@ -304,6 +324,23 @@ impl winit::application::ApplicationHandler for App {
             nbn::StagingBuffer::new(&device, 128 * 1024 * 1024, nbn::QueueType::Compute);
 
         let envmap = image::open(&args.envmap).unwrap().to_rgba32f();
+
+        let envmap_size = dbg!([envmap.width(), envmap.height()]);
+
+        let alias_table =
+            alias_table::construct(envmap.rows().enumerate().flat_map(|(row, pixels)| {
+                let height = envmap.height() as usize;
+                let theta = std::f32::consts::PI * (row as f32 + 0.5) / height as f32;
+                let sin_theta = theta.sin();
+                pixels.map(move |p| {
+                    use image::Pixel;
+                    (p.to_luma()[0] * sin_theta, sin_theta)
+                })
+            }));
+
+        let alias_table =
+            staging_buffer.create_buffer_from_slice(&device, "alias_table", &alias_table);
+
         let envmap = staging_buffer.create_sampled_image(
             &device,
             nbn::SampledImageDescriptor {
@@ -355,6 +392,8 @@ impl winit::application::ApplicationHandler for App {
             _model: gltf_data,
             freecam: nbn::freecam::FreeCam::new(Default::default()),
             envmap,
+            alias_table,
+            envmap_size,
         })
     }
 
@@ -450,6 +489,8 @@ impl winit::application::ApplicationHandler for App {
                         proj_inv: proj.inverse().to_cols_array(),
                         tlas: *state.tlas.tlas,
                         envmap: *state.envmap,
+                        alias_table: *state.alias_table,
+                        envmap_size: state.envmap_size,
                     },
                 );
 

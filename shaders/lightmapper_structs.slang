@@ -43,6 +43,12 @@ struct Light {
     float3 spotlight_direction;
 };
 
+struct Alias {
+    float threshold;
+    float inv_pdf;
+    uint fallback;
+};
+
 struct PushConstants {
     uint64_t tlas;
     uint64_t uv_tlas;
@@ -54,8 +60,10 @@ struct PushConstants {
     float4* output;
     float4* temp;
     uint64_t* location_bitmasks;
+    Alias* alias_table;
 
     uint2 extent;
+    uint2 envmap_size;
 
     uint num_lights;
 
@@ -85,13 +93,18 @@ struct PushConstants {
     Light get_light(uint index) {
         return reinterpret<Light>(lights[index]);
     }
+
+     Alias get_alias(uint index) {
+       return alias_table[index];
+   }
 };
 
 struct ViewerConstants {
 float4x4 view_inv;
     float4x4 proj_inv;
     uint64_t tlas;
-
+    float[3]* alias_table;
+    uint2 envmap_size;
     uint2 extent;
     uint image;
     uint envmap;
