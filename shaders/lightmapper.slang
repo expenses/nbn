@@ -220,7 +220,7 @@ PartitionedRand partition_rand(float rand, uint num_values) {
     let scaled = rand * num_values;
     PartitionedRand part;
     part.index = uint(scaled);
-    part.rand = frac(rand);
+    part.rand = frac(scaled);
     part.inv_probability = float(num_values);
     return part;
 }
