@@ -1243,7 +1243,7 @@ impl Device {
 
     pub fn load_shader<P: AsRef<Path>>(&self, path: P) -> ShaderModule {
         let path = path.as_ref();
-        let bytes = std::fs::read(path).unwrap();
+        let bytes = std::fs::read(path).unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
         let spirv_slice =
             unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u32, bytes.len() / 4) };
 
