@@ -4,35 +4,59 @@ use winit::{event::ElementState, keyboard::KeyCode};
 
 slang_struct::slang_include!("shaders/lightmapper_structs.slang");
 
-use clap::Parser;
+use clap::{Args, Parser};
 
-#[derive(Parser)]
-struct Args {
+#[derive(Args)]
+struct CommonArgs {
     path: std::path::PathBuf,
+    #[arg(short, long)]
+    envmap: std::path::PathBuf,
+}
+
+#[derive(Args)]
+struct LightmapperArgs {
     width: u32,
     height: u32,
-    #[structopt(short, long)]
-    envmap: std::path::PathBuf,
-    #[structopt(short, long)]
-    viewer: bool,
-    #[structopt(short, default_value_t = 1024)]
+    #[arg(short, default_value_t = 1024)]
     num_samples: u32,
+}
+
+#[derive(clap::Subcommand)]
+enum Mode {
+    Lightmapper(#[command(flatten)] LightmapperArgs),
+    Viewer,
+}
+
+#[derive(Parser)]
+struct Arguments {
+    #[command(subcommand)]
+    mode: Mode,
+    #[command(flatten)]
+    common: CommonArgs,
 }
 
 fn main() {
     env_logger::init();
 
-    let args = Args::parse();
+    let args = Arguments::parse();
 
-    if args.viewer {
-        let event_loop = winit::event_loop::EventLoop::new().unwrap();
-        event_loop.run_app(&mut App { state: None }).unwrap();
-    } else {
-        lightmap(&args);
+    match args.mode {
+        Mode::Viewer => {
+            let event_loop = winit::event_loop::EventLoop::new().unwrap();
+            event_loop
+                .run_app(&mut App {
+                    state: None,
+                    args: args.common,
+                })
+                .unwrap();
+        }
+        Mode::Lightmapper(lightmapper_args) => {
+            lightmap(&args.common, &lightmapper_args);
+        }
     }
 }
 
-fn lightmap(args: &Args) {
+fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
     let device = Arc::new(nbn::Device::new(None));
 
     let mut staging_buffer =
@@ -70,10 +94,10 @@ fn lightmap(args: &Args) {
 
     let (gltf_data, model, lights) = load_gltf(&device, &mut staging_buffer, &args.path);
 
-    let width = args.width;
-    let height = args.height;
+    let width = lightmapper_args.width;
+    let height = lightmapper_args.height;
     let samples_per_iter = 64;
-    let total_samples = args.num_samples;
+    let total_samples = lightmapper_args.num_samples;
 
     dbg!(total_samples);
 
@@ -148,7 +172,7 @@ fn lightmap(args: &Args) {
         alias_table: *alias_table,
     };
 
-    let shader = device.load_shader("shaders/compiled/lightmapper.spv");
+    let shader = device.load_shader("../shaders/compiled/lightmapper.spv");
 
     let compute_pipeline = device.create_compute_pipeline(&shader, c"lightmap");
     let dilation_pipeline = device.create_compute_pipeline(&shader, c"dilation");
@@ -300,12 +324,11 @@ struct State {
 
 struct App {
     state: Option<State>,
+    args: CommonArgs,
 }
 
 impl winit::application::ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let args = Args::parse();
-
         let window = event_loop
             .create_window(winit::window::WindowAttributes::default().with_resizable(true))
             .unwrap();
@@ -323,7 +346,7 @@ impl winit::application::ApplicationHandler for App {
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 128 * 1024 * 1024, nbn::QueueType::Compute);
 
-        let envmap = image::open(&args.envmap).unwrap().to_rgba32f();
+        let envmap = image::open(&self.args.envmap).unwrap().to_rgba32f();
 
         let envmap_size = dbg!([envmap.width(), envmap.height()]);
 
@@ -354,7 +377,7 @@ impl winit::application::ApplicationHandler for App {
         );
         let envmap = device.register_owned_image(envmap, false);
 
-        let (gltf_data, _model, _lights) = load_gltf(&device, &mut staging_buffer, &args.path);
+        let (gltf_data, _model, _lights) = load_gltf(&device, &mut staging_buffer, &self.args.path);
 
         let tlas = device.create_tlas_from_instances(
             &mut staging_buffer,
@@ -368,7 +391,7 @@ impl winit::application::ApplicationHandler for App {
 
         staging_buffer.finish(&device);
 
-        let shader = device.load_shader("shaders/compiled/lightmapper.spv");
+        let shader = device.load_shader("../shaders/compiled/lightmapper.spv");
 
         let render_pipeline = device.create_compute_pipeline(&shader, c"render");
 
