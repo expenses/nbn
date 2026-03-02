@@ -2250,12 +2250,12 @@ dependencies = [
  "glam 0.31.1",
  "goth-gltf",
  "gpu-allocator",
+ "image 0.25.9",
  "ktx2",
  "log",
  "notify",
  "parking_lot",
  "presser",
- "slang_struct",
  "winit",
  "zstd",
 ]
