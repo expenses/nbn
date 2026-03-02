@@ -353,6 +353,7 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
         return;
     }
 
+    let model = constants.model;
     let as = RaytracingAccelerationStructure(constants.tlas);
 
     let d = thread_to_clip(thread, constants.extent);
@@ -381,7 +382,16 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         let barycentrics = query.CommittedTriangleBarycentrics();
-        value = float3(1.0 - barycentrics.x - barycentrics.y, barycentrics);
+        let indices = model.read_indices(query.CommittedPrimitiveIndex());
+        let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
+
+        let image_index = model.image_indices[query.CommittedPrimitiveIndex()];
+        if (image_index == MAX_UINT_VALUE) {
+            value = float3(0);
+        } else {
+            Sampler2D img = sampled_images[NonUniformResourceIndex(image_index)];
+            value = img.SampleLevel(uv, 0).rgb;
+        }
     } else {
         Sampler2D image = sampled_images[constants.envmap];
         value = image.SampleLevel(envmap_uv(direction), 0).rgb;

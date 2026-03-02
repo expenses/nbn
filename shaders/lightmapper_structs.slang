@@ -102,9 +102,8 @@ struct PushConstants {
 struct ViewerConstants {
 float4x4 view_inv;
     float4x4 proj_inv;
+    Model* model;
     uint64_t tlas;
-    float[3]* alias_table;
-    uint2 envmap_size;
     uint2 extent;
     uint image;
     uint envmap;

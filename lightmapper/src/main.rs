@@ -99,8 +99,6 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
     let samples_per_iter = 64;
     let total_samples = lightmapper_args.num_samples;
 
-    dbg!(total_samples);
-
     let mut output_buffer = device
         .create_buffer(nbn::BufferDescriptor {
             name: "output",
@@ -318,8 +316,7 @@ struct State {
     _model: CombinedModel,
     freecam: nbn::freecam::FreeCam,
     envmap: nbn::IndexedImage,
-    alias_table: nbn::Buffer,
-    envmap_size: [u32; 2],
+    model: nbn::Buffer,
 }
 
 struct App {
@@ -348,22 +345,6 @@ impl winit::application::ApplicationHandler for App {
 
         let envmap = image::open(&self.args.envmap).unwrap().to_rgba32f();
 
-        let envmap_size = dbg!([envmap.width(), envmap.height()]);
-
-        let alias_table =
-            alias_table::construct(envmap.rows().enumerate().flat_map(|(row, pixels)| {
-                let height = envmap.height() as usize;
-                let theta = std::f32::consts::PI * (row as f32 + 0.5) / height as f32;
-                let sin_theta = theta.sin();
-                pixels.map(move |p| {
-                    use image::Pixel;
-                    (p.to_luma()[0] * sin_theta, sin_theta)
-                })
-            }));
-
-        let alias_table =
-            staging_buffer.create_buffer_from_slice(&device, "alias_table", &alias_table);
-
         let envmap = staging_buffer.create_sampled_image(
             &device,
             nbn::SampledImageDescriptor {
@@ -377,7 +358,9 @@ impl winit::application::ApplicationHandler for App {
         );
         let envmap = device.register_owned_image(envmap, false);
 
-        let (gltf_data, _model, _lights) = load_gltf(&device, &mut staging_buffer, &self.args.path);
+        let (gltf_data, model, _lights) = load_gltf(&device, &mut staging_buffer, &self.args.path);
+
+        let model_buffer = staging_buffer.create_buffer_from_slice(&device, "models", &[model]);
 
         let tlas = device.create_tlas_from_instances(
             &mut staging_buffer,
@@ -415,8 +398,7 @@ impl winit::application::ApplicationHandler for App {
             _model: gltf_data,
             freecam: nbn::freecam::FreeCam::new(Default::default()),
             envmap,
-            alias_table,
-            envmap_size,
+            model: model_buffer,
         })
     }
 
@@ -512,8 +494,7 @@ impl winit::application::ApplicationHandler for App {
                         proj_inv: proj.inverse().to_cols_array(),
                         tlas: *state.tlas.tlas,
                         envmap: *state.envmap,
-                        alias_table: *state.alias_table,
-                        envmap_size: state.envmap_size,
+                        model: *state.model,
                     },
                 );
 
@@ -646,56 +627,61 @@ fn load_gltf(
         })
         .collect();
 
-    let images: Vec<nbn::IndexedImage> = vec![];
-    //let images = gltf
-    //     .images
-    //     .iter()
-    //     //.zip(&images)
-    //     .map(|image| {
-    //         let path = path.with_file_name(image.uri.as_ref().unwrap());
-    //         let data = image::open(&path).unwrap().to_rgba8();
-    //         let image = staging_buffer.create_sampled_image(
-    //             &device,
-    //             nbn::SampledImageDescriptor {
-    //                 name: image.uri.as_ref().unwrap(),
-    //                 extent: vk::Extent3D {
-    //                     width: data.width(),
-    //                     height: data.height(),
-    //                     depth: 1,
-    //                 }
-    //                 .into(),
-    //                 format: vk::Format::R8G8B8A8_SRGB,
-    //             },
-    //             &data,
-    //             nbn::QueueType::Compute,
-    //             &[0],
-    //         );
-    //         nbn::IndexedImage {
-    //             index: device.register_image(*image.view, false),
-    //             image,
-    //         }
-    //     })
-    //     .collect::<Vec<_>>();
+    let buffer = buffer.map(|buffer| buffer.to_vec()).unwrap_or_else(|| {
+        std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap()
+    });
+
+    let images = gltf
+        .images
+        .iter()
+        //.zip(&images)
+        .map(|image| {
+            let data = match image.buffer_view {
+                Some(index) => {
+                    let view = &gltf.buffer_views[index];
+                    let slice = &buffer[view.byte_offset..view.byte_offset + view.byte_length];
+                    image::load_from_memory(slice).unwrap().to_rgba8()
+                }
+                None => {
+                    let path = path.with_file_name(image.uri.as_ref().unwrap());
+                    image::open(&path).unwrap().to_rgba8()
+                }
+            };
+            let image = staging_buffer.create_sampled_image(
+                &device,
+                nbn::SampledImageDescriptor {
+                    name: image.uri.as_deref().unwrap_or("inline"),
+                    extent: vk::Extent3D {
+                        width: data.width(),
+                        height: data.height(),
+                        depth: 1,
+                    }
+                    .into(),
+                    format: vk::Format::R8G8B8A8_SRGB,
+                },
+                &data,
+                nbn::QueueType::Compute,
+                &[0],
+            );
+            nbn::IndexedImage {
+                index: device.register_image(*image.view, false),
+                image,
+            }
+        })
+        .collect::<Vec<_>>();
 
     let material_to_image: Vec<u32> = gltf
         .materials
         .iter()
-        .map(|_mat| {
-            0
-            // let texture_index = mat
-            //     .pbr_metallic_roughness
-            //     .base_color_texture
-            //     .as_ref()
-            //     .unwrap()
-            //     .index;
-            // *images[gltf.textures[texture_index].source.unwrap()].index
+        .enumerate()
+        .map(|(i, mat)| {
+            let texture_index = match mat.pbr_metallic_roughness.base_color_texture.as_ref() {
+                Some(tex) => tex.index,
+                None => return u32::max_value(),
+            };
+            *images[gltf.textures[texture_index].source.unwrap()].index
         })
         .collect();
-
-    let buffer = buffer.map(|buffer| buffer.to_vec()).unwrap_or_else(|| {
-        std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap()
-    });
-    //let buffer = std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
 
     fn get_slice<'a, T: Copy>(
         buffer: &'a [u8],
