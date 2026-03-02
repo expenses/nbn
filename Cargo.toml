@@ -28,13 +28,7 @@ goth-gltf = { git = "https://github.com/expenses/goth-gltf", features = [
 env_logger = "0.11.9"
 gpu-allocator = {git = "https://github.com/expenses/gpu-allocator", branch = "updates", features = ["visualizer"]}
 egui-winit = "0.31.1"
-image = { version = "0.25.9", default-features = false, features = ["exr"] }
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
-nalgebra = "0.34.1"
-nalgebra-sparse = "0.11.0"
-clap = { version = "4.5.59", features = ["derive"] }
-ordered-float = "5.1.0"
-alias-table = {path = "alias-table"}
 
 [features]
 default = ["image_loading", "egui"]
@@ -44,4 +38,4 @@ blue_noise = ["dep:blue-noise-sampler"]
 freecam = ["dep:dolly"]
 
 [workspace]
-members = [".", "alias-table", "gltf-compress", "gltf-meshlets", "meshlet-renderer", "voxelizer"]
+members = [".", "alias-table", "gltf-compress", "gltf-meshlets", "lightmapper", "meshlet-renderer", "voxelizer"]
