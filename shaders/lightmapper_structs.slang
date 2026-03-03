@@ -2,6 +2,19 @@ import shared.noise;
 import shared.restir;
 import shared.barycentrics;
 
+[Flags] enum MaterialFlags {
+    AlphaClipped
+};
+
+struct Material {
+  uint emissive_image;
+  uint base_colour_image;
+  uint metallic_roughness_image;
+  uint normal_image;
+  MaterialFlags flags;
+  float4 base_color_factor;
+}
+
 [Flags]
 enum ModelFlags {
     Indices32Bit
@@ -13,9 +26,10 @@ struct Model {
     float2* uv2s;
     float3* normals;
     uint* indices;
-    uint* image_indices;
+    uint* material_indices;
     ModelFlags flags;
     uint num_indices;
+    Material* materials;
 
     uint read_index(uint vertex_index) {
         if (flags & ModelFlags::Indices32Bit) {

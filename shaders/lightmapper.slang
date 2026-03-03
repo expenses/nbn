@@ -385,12 +385,14 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
         let indices = model.read_indices(query.CommittedPrimitiveIndex());
         let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
 
-        let image_index = model.image_indices[query.CommittedPrimitiveIndex()];
-        if (image_index == MAX_UINT_VALUE) {
-            value = float3(0);
-        } else {
-            Sampler2D img = sampled_images[NonUniformResourceIndex(image_index)];
-            value = img.SampleLevel(uv, 0).rgb;
+        let material_index = model.material_indices[query.CommittedPrimitiveIndex()];
+        let material = model.materials[material_index];
+
+        value = material.base_color_factor.rgb;
+
+        if (material.base_colour_image != MAX_UINT_VALUE) {
+            Sampler2D img = sampled_images[NonUniformResourceIndex(material.base_colour_image)];
+            value *= img.SampleLevel(uv, 0).rgb;
         }
     } else {
         Sampler2D image = sampled_images[constants.envmap];

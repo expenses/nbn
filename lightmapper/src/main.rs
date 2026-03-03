@@ -634,7 +634,6 @@ fn load_gltf(
     let images = gltf
         .images
         .iter()
-        //.zip(&images)
         .map(|image| {
             let data = match image.buffer_view {
                 Some(index) => {
@@ -670,16 +669,33 @@ fn load_gltf(
         })
         .collect::<Vec<_>>();
 
-    let material_to_image: Vec<u32> = gltf
+    let materials: Vec<Material> = gltf
         .materials
         .iter()
-        .enumerate()
-        .map(|(i, mat)| {
-            let texture_index = match mat.pbr_metallic_roughness.base_color_texture.as_ref() {
-                Some(tex) => tex.index,
-                None => return u32::max_value(),
-            };
-            *images[gltf.textures[texture_index].source.unwrap()].index
+        .map(|material| {
+            dbg!(material);
+            Material {
+                base_colour_image: material
+                    .pbr_metallic_roughness
+                    .base_color_texture
+                    .as_ref()
+                    .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
+                    .unwrap_or(u32::MAX),
+                metallic_roughness_image: material
+                    .pbr_metallic_roughness
+                    .metallic_roughness_texture
+                    .as_ref()
+                    .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
+                    .unwrap_or(u32::MAX),
+                emissive_image: material
+                    .emissive_texture
+                    .as_ref()
+                    .map(|tex| *images[gltf.textures[tex.index].source.unwrap()])
+                    .unwrap_or(u32::MAX),
+                flags: matches!(material.alpha_mode, goth_gltf::AlphaMode::Mask) as u32,
+                base_color_factor: material.pbr_metallic_roughness.base_color_factor,
+                normal_image: 0,
+            }
         })
         .collect();
 
@@ -697,7 +713,7 @@ fn load_gltf(
     let mut positions = Vec::new();
     let mut uvs = Vec::new();
     let mut normals = Vec::new();
-    let mut image_indices = Vec::new();
+    let mut material_indices = Vec::new();
     let mut uv2s = Vec::new();
     let mut uv2s_3d = Vec::new();
 
@@ -705,8 +721,6 @@ fn load_gltf(
         .iter()
         .filter_map(|node| node.mesh.map(|mesh_index| (node, &gltf.meshes[mesh_index])))
         .for_each(|(node, mesh)| {
-            dbg!(node.transform());
-
             for primitive in mesh.primitives.iter() {
                 let indices_accessor = &gltf.accessors[primitive.indices.unwrap()];
                 match indices_accessor.component_type {
@@ -747,11 +761,8 @@ fn load_gltf(
                 uv2s_3d.extend(uv2s_vec.chunks(2).flat_map(|c| [c[0], c[1], 0.0]));
                 normals.extend_from_slice(get(primitive.attributes.normal, 3, "normals"));
 
-                let material_index = primitive.material.unwrap_or(0);
-
-                image_indices.extend(
-                    (0..indices_accessor.count / 3)
-                        .map(|_| material_to_image.get(material_index).cloned().unwrap_or(0)),
+                material_indices.extend(
+                    (0..indices_accessor.count / 3).map(|_| primitive.material.unwrap_or(0) as u32),
                 );
             }
         });
@@ -762,7 +773,7 @@ fn load_gltf(
     let num_indices = indices.len();
     let indices = staging_buffer.create_buffer_from_slice(device, "indices", &indices);
     let positions = staging_buffer.create_buffer_from_slice(device, "positions", &positions);
-    dbg!(image_indices.len());
+    let materials = staging_buffer.create_buffer_from_slice(device, "materials", &materials);
 
     let uv2s_3d = staging_buffer.create_buffer_from_slice(device, "uv2s_3d", &uv2s_3d);
 
@@ -795,8 +806,8 @@ fn load_gltf(
     let uvs = staging_buffer.create_buffer_from_slice(device, "uvs", &uvs);
     let uv2s = staging_buffer.create_buffer_from_slice(device, "uv2s", &uv2s);
     let normals = staging_buffer.create_buffer_from_slice(device, "normals", &normals);
-    let image_indices =
-        staging_buffer.create_buffer_from_slice(device, "image_indices", &image_indices);
+    let material_indices =
+        staging_buffer.create_buffer_from_slice(device, "material_indices", &material_indices);
 
     let model = Model {
         positions: *positions,
@@ -804,9 +815,10 @@ fn load_gltf(
         uv2s: *uv2s,
         normals: *normals,
         indices: *indices,
-        image_indices: *image_indices,
+        material_indices: *material_indices,
         flags: 1,
         num_indices: num_indices as _,
+        materials: *materials,
     };
 
     (
@@ -820,8 +832,9 @@ fn load_gltf(
             _uv2s: uv2s,
             _uv2s_3d: uv2s_3d,
             _normals: normals,
-            _image_indices: image_indices,
+            _material_indices: material_indices,
             _images: images,
+            _materials: materials,
         },
         model,
         lights,
@@ -838,8 +851,9 @@ struct CombinedModel {
     _uv2s: nbn::Buffer,
     _uv2s_3d: nbn::Buffer,
     _normals: nbn::Buffer,
-    _image_indices: nbn::Buffer,
+    _material_indices: nbn::Buffer,
     _images: Vec<nbn::IndexedImage>,
+    _materials: nbn::Buffer,
 }
 
 use ordered_float::OrderedFloat;
