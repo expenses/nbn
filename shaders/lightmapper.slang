@@ -58,7 +58,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
             return;
         }
 
-        let info = generate_hit(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants);
+        let info = generate_hit(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants.model);
 
         var selection_rand2 = push_constants.rand2(thread, 1, push_constants.sample_index + i);
 
@@ -247,26 +247,38 @@ PartitionedRand partition_rand(float rand, uint num_values) {
 struct HitInfo {
     float3 position;
     float3 normal;
+    float3 diffuse;
 };
 
-HitInfo generate_hit(float2 barycentrics, uint triangle_index, PushConstants push_constants) {
-    let indices = push_constants.model.read_indices(triangle_index);
-    let a = push_constants.model.positions[indices.x];
-    let b = push_constants.model.positions[indices.y];
-    let c = push_constants.model.positions[indices.z];
+HitInfo generate_hit(float2 barycentrics, uint triangle_index, Model* model) {
+    let indices = model.read_indices(triangle_index);
+    let a = model.positions[indices.x];
+    let b = model.positions[indices.y];
+    let c = model.positions[indices.z];
 
     let geom_normal = normalize(cross(b - a, c - a));
 
     HitInfo info;
     info.position = offset_ray(shadow_terminator_hack(
         a, b, c,
-        push_constants.model.normals[indices.x],
-        push_constants.model.normals[indices.y],
-        push_constants.model.normals[indices.z],
+        model.normals[indices.x],
+        model.normals[indices.y],
+        model.normals[indices.z],
         float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
     ), geom_normal);
 
-    info.normal = normalize(interpolate_from_buffer(push_constants.model.normals, indices, barycentrics));
+    info.normal = normalize(interpolate_from_buffer(model.normals, indices, barycentrics));
+
+    let material_index = model.material_indices[triangle_index];
+    let material = model.materials[material_index];
+
+    info.diffuse = material.base_color_factor.rgb;
+
+    if (material.base_colour_image != MAX_UINT_VALUE) {
+        let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
+        Sampler2D img = sampled_images[NonUniformResourceIndex(material.base_colour_image)];
+        info.diffuse *= img.SampleLevel(uv, 0).rgb;
+    }
 
     return info;
 }
@@ -381,19 +393,8 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
     var value = float3(0.0);
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        let barycentrics = query.CommittedTriangleBarycentrics();
-        let indices = model.read_indices(query.CommittedPrimitiveIndex());
-        let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
-
-        let material_index = model.material_indices[query.CommittedPrimitiveIndex()];
-        let material = model.materials[material_index];
-
-        value = material.base_color_factor.rgb;
-
-        if (material.base_colour_image != MAX_UINT_VALUE) {
-            Sampler2D img = sampled_images[NonUniformResourceIndex(material.base_colour_image)];
-            value *= img.SampleLevel(uv, 0).rgb;
-        }
+        let hit = generate_hit(query.CommittedTriangleBarycentrics(), query.CommittedPrimitiveIndex(), constants.model);
+        value = hit.diffuse;
     } else {
         Sampler2D image = sampled_images[constants.envmap];
         value = image.SampleLevel(envmap_uv(direction), 0).rgb;
