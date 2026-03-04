@@ -71,6 +71,7 @@ struct PushConstants {
     float4* output;
     float4* temp;
     uint64_t* location_bitmasks;
+    uint* triangle_indices;
     Alias* alias_table;
 
     property RaytracingAccelerationStructure tlas {
@@ -91,7 +92,6 @@ struct PushConstants {
     uint num_lights;
 
     uint sample_index;
-    uint samples_per_iter;
     uint total_samples;
     uint envmap;
 };

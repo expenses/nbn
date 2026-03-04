@@ -96,7 +96,6 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     let width = lightmapper_args.width;
     let height = lightmapper_args.height;
-    let samples_per_iter = 16;
     let total_samples = lightmapper_args.num_samples;
 
     let mut output_buffer = device
@@ -119,6 +118,14 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         .create_buffer(nbn::BufferDescriptor {
             name: "location_bitmasks_buffer",
             size: width as u64 * height as u64 * 8,
+            ty: nbn::MemoryLocation::GpuOnly,
+        })
+        .unwrap();
+
+    let triangle_indices_buffer = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "triangle_indices_buffer",
+            size: width as u64 * height as u64 * 4 * 64,
             ty: nbn::MemoryLocation::GpuOnly,
         })
         .unwrap();
@@ -156,9 +163,8 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         tlas_: *tlas.tlas,
         uv_tlas_: *uv_tlas.tlas,
         location_bitmasks: *location_bitmasks_buffer,
-        // Set later.
+        triangle_indices: *triangle_indices_buffer,
         sample_index: 0,
-        samples_per_iter,
         total_samples,
         envmap: *envmap,
         envmap_size,
@@ -190,9 +196,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
-    for i in 0..(total_samples / samples_per_iter) {
-        let sample_index = i * samples_per_iter;
-
+    for sample_index in 0..total_samples {
         unsafe {
             device
                 .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
@@ -509,8 +513,8 @@ impl winit::application::ApplicationHandler for App {
                     uv_tlas_: 0,
                     location_bitmasks: 0,
                     sample_index: 0,
-                    samples_per_iter: 0,
                     total_samples: 0,
+                    triangle_indices: 0,
                     envmap: *state.envmap,
                     envmap_size: state.envmap_size,
                     alias_table: *state.alias_table,

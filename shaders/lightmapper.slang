@@ -44,6 +44,8 @@ struct Lights: Contribution<float2> {
 
         let direction = vector / distance;
 
+        let n_dot_l = max(dot(info.normal, direction), 0.0);
+
         // spotlights
         {
             let theta = dot(direction, light.spotlight_direction);
@@ -51,7 +53,7 @@ struct Lights: Contribution<float2> {
         }
 
         UnshadowedContribution contribution;
-        contribution.contribution = emission * (max(dot(info.normal, direction), 0.0) / distance_sq);
+        contribution.contribution = emission * (n_dot_l / distance_sq);
         contribution.inv_pdf = push_constants.num_lights;
         return contribution;
     }
@@ -67,6 +69,12 @@ struct Lights: Contribution<float2> {
         let distance = sqrt(distance_sq);
 
         let direction = vector / distance;
+
+        let n_dot_l = max(dot(info.normal, direction), 0.0);
+
+        if (n_dot_l == 0.0) {
+            return 0.0;
+        }
 
         // spotlights
         {
@@ -90,7 +98,7 @@ struct Lights: Contribution<float2> {
         query.Proceed();
         let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
-        return emission * (visibility * max(dot(info.normal, direction),0.0) / distance_sq);
+        return emission * (visibility * n_dot_l / distance_sq);
     }
 }
 
@@ -218,54 +226,33 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
     var accum = float3(0);
 
-    for (uint i = 0; i < push_constants.samples_per_iter; i++) {
-        var rng = SobolRng(thread, push_constants.sample_index + i);
+    var rng = SobolRng(thread, push_constants.sample_index);
 
-        let tri_desc = hit_uv_tlas(thread, random_bit(location_bitmask, rng.rand()), push_constants);
-        var tri_query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        tri_query.TraceRayInline(
-            push_constants.uv_tlas,
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xff,
-            tri_desc
-        );
-        tri_query.Proceed();
+    let bit = random_bit(location_bitmask, rng.rand());
+    let triangle_index = push_constants.triangle_indices[loc * 64 + bit];
+    let indices = push_constants.model.read_indices(triangle_index);
 
-        if (tri_query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-            // For debugging. Shouldn't occur under normal circumstances.
-            push_constants.output[loc] = float4(1,0,0,1);
-            return;
-        }
+    let uv_ray_offset = frac(0.5 + R2(bit));
 
-        let info = generate_hit(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants.model);
+    let uv = (float2(thread)+uv_ray_offset)/push_constants.extent;
 
-        accum += get_lighting(info, push_constants, &rng);
+    let barycentrics = barycentrics2d(
+        uv,
+        push_constants.model.uv2s[indices.x],
+        push_constants.model.uv2s[indices.y],
+        push_constants.model.uv2s[indices.z]
+    );
 
-        if (let infov = bounce(info, rng.rand2(), push_constants)) {
-            accum += infov.diffuse * get_lighting(infov, push_constants, &rng);
-        }
+    let info = generate_hit(barycentrics, triangle_index, push_constants.model);
+
+    accum += get_lighting(info, push_constants, &rng);
+
+    if (let infov = bounce(info, rng.rand2(), push_constants)) {
+        accum += infov.diffuse * get_lighting(infov, push_constants, &rng);
     }
 
     push_constants.temp[loc].rgb += accum / float(push_constants.total_samples);
     push_constants.temp[loc].a = 1.0;
-}
-
-RayDesc hit_uv_tlas(
-    uint2 thread,
-    uint i,
-    PushConstants push_constants
-) {
-    let uv_ray_offset = frac(0.5 + R2(i));
-
-    RayDesc tri_desc;
-    tri_desc.Origin = float3(
-        (float2(thread)+uv_ray_offset)/push_constants.extent,
-        1
-    );
-    tri_desc.Direction = float3(0,0,-1);
-    tri_desc.TMax = 2.0;
-    tri_desc.TMin = 0;
-    return tri_desc;
 }
 
 bool check_for_backfaces(float2 barycentrics, uint triangle_index, PushConstants push_constants) {
@@ -316,7 +303,16 @@ void check_locations(uint2 thread : SV_DispatchThreadID, uniform PushConstants p
     uint64_t bitmask = 0;
 
     for (uint i = 0; i < 64; i++) {
-        let tri_desc = hit_uv_tlas(thread, i, push_constants);
+        let uv_ray_offset = frac(0.5 + R2(i));
+
+        RayDesc tri_desc;
+        tri_desc.Origin = float3(
+            (float2(thread)+uv_ray_offset)/push_constants.extent,
+            1
+        );
+        tri_desc.Direction = float3(0,0,-1);
+        tri_desc.TMax = 2.0;
+        tri_desc.TMin = 0;
         var tri_query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         tri_query.TraceRayInline(
             push_constants.uv_tlas,
@@ -328,6 +324,7 @@ void check_locations(uint2 thread : SV_DispatchThreadID, uniform PushConstants p
         var hit = tri_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
         if (hit) {
             hit = !check_for_backfaces(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants);
+            push_constants.triangle_indices[loc * 64 + i] = tri_query.CommittedPrimitiveIndex();
         }
         bitmask |= uint64_t(hit) << i;
     }
@@ -425,7 +422,7 @@ float3 get_lighting(HitInfo info, PushConstants push_constants, SobolRng* rng) {
     split.a = lights;
     split.b = env_map;
 
-    return ris(split, 16, rng);
+    return ris(split, 4, rng);
 }
 
 float4 dilate(float4* values, uint2 coord, uint2 extent) {
