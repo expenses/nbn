@@ -64,14 +64,26 @@ struct Alias {
 };
 
 struct PushConstants {
-    uint64_t tlas;
-    uint64_t uv_tlas;
+    uint64_t tlas_;
+    uint64_t uv_tlas_;
     Model* model;
-    float[11]* lights;
+    Light* lights;
     float4* output;
     float4* temp;
     uint64_t* location_bitmasks;
     Alias* alias_table;
+
+    property RaytracingAccelerationStructure tlas {
+        get {
+            return RaytracingAccelerationStructure(tlas_);
+        }
+    }
+
+    property RaytracingAccelerationStructure uv_tlas {
+        get {
+            return RaytracingAccelerationStructure(uv_tlas_);
+        }
+    }
 
     uint2 extent;
     uint2 envmap_size;
@@ -82,26 +94,20 @@ struct PushConstants {
     uint samples_per_iter;
     uint total_samples;
     uint envmap;
-
-    uint thread_to_index(uint2 thread) {
-        return thread.x + thread.y * extent.x;
-    }
-
-    Light get_light(uint index) {
-        return reinterpret<Light>(lights[index]);
-    }
-
-     Alias get_alias(uint index) {
-       return alias_table[index];
-   }
 };
 
 struct ViewerConstants {
-float4x4 view_inv;
+    float4x4 view_inv;
     float4x4 proj_inv;
     Model* model;
-    uint64_t tlas;
+    uint64_t tlas_;
     uint2 extent;
     uint image;
     uint envmap;
+    
+    property RaytracingAccelerationStructure tlas {
+        get {
+            return RaytracingAccelerationStructure(tlas_);
+        }
+    }
 }
