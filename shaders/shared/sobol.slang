@@ -1,3 +1,21 @@
+// Adapted from https://gist.github.com/cessen/697b880ae07f32502db26edef1b1cec2
+
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2011-2022 Blender Foundation */
+
+uint count_leading_zeros(uint v) {
+    return 31 - firstbithigh(v);
+}
+
+/*
+ * A shuffled, Owen-scrambled Sobol sampler, implemented with the
+ * techniques from the paper "Practical Hash-based Owen Scrambling"
+ * by Brent Burley, 2020, Journal of Computer Graphics Techniques.
+ *
+ * Note that unlike a standard high-dimensional Sobol sequence, this
+ * Sobol sampler uses padding to achieve higher dimensions, as described
+ * in Burley's paper.
+ */
 
 #define SOBOL_BURLEY_DIMENSIONS 4
 #define SOBOL_BURLEY_BITS 32
@@ -34,10 +52,6 @@ uint reversed_bit_owen(uint n, uint seed) {
   n ^= n * 0x53a22864;
 
   return n;
-}
-
-uint count_leading_zeros(uint v) {
-    return 31 - firstbithigh(v);
 }
 
 /*
@@ -132,7 +146,6 @@ float sobol_burley(uint rev_bit_index, uint dimension, uint scramble_seed)
 
   return (float)result * (1.0f / (float)0xFFFFFFFF);
 }
-
 
 /*
  * Computes a 1D Owen-scrambled and shuffled Sobol sample.
