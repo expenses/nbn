@@ -1064,6 +1064,7 @@ impl Device {
     pub fn bind_internal_descriptor_sets_to_all(&self, command_buffer: &CommandBuffer) {
         self.bind_internal_descriptor_sets(command_buffer, vk::PipelineBindPoint::GRAPHICS);
         self.bind_internal_descriptor_sets(command_buffer, vk::PipelineBindPoint::COMPUTE);
+        self.bind_internal_descriptor_sets(command_buffer, vk::PipelineBindPoint::RAY_TRACING_KHR);
     }
 
     pub fn push_constants<T: Copy>(&self, command_buffer: &CommandBuffer, data: T) {
@@ -1123,7 +1124,8 @@ impl Device {
                         | vk::BufferUsageFlags::INDIRECT_BUFFER
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
                         | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
-                        | vk::BufferUsageFlags::STORAGE_BUFFER,
+                        | vk::BufferUsageFlags::STORAGE_BUFFER
+                        | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
                 ),
                 None,
             )
