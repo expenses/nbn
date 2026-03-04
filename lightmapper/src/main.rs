@@ -146,12 +146,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         .to_vk()],
     );
 
-    let blue_noise_buffers = nbn::blue_noise::BlueNoiseBuffers::new(&device, &mut staging_buffer);
-
     let push_constants = PushConstants {
-        blue_noise_ranking_tile: *blue_noise_buffers.ranking_tile,
-        blue_noise_sobol: *blue_noise_buffers.sobol,
-        blue_noise_scrambling_tile: *blue_noise_buffers.scrambling_tile,
         extent: [width, height],
         lights: *lights,
         model: *model_buffer,

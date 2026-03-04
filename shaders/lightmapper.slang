@@ -26,6 +26,31 @@ float3 uv_to_direction(float2 uv) {
     );
 }
 
+struct SobolRng {
+    uint pixel_seed;
+    uint sample;
+    uint dimension = 0;
+
+    __init(uint2 thread, uint sample_) {
+        pixel_seed = hp_mix32(thread.x ^ (thread.y << 16));
+        sample = sample_;
+    }
+
+    [mutating]
+    float rand() {
+        let rand = sobol_burley_sample_1D(sample, dimension, pixel_seed);
+        dimension++;
+        return rand;
+    }
+
+    [mutating]
+    float2 rand2() {
+        let rand = sobol_burley_sample_2D(sample, dimension, pixel_seed);
+        dimension++;
+        return rand;
+    }
+}
+
 [shader("compute")]
 [NumThreads(8,8,1)]
 void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_constants) {
@@ -40,15 +65,13 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         return;
     }
 
-    let tlas = RaytracingAccelerationStructure(push_constants.tlas);
     var accum = float3(0);
 
     for (uint i = 0; i < push_constants.samples_per_iter; i++) {
-        let pixel_seed = hp_mix32(thread.x ^ (thread.y << 16));// ^ hp_mix32(push_constants.sample_index + i);
-        let location_rand = sobol_burley_sample_1D(push_constants.sample_index + i, 0, pixel_seed);
+        var rng = SobolRng(thread, push_constants.sample_index + i);
 
         var tri_query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        hit_uv_tlas(thread, random_bit(location_bitmask, location_rand), push_constants, tri_query);
+        hit_uv_tlas(thread, random_bit(location_bitmask, rng.rand()), push_constants, tri_query);
         tri_query.Proceed();
 
         if (tri_query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
@@ -59,15 +82,10 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
         let info = generate_hit(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants.model);
 
-        let selection_rand2 = sobol_burley_sample_2D(push_constants.sample_index + i, 1, pixel_seed);
-        accum += get_lighting(info, selection_rand2, push_constants);
+        accum += get_lighting(info, rng.rand2(), push_constants);
 
-        let bounce_rand2 = sobol_burley_sample_2D(push_constants.sample_index + i, 2, pixel_seed);
-
-        let light_rand2 = sobol_burley_sample_2D(push_constants.sample_index + i, 3, pixel_seed);
-
-        if (let infov = bounce(info, bounce_rand2, push_constants)) {
-            //accum += get_lighting(infov, light_rand2, push_constants);
+        if (let infov = bounce(info, rng.rand2(), push_constants)) {
+            accum += infov.diffuse * get_lighting(infov, rng.rand2(), push_constants);
         }
     }
 
@@ -104,8 +122,6 @@ void hit_uv_tlas(
 }
 
 bool check_for_backfaces(float2 barycentrics, uint triangle_index, PushConstants push_constants) {
-    let tlas = RaytracingAccelerationStructure(push_constants.tlas);
-
     let indices = push_constants.model.read_indices(triangle_index);
 
     let a = push_constants.model.positions[indices.x];
@@ -126,7 +142,7 @@ bool check_for_backfaces(float2 barycentrics, uint triangle_index, PushConstants
 
         var query = RayQuery<RAY_FLAG_NONE>();
         query.TraceRayInline(
-            tlas,
+            RaytracingAccelerationStructure(push_constants.tlas),
             RAY_FLAG_NONE,
             0xff,
             desc
@@ -222,8 +238,6 @@ HitInfo generate_hit(float2 barycentrics, uint triangle_index, Model* model) {
 }
 
 Optional<HitInfo> bounce(HitInfo info, float2 rand2, PushConstants push_constants) {
-    let tlas = RaytracingAccelerationStructure(push_constants.tlas);
-
     RayDesc desc;
     desc.Origin = info.position;
     desc.Direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rand2));
@@ -232,7 +246,7 @@ Optional<HitInfo> bounce(HitInfo info, float2 rand2, PushConstants push_constant
 
     var query = RayQuery<RAY_FLAG_NONE>();
     query.TraceRayInline(
-        tlas,
+        RaytracingAccelerationStructure(push_constants.tlas),
         RAY_FLAG_NONE,
         0xff,
         desc
@@ -247,9 +261,6 @@ Optional<HitInfo> bounce(HitInfo info, float2 rand2, PushConstants push_constant
 }
 
 float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_constants) {
-    Sampler2D envmap = sampled_images[push_constants.envmap];
-    let tlas = RaytracingAccelerationStructure(push_constants.tlas);
-
     let skybox_or_lights = partition_rand(selection_rand2.x, 2);
     selection_rand2.x = skybox_or_lights.rand;
 
@@ -270,6 +281,12 @@ float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_con
 
         let rotated_dir = uv_to_direction(uv);
 
+        let n_dot_l = max(dot(info.normal, rotated_dir), 0.0);
+
+        if (n_dot_l == 0.0) {
+            return float3(0);
+        }
+
         RayDesc desc;
         desc.Direction = rotated_dir;
         desc.Origin = info.position;
@@ -278,7 +295,7 @@ float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_con
 
         var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         query.TraceRayInline(
-            tlas,
+            RaytracingAccelerationStructure(push_constants.tlas),
             RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
             0xff,
             desc
@@ -286,7 +303,8 @@ float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_con
         query.Proceed();
 
         if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-            value = envmap.SampleLevel(uv, 0).rgb * max(dot(info.normal, rotated_dir), 0.0);
+            Sampler2D envmap = sampled_images[push_constants.envmap];
+            value = envmap.SampleLevel(uv, 0).rgb * n_dot_l;
         }
     } else {
         let light_index = partition_rand(selection_rand2.x, push_constants.num_lights);
@@ -298,6 +316,12 @@ float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_con
         let distance = sqrt(distance_sq);
         let direction = vector / distance;
 
+        let n_dot_l = max(dot(info.normal, direction), 0.0);
+
+        if (n_dot_l == 0.0) {
+            return float3(0);
+        }
+
         RayDesc desc;
         desc.Direction = direction;
         desc.Origin = info.position;
@@ -306,7 +330,7 @@ float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_con
 
         var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         query.TraceRayInline(
-            tlas,
+            RaytracingAccelerationStructure(push_constants.tlas),
             RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
             0xff,
             desc
@@ -314,7 +338,7 @@ float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_con
         query.Proceed();
 
         if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-            value += light.emission * max(dot(info.normal, direction), 0.0) / distance_sq;
+            value += light.emission * n_dot_l / distance_sq;
         }
     }
 
@@ -373,7 +397,6 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
     }
 
     let model = constants.model;
-    let as = RaytracingAccelerationStructure(constants.tlas);
 
     let d = thread_to_clip(thread, constants.extent);
     let origin = mul(constants.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -389,7 +412,7 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
 
     var query = RayQuery<RAY_FLAG_NONE >();
     query.TraceRayInline(
-        as,
+        RaytracingAccelerationStructure(constants.tlas),
         RAY_FLAG_NONE,
         0xff,
         desc
