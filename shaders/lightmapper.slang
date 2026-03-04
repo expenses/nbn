@@ -7,7 +7,7 @@ import shared.util;
 import shared.colour;
 import shared.constants;
 import shared.barycentrics;
-import shared.noise;
+import shared.sobol;
 
 float2 envmap_uv(float3 direction) {
     return float2(
@@ -40,13 +40,12 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         return;
     }
 
-    Sampler2D envmap = sampled_images[push_constants.envmap];
-
     let tlas = RaytracingAccelerationStructure(push_constants.tlas);
     var accum = float3(0);
 
     for (uint i = 0; i < push_constants.samples_per_iter; i++) {
-        let location_rand = push_constants.rand2(thread, 0, push_constants.sample_index + i).x;
+        let pixel_seed = hp_mix32(thread.x ^ (thread.y << 16));// ^ hp_mix32(push_constants.sample_index + i);
+        let location_rand = sobol_burley_sample_1D(push_constants.sample_index + i, 0, pixel_seed);
 
         var tri_query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         hit_uv_tlas(thread, random_bit(location_bitmask, location_rand), push_constants, tri_query);
@@ -60,77 +59,16 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
         let info = generate_hit(tri_query.CommittedRayBarycentrics(), tri_query.CommittedPrimitiveIndex(), push_constants.model);
 
-        var selection_rand2 = push_constants.rand2(thread, 1, push_constants.sample_index + i);
+        let selection_rand2 = sobol_burley_sample_2D(push_constants.sample_index + i, 1, pixel_seed);
+        accum += get_lighting(info, selection_rand2, push_constants);
 
-        let skybox_or_lights = partition_rand(selection_rand2.x, 2);
-        selection_rand2.x = skybox_or_lights.rand;
+        let bounce_rand2 = sobol_burley_sample_2D(push_constants.sample_index + i, 2, pixel_seed);
 
-        var inv_probability = skybox_or_lights.inv_probability;
+        let light_rand2 = sobol_burley_sample_2D(push_constants.sample_index + i, 3, pixel_seed);
 
-        var value = float3(0);
-
-        if (skybox_or_lights.index == 0) {
-            var index = uint(selection_rand2.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
-            var alias = push_constants.get_alias(index);
-            if (selection_rand2.y > alias.threshold) {
-                index = alias.fallback;
-                alias = push_constants.get_alias(alias.fallback);
-            }
-            let uv = (float2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x) + 0.5) / float2(push_constants.envmap_size);
-
-            inv_probability *= alias.inv_pdf;
-
-            let rotated_dir = uv_to_direction(uv);
-
-            RayDesc desc;
-            desc.Direction = rotated_dir;
-            desc.Origin = info.position;
-            desc.TMax = 200.0;
-            desc.TMin = 0;
-
-            var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-            query.TraceRayInline(
-                tlas,
-                RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-                0xff,
-                desc
-            );
-            query.Proceed();
-
-            if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-                value = envmap.SampleLevel(uv, 0).rgb * max(dot(info.normal, rotated_dir), 0.0);
-            }
-        } else {
-            let light_index = partition_rand(selection_rand2.x, push_constants.num_lights);
-            selection_rand2.x = light_index.rand;
-            inv_probability *= light_index.inv_probability;
-            let light = push_constants.get_light(light_index.index);
-            let vector = light.position - info.position;
-            let distance_sq = dot(vector,vector);
-            let distance = sqrt(distance_sq);
-            let direction = vector / distance;
-
-            RayDesc desc;
-            desc.Direction = direction;
-            desc.Origin = info.position;
-            desc.TMax = distance;
-            desc.TMin = 0;
-
-            var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-            query.TraceRayInline(
-                tlas,
-                RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-                0xff,
-                desc
-            );
-            query.Proceed();
-
-            if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-                value += light.emission * max(dot(info.normal, direction), 0.0) / distance_sq;
-            }
+        if (let infov = bounce(info, bounce_rand2, push_constants)) {
+            //accum += get_lighting(infov, light_rand2, push_constants);
         }
-
-        accum += value * inv_probability;
     }
 
     push_constants.temp[loc].rgb += accum / float(push_constants.total_samples);
@@ -283,35 +221,104 @@ HitInfo generate_hit(float2 barycentrics, uint triangle_index, Model* model) {
     return info;
 }
 
-RayDesc trace_from(float2 barycentrics, uint triangle_index, float2 rand2, PushConstants push_constants) {
-    let indices = push_constants.model.read_indices(triangle_index);
-    let a = push_constants.model.positions[indices.x];
-    let b = push_constants.model.positions[indices.y];
-    let c = push_constants.model.positions[indices.z];
-
-    let geom_normal = normalize(cross(b - a, c - a));
-
-    let pos = offset_ray(shadow_terminator_hack(
-        a, b, c,
-        push_constants.model.normals[indices.x],
-        push_constants.model.normals[indices.y],
-        push_constants.model.normals[indices.z],
-        float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
-    ), geom_normal);
-
-    let normal = normalize(interpolate_from_buffer(push_constants.model.normals, indices, barycentrics));
-    let tbn = build_tbn(normal);
-
-    let hemisphere_dir = sample_cosine_weighted_hemisphere(rand2);
-    let rotated_dir = mul(tbn, hemisphere_dir);
+Optional<HitInfo> bounce(HitInfo info, float2 rand2, PushConstants push_constants) {
+    let tlas = RaytracingAccelerationStructure(push_constants.tlas);
 
     RayDesc desc;
-    desc.Direction = rotated_dir;
-    desc.Origin = pos;
+    desc.Origin = info.position;
+    desc.Direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rand2));
     desc.TMax = 200.0;
     desc.TMin = 0;
 
-    return desc;
+    var query = RayQuery<RAY_FLAG_NONE>();
+    query.TraceRayInline(
+        tlas,
+        RAY_FLAG_NONE,
+        0xff,
+        desc
+    );
+    query.Proceed();
+
+    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        return generate_hit(query.CommittedRayBarycentrics(), query.CommittedPrimitiveIndex(), push_constants.model);
+    }
+
+    return none;
+}
+
+float3 get_lighting(HitInfo info, float2 selection_rand2, PushConstants push_constants) {
+    Sampler2D envmap = sampled_images[push_constants.envmap];
+    let tlas = RaytracingAccelerationStructure(push_constants.tlas);
+
+    let skybox_or_lights = partition_rand(selection_rand2.x, 2);
+    selection_rand2.x = skybox_or_lights.rand;
+
+    var inv_probability = skybox_or_lights.inv_probability;
+
+    var value = float3(0);
+
+    if (skybox_or_lights.index == 0) {
+        var index = uint(selection_rand2.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
+        var alias = push_constants.get_alias(index);
+        if (selection_rand2.y > alias.threshold) {
+            index = alias.fallback;
+            alias = push_constants.get_alias(alias.fallback);
+        }
+        let uv = (float2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x) + 0.5) / float2(push_constants.envmap_size);
+
+        inv_probability *= alias.inv_pdf;
+
+        let rotated_dir = uv_to_direction(uv);
+
+        RayDesc desc;
+        desc.Direction = rotated_dir;
+        desc.Origin = info.position;
+        desc.TMax = 200.0;
+        desc.TMin = 0;
+
+        var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        query.TraceRayInline(
+            tlas,
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            0xff,
+            desc
+        );
+        query.Proceed();
+
+        if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+            value = envmap.SampleLevel(uv, 0).rgb * max(dot(info.normal, rotated_dir), 0.0);
+        }
+    } else {
+        let light_index = partition_rand(selection_rand2.x, push_constants.num_lights);
+        selection_rand2.x = light_index.rand;
+        inv_probability *= light_index.inv_probability;
+        let light = push_constants.get_light(light_index.index);
+        let vector = light.position - info.position;
+        let distance_sq = dot(vector,vector);
+        let distance = sqrt(distance_sq);
+        let direction = vector / distance;
+
+        RayDesc desc;
+        desc.Direction = direction;
+        desc.Origin = info.position;
+        desc.TMax = distance;
+        desc.TMin = 0;
+
+        var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        query.TraceRayInline(
+            tlas,
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            0xff,
+            desc
+        );
+        query.Proceed();
+
+        if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+            value += light.emission * max(dot(info.normal, direction), 0.0) / distance_sq;
+        }
+    }
+
+    return value * inv_probability;
 }
 
 float4 dilate(float4* values, uint2 coord, uint2 extent) {
