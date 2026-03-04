@@ -87,7 +87,7 @@ struct UnshadowedContribution {
 struct SamplePoint {
     float3 position;
     float3 normal;
-    
+
     [mutating]
     void fix_normal(float3 camera_pos) {
         if (dot(camera_pos - position, normal) < 0) {
@@ -100,7 +100,7 @@ struct Environment: Contribution<float2> {
     SamplePoint point;
     RaytracingAccelerationStructure acceleration_structure;
     float3 colour;
-    
+
     __init(SamplePoint point_, RaytracingAccelerationStructure acceleration_structure_, float3 colour_) {
         point = point_;
         acceleration_structure = acceleration_structure_;
@@ -138,18 +138,48 @@ struct Environment: Contribution<float2> {
     }
 }
 
+struct Split<A: Contribution<float2>, B: Contribution<float2>>: Contribution<float2> {
+    A a;
+    B b;
+
+    UnshadowedContribution unshadowed_contribution(float2 rand2) {
+        UnshadowedContribution contribution;
+
+        let use_a = rand2.x < 0.5;
+        rand2.x = frac(rand2.x * 2);
+
+        if (use_a) {
+            contribution = a.unshadowed_contribution(rand2);
+        } else {
+            contribution = b.unshadowed_contribution(rand2);
+        }
+        contribution.inv_pdf *= 2.0;
+        return contribution;
+    }
+
+    float3 shadowed_contribution(float2 rand2) {
+        let use_a = rand2.x < 0.5;
+        rand2.x = frac(rand2.x * 2);
+
+        if (use_a) {
+            return a.shadowed_contribution(rand2);
+        } else {
+            return b.shadowed_contribution(rand2);
+        }
+    }
+}
 
 struct Combined<A: Contribution<float2>, B: Contribution<float2>>: Contribution<float2> {
     A a;
     B b;
     float factor;
-    
+
     __init(A a_, B b_, float factor_) {
         a = a_;
         b = b_;
         factor = factor_;
     }
-    
+
     UnshadowedContribution unshadowed_contribution(float2 rand2) {
         UnshadowedContribution contribution;
         if (rand2.x < factor) {
@@ -178,33 +208,33 @@ struct Combined<A: Contribution<float2>, B: Contribution<float2>>: Contribution<
 struct BlueNoise<T: Contribution<float2>>: Contribution<uint> {
     T inner;
     BlueNoiseData blue_noise_data;
-    
+
     __init(T inner_, BlueNoiseData blue_noise_data_) {
         inner = inner_;
         blue_noise_data = blue_noise_data_;
     }
-    
+
     UnshadowedContribution unshadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(blue_noise_data, blue_noise_state);
         return inner.unshadowed_contribution(blue_noise.rand2());
     }
-    
+
     float3 shadowed_contribution(uint blue_noise_state) {
         var blue_noise = ThreadBlueNoise(blue_noise_data, blue_noise_state);
         return inner.shadowed_contribution(blue_noise.rand2());
     }
-    
+
     float3 shadowed_contribution_from_reservoir(Reservoir<uint> reservoir) {
         if (reservoir.data != MAX_UINT_VALUE) {
-            return shadowed_contribution(reservoir.data);  
+            return shadowed_contribution(reservoir.data);
         } else {
             return float3(0.0);
         }
     }
-    
+
     float3 unshadowed_contribution_from_reservoir(Reservoir<uint> reservoir) {
         if (reservoir.data != MAX_UINT_VALUE) {
-            return unshadowed_contribution(reservoir.data).contribution;  
+            return unshadowed_contribution(reservoir.data).contribution;
         } else {
             return float3(0.0);
         }
@@ -227,7 +257,7 @@ void temporal_accumulation<T: Contribution<float2>, R: Rng>(
     float p_hat,
     Reservoir<uint> previous_reservoir,
     BlueNoise<T> state,
-    R* rng, 
+    R* rng,
     uint num_samples
 ) {
     var previous_reservoir = previous_reservoir;
