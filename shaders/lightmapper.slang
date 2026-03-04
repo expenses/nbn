@@ -393,13 +393,13 @@ void dilation(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 [shader("compute")]
 [NumThreads(8,8,1)]
 void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants) {
-    if (any(thread >= constants.extent)) {
+    if (any(thread >= constants.base.extent)) {
         return;
     }
 
-    let model = constants.model;
+    let model = constants.base.model;
 
-    let d = thread_to_clip(thread, constants.extent);
+    let d = thread_to_clip(thread, constants.base.extent);
     let origin = mul(constants.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
     let temp = mul(constants.proj_inv, float4(d.x, d.y, 1.0, 1.0));
     let direction =
@@ -411,23 +411,25 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
     desc.TMax = 200.0;
     desc.TMin = 0.1;
 
-    var query = RayQuery<RAY_FLAG_NONE >();
+    var query = RayQuery<RAY_FLAG_NONE>();
     query.TraceRayInline(
-        constants.tlas,
+        constants.base.tlas,
         RAY_FLAG_NONE,
         0xff,
         desc
     );
-
     query.Proceed();
 
     var value = float3(0.0);
 
+    var rng = SobolRng(thread, constants.frame_index);
+
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        let hit = generate_hit(query.CommittedTriangleBarycentrics(), query.CommittedPrimitiveIndex(), constants.model);
-        value = hit.diffuse;
+        let hit = generate_hit(query.CommittedTriangleBarycentrics(), query.CommittedPrimitiveIndex(), constants.base.model);
+        let lighting = get_lighting(hit, rng.rand2(), *constants.base);
+        value = hit.diffuse;// * lighting
     } else {
-        Sampler2D image = sampled_images[constants.envmap];
+        Sampler2D image = sampled_images[constants.base.envmap];
         value = image.SampleLevel(envmap_uv(direction), 0).rgb;
     }
 

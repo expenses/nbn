@@ -96,7 +96,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     let width = lightmapper_args.width;
     let height = lightmapper_args.height;
-    let samples_per_iter = 64;
+    let samples_per_iter = 16;
     let total_samples = lightmapper_args.num_samples;
 
     let mut output_buffer = device
@@ -311,7 +311,13 @@ struct State {
     _model: CombinedModel,
     freecam: nbn::freecam::FreeCam,
     envmap: nbn::IndexedImage,
+    envmap_size: [u32; 2],
     model: nbn::Buffer,
+    num_lights: u32,
+    lights: nbn::Buffer,
+    alias_table: nbn::Buffer,
+    uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
+    frame_index: u32,
 }
 
 struct App {
@@ -340,6 +346,21 @@ impl winit::application::ApplicationHandler for App {
 
         let envmap = image::open(&self.args.envmap).unwrap().to_rgba32f();
 
+        let alias_table =
+            alias_table::construct(envmap.rows().enumerate().flat_map(|(row, pixels)| {
+                let height = envmap.height() as usize;
+                let theta = std::f32::consts::PI * (row as f32 + 0.5) / height as f32;
+                let sin_theta = theta.sin();
+                pixels.map(move |p| {
+                    use image::Pixel;
+                    (p.to_luma()[0] * sin_theta, sin_theta)
+                })
+            }));
+
+        let alias_table =
+            staging_buffer.create_buffer_from_slice(&device, "alias_table", &alias_table);
+
+        let envmap_size = [envmap.width(), envmap.height()];
         let envmap = staging_buffer.create_sampled_image(
             &device,
             nbn::SampledImageDescriptor {
@@ -353,7 +374,10 @@ impl winit::application::ApplicationHandler for App {
         );
         let envmap = device.register_owned_image(envmap, false);
 
-        let (gltf_data, model, _lights) = load_gltf(&device, &mut staging_buffer, &self.args.path);
+        let (gltf_data, model, lights) = load_gltf(&device, &mut staging_buffer, &self.args.path);
+
+        let num_lights = dbg!(lights.len() as _);
+        let lights = staging_buffer.create_buffer_from_slice(&device, "lights", &lights);
 
         let model_buffer = staging_buffer.create_buffer_from_slice(&device, "models", &[model]);
 
@@ -385,6 +409,29 @@ impl winit::application::ApplicationHandler for App {
                 .iter()
                 .map(|image| device.register_image(*image.view, true))
                 .collect(),
+            uniform_buffers: [
+                device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: "uniform_buffer_0",
+                        size: std::mem::size_of::<PushConstants>() as _,
+                        ty: nbn::MemoryLocation::CpuToGpu,
+                    })
+                    .unwrap(),
+                device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: "uniform_buffer_1",
+                        size: std::mem::size_of::<PushConstants>() as _,
+                        ty: nbn::MemoryLocation::CpuToGpu,
+                    })
+                    .unwrap(),
+                device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: "uniform_buffer_2",
+                        size: std::mem::size_of::<PushConstants>() as _,
+                        ty: nbn::MemoryLocation::CpuToGpu,
+                    })
+                    .unwrap(),
+            ],
             device,
             window,
             swapchain,
@@ -393,7 +440,12 @@ impl winit::application::ApplicationHandler for App {
             _model: gltf_data,
             freecam: nbn::freecam::FreeCam::new(Default::default()),
             envmap,
+            envmap_size,
             model: model_buffer,
+            num_lights,
+            lights,
+            alias_table,
+            frame_index: 0,
         })
     }
 
@@ -442,6 +494,28 @@ impl winit::application::ApplicationHandler for App {
                 let current_frame = state.sync_resources.current_frame;
                 let command_buffer = &state.per_frame_command_buffers[current_frame];
 
+                let extent = state.swapchain.create_info.image_extent;
+
+                state.uniform_buffers[current_frame]
+                    .try_as_slice_mut::<PushConstants>()
+                    .unwrap()[0] = PushConstants {
+                    extent: [extent.width, extent.height],
+                    lights: *state.lights,
+                    model: *state.model,
+                    output: 0,
+                    temp: 0,
+                    num_lights: state.num_lights,
+                    tlas_: *state.tlas.tlas,
+                    uv_tlas_: 0,
+                    location_bitmasks: 0,
+                    sample_index: 0,
+                    samples_per_iter: 0,
+                    total_samples: 0,
+                    envmap: *state.envmap,
+                    envmap_size: state.envmap_size,
+                    alias_table: *state.alias_table,
+                };
+
                 let mut frame = state.sync_resources.wait_for_frame(device);
 
                 let (next_image, _suboptimal) = device
@@ -466,7 +540,6 @@ impl winit::application::ApplicationHandler for App {
                     Some(nbn::BarrierOp::Acquire),
                     nbn::BarrierOp::ColorAttachmentWrite,
                 );
-                let extent = state.swapchain.create_info.image_extent;
 
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
 
@@ -483,15 +556,15 @@ impl winit::application::ApplicationHandler for App {
                 device.push_constants(
                     command_buffer,
                     ViewerConstants {
-                        extent: [extent.width, extent.height],
+                        base: *state.uniform_buffers[current_frame],
                         image: *state.swapchain_image_heap_indices[next_image as usize],
                         view_inv: view.inverse().to_cols_array(),
                         proj_inv: proj.inverse().to_cols_array(),
-                        tlas_: *state.tlas.tlas,
-                        envmap: *state.envmap,
-                        model: *state.model,
+                        frame_index: state.frame_index,
                     },
                 );
+
+                state.frame_index += 1;
 
                 device.cmd_dispatch(
                     **command_buffer,

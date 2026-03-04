@@ -99,15 +99,7 @@ struct PushConstants {
 struct ViewerConstants {
     float4x4 view_inv;
     float4x4 proj_inv;
-    Model* model;
-    uint64_t tlas_;
-    uint2 extent;
+    PushConstants* base;
     uint image;
-    uint envmap;
-    
-    property RaytracingAccelerationStructure tlas {
-        get {
-            return RaytracingAccelerationStructure(tlas_);
-        }
-    }
+    uint frame_index;
 }
