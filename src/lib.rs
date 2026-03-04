@@ -207,6 +207,7 @@ pub struct Device {
     pub pipeline_layout: ManuallyDrop<PipelineLayout>,
     pub properties: vk::PhysicalDeviceProperties,
     pub mesh_shader_loader: ash::ext::mesh_shader::Device,
+    pub ray_tracing_pipeline_loader: ash::khr::ray_tracing_pipeline::Device,
     pub acceleration_structure_loader: ash::khr::acceleration_structure::Device,
     pub samplers: ManuallyDrop<Samplers>,
 }
@@ -516,6 +517,9 @@ impl Device {
             swapchain_loader: ash::khr::swapchain::Device::new(&instance, &device),
             debug_utils_device_loader: ash::ext::debug_utils::Device::new(&instance, &device),
             mesh_shader_loader: ash::ext::mesh_shader::Device::new(&instance, &device),
+            ray_tracing_pipeline_loader: ash::khr::ray_tracing_pipeline::Device::new(
+                &instance, &device,
+            ),
             acceleration_structure_loader: ash::khr::acceleration_structure::Device::new(
                 &instance, &device,
             ),
