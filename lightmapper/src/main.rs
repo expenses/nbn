@@ -112,7 +112,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         .create_buffer(nbn::BufferDescriptor {
             name: "temp buffer",
             size: width as u64 * height as u64 * 4 * 4,
-            ty: nbn::MemoryLocation::GpuOnly,
+            ty: nbn::MemoryLocation::GpuToCpu,
         })
         .unwrap();
 
@@ -249,6 +249,55 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
     image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
         .unwrap()
         .save("out.exr")
+        .unwrap();
+
+    {
+        let mut data: Vec<f32> = output_slice.chunks(4).flat_map(|chunk| [chunk[0], chunk[1], chunk[2]]).collect();
+
+        let size = width as usize * height as usize * 3;
+
+        let device = oidn::Device::new();
+        oidn::RayTracing::new(&device)
+            .hdr(true)
+            .image_dimensions(width as _, height as _)
+            .filter_in_place(&mut data[..width as usize * height as usize * 3]).unwrap();
+
+        image::ImageBuffer::<image::Rgb<f32>, &[f32]>::from_raw(width, height, &data)
+            .unwrap()
+            .save("denoiser_output.exr")
+            .unwrap();
+
+        let temp_slice = temp_buffer.try_as_slice_mut::<f32>().unwrap();
+
+        for (a, b) in temp_slice.chunks_mut(4).zip(data.chunks(3)) {
+            if a[3] > 0.5 {
+                a[0..3].copy_from_slice(&b[0..3]);
+            }
+        }
+    }
+
+    device.reset_command_buffer(&command_buffer);
+    unsafe {
+        device
+            .begin_command_buffer(*command_buffer, &vk::CommandBufferBeginInfo::default())
+            .unwrap();
+        device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+        device.push_constants::<PushConstants>(&command_buffer, push_constants);
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *dilation_pipeline,
+        );
+        device.cmd_dispatch(*command_buffer, width.div_ceil(8), height.div_ceil(8), 1);
+        device.end_command_buffer(*command_buffer).unwrap();
+    }
+
+    device.submit_and_wait_on_command_buffer(&command_buffer);
+
+
+    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
+        .unwrap()
+        .save("out_denoised.exr")
         .unwrap();
 
     /*

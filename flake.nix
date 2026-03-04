@@ -78,6 +78,7 @@
             ];
             buildInputs = [vulkan-loader];
             LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon libxcursor libx11 libxi];
+            OIDN_DIR = openimagedenoise;
           };
         devShells.slang-build = with pkgs;
           mkShell {

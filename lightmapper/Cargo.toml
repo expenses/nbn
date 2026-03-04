@@ -18,3 +18,4 @@ env_logger = "0.11.9"
 winit = "0.30.13"
 glam = "0.32.0"
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
+oidn = "2.3.3"
