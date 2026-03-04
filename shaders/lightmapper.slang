@@ -85,8 +85,8 @@ struct Lights: Contribution<float2> {
         RayDesc desc;
         desc.Origin = info.position;
         desc.Direction = direction;
-        desc.TMin = 5e-3f;
         desc.TMax = distance;
+        desc.TMin = 0.0;
         var query = RayQuery<
             RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         query.TraceRayInline(
@@ -488,7 +488,7 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
     desc.Direction = direction;
     desc.Origin = origin;
     desc.TMax = 200.0;
-    desc.TMin = 0.1;
+    desc.TMin = 0.0;
 
     var query = RayQuery<RAY_FLAG_NONE>();
     query.TraceRayInline(
