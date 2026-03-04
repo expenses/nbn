@@ -1396,6 +1396,113 @@ impl Device {
         Pipeline::from_raw(pipeline, &self.device)
     }
 
+    pub fn create_ray_tracing_pipeline(
+        &self,
+        desc: &RayTracingPipelineDesc,
+        staging_buffer: &mut StagingBuffer,
+    ) -> RaytracingPipeline {
+        let mut rt_properties = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
+        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut rt_properties);
+        unsafe {
+            self.instance
+                .get_physical_device_properties2(self.physical_device, &mut properties)
+        };
+
+        let stages = &[
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::RAYGEN_KHR)
+                .name(desc.raygen.entry_point)
+                .module(**desc.raygen.module),
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::MISS_KHR)
+                .name(desc.miss.entry_point)
+                .module(**desc.miss.module),
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::CLOSEST_HIT_KHR)
+                .name(desc.closest_hit.entry_point)
+                .module(**desc.closest_hit.module),
+        ];
+
+        let groups = &[
+            vk::RayTracingShaderGroupCreateInfoKHR::default()
+                .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+                .general_shader(0)
+                .closest_hit_shader(vk::SHADER_UNUSED_KHR)
+                .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                .intersection_shader(vk::SHADER_UNUSED_KHR),
+            vk::RayTracingShaderGroupCreateInfoKHR::default()
+                .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+                .general_shader(1)
+                .closest_hit_shader(vk::SHADER_UNUSED_KHR)
+                .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                .intersection_shader(vk::SHADER_UNUSED_KHR),
+            vk::RayTracingShaderGroupCreateInfoKHR::default()
+                .ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
+                .general_shader(vk::SHADER_UNUSED_KHR)
+                .closest_hit_shader(2)
+                .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                .intersection_shader(vk::SHADER_UNUSED_KHR),
+        ];
+
+        let create_info = vk::RayTracingPipelineCreateInfoKHR::default()
+            .layout(**self.pipeline_layout)
+            .stages(stages)
+            .groups(groups)
+            .max_pipeline_ray_recursion_depth(1);
+
+        let pipelines = unsafe {
+            self.ray_tracing_pipeline_loader
+                .create_ray_tracing_pipelines(
+                    vk::DeferredOperationKHR::null(),
+                    vk::PipelineCache::null(),
+                    &[create_info],
+                    None,
+                )
+        }
+        .unwrap();
+
+        let pipeline = pipelines[0];
+
+        let shader_group_handles = unsafe {
+            self.ray_tracing_pipeline_loader
+                .get_ray_tracing_shader_group_handles(
+                    pipeline,
+                    0,
+                    groups.len() as _,
+                    rt_properties.shader_group_handle_size as usize * groups.len(),
+                )
+        }
+        .unwrap();
+
+        let group_handles = staging_buffer.create_buffer_from_slice(
+            self,
+            "shader_group_handles",
+            &shader_group_handles,
+        );
+
+        let handle_size = rt_properties.shader_group_handle_size as u64;
+
+        RaytracingPipeline {
+            pipeline: Pipeline::from_raw(pipeline, &self.device),
+            raygen: vk::StridedDeviceAddressRegionKHR {
+                device_address: *group_handles,
+                stride: handle_size,
+                size: handle_size,
+            },
+            miss: vk::StridedDeviceAddressRegionKHR {
+                device_address: *group_handles + handle_size,
+                stride: handle_size,
+                size: handle_size,
+            },
+            hit: vk::StridedDeviceAddressRegionKHR {
+                device_address: *group_handles + handle_size * 2,
+                stride: handle_size,
+                size: handle_size,
+            },
+            _group_handles: group_handles,
+        }
+    }
+
     pub fn create_compute_pipeline(&self, module: &ShaderModule, entry_point: &CStr) -> Pipeline {
         let create_info = vk::ComputePipelineCreateInfo::default()
             .stage(
@@ -1932,6 +2039,12 @@ bitflags::bitflags! {
         const POINTS = 1 << 1;
         const BACKFACE_CULLING = 1 << 2;
     }
+}
+
+pub struct RayTracingPipelineDesc<'a> {
+    pub raygen: ShaderDesc<'a>,
+    pub miss: ShaderDesc<'a>,
+    pub closest_hit: ShaderDesc<'a>,
 }
 
 #[derive(Clone)]
@@ -2517,4 +2630,12 @@ impl From<AccelerationStructureInstance> for vk::AccelerationStructureInstanceKH
             },
         }
     }
+}
+
+pub struct RaytracingPipeline {
+    pub pipeline: Pipeline,
+    pub _group_handles: Buffer,
+    pub raygen: vk::StridedDeviceAddressRegionKHR,
+    pub miss: vk::StridedDeviceAddressRegionKHR,
+    pub hit: vk::StridedDeviceAddressRegionKHR,
 }
