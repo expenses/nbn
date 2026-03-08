@@ -250,16 +250,13 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         .unwrap();
 
     /*
-    let visbuffer_copy_slice = visbuffer_copy.try_as_slice::<u32>().unwrap();
+    let coverage = Coverage {
+        coverage: temp_slice,
+        width,
+        height,
+    };
 
-    let (pixel_info, img) = compute_pixel_info(
-        &gltf_data.seams,
-        &Coverage {
-            visbuffer: visbuffer_copy_slice,
-            width,
-            height,
-        },
-    );
+    let (pixel_info, img) = compute_pixel_info(&gltf_data.seams, &coverage);
 
     dbg!(pixel_info.len());
 
@@ -267,15 +264,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     dbg!("data");
 
-    let data = setup_least_squares(
-        &pixel_info,
-        &output_slice,
-        &Coverage {
-            visbuffer: visbuffer_copy_slice,
-            width,
-            height,
-        },
-    );
+    let data = setup_least_squares(&pixel_info, &output_slice, &coverage);
 
     dbg!("running");
 
