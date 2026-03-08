@@ -839,7 +839,7 @@ fn load_gltf(
             }
         });
 
-    let seams = find_seams(&indices, &positions, &uv2s);
+    let seams = find_seams(&indices, &positions, &normals, &uv2s);
 
     let num_vertices = positions.len() / 3;
     let num_indices = indices.len();
@@ -955,9 +955,12 @@ impl Seam {
     }
 }
 
-fn find_seams(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<Seam> {
-    let mut edge_map: HashMap<([OrderedFloat<f32>; 3], [OrderedFloat<f32>; 3]), (Vec2, Vec2), _> =
-        HashMap::new();
+fn find_seams(indices: &[u32], positions: &[f32], normals: &[f32], uvs: &[f32]) -> Vec<Seam> {
+    let mut edge_map: HashMap<
+        ([OrderedFloat<f32>; 3], [OrderedFloat<f32>; 3]),
+        (Vec3, Vec3, Vec2, Vec2),
+        _,
+    > = HashMap::new();
 
     let mut seams = Vec::new();
 
@@ -969,6 +972,15 @@ fn find_seams(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<Seam> {
         ]
     };
 
+    let get_normal = |index| {
+        Vec3::new(
+            normals[index * 3],
+            normals[index * 3 + 1],
+            normals[index * 3 + 2],
+        )
+        .normalize()
+    };
+
     let get_uv = |index| Vec2::new(uvs[index * 2], uvs[index * 2 + 1]);
 
     for tri in indices.chunks(3) {
@@ -977,18 +989,24 @@ fn find_seams(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<Seam> {
             let to_pos = get_position(to as usize);
             let from_uv = get_uv(from as usize);
             let to_uv = get_uv(to as usize);
+            let from_normal = get_normal(from as usize);
+            let to_normal = get_normal(to as usize);
 
             // See if the same edge in world space has been inserted.
             // this has the positions flipped as we're assuming a consistent winding order.
             match edge_map.entry((to_pos, from_pos)) {
                 std::collections::hash_map::Entry::Vacant(_) => {
                     // Insert if not
-                    edge_map.insert((from_pos, to_pos), (from_uv, to_uv));
+                    edge_map.insert((from_pos, to_pos), (from_normal, to_normal, from_uv, to_uv));
                 }
                 // This edge has already been added once, so we have enough information to see if it's a normal edge, or a "seam edge".
                 std::collections::hash_map::Entry::Occupied(entry) => {
-                    let (other_from_uv, other_to_uv) = *entry.get();
-                    if other_from_uv != to_uv || other_to_uv != from_uv {
+                    let (other_from_normal, other_to_normal, other_from_uv, other_to_uv) =
+                        *entry.get();
+                    if other_from_normal.dot(to_normal) > 0.9
+                        && other_to_normal.dot(from_normal) > 0.9
+                        && (other_from_uv != to_uv || other_to_uv != from_uv)
+                    {
                         // UV don't match, so we have a seam
                         seams.push(Seam {
                             a: [from_uv, to_uv],
@@ -1007,7 +1025,7 @@ fn find_seams(indices: &[u32], positions: &[f32], uvs: &[f32]) -> Vec<Seam> {
 }
 
 struct Coverage<'a> {
-    visbuffer: &'a [u32],
+    coverage: &'a [f32],
     width: u32,
     height: u32,
 }
@@ -1015,7 +1033,7 @@ struct Coverage<'a> {
 impl<'a> Coverage<'a> {
     // We're using the data copied out of the visbuffer as a coverage mask.
     fn is_covered(&self, index: usize) -> bool {
-        self.visbuffer[index] != u32::max_value()
+        self.coverage[index * 4 + 3] > 0.5
     }
 }
 
