@@ -245,6 +245,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
     device.submit_and_wait_on_command_buffer(&command_buffer);
 
     let output_slice = output_buffer.try_as_slice_mut::<f32>().unwrap();
+    let temp_slice = temp_buffer.try_as_slice_mut::<f32>().unwrap();
 
     image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
         .unwrap()
@@ -252,7 +253,10 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         .unwrap();
 
     {
-        let mut data: Vec<f32> = output_slice.chunks(4).flat_map(|chunk| [chunk[0], chunk[1], chunk[2]]).collect();
+        let mut data: Vec<f32> = output_slice
+            .chunks(4)
+            .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
+            .collect();
 
         let size = width as usize * height as usize * 3;
 
@@ -260,14 +264,13 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         oidn::RayTracing::new(&device)
             .hdr(true)
             .image_dimensions(width as _, height as _)
-            .filter_in_place(&mut data[..width as usize * height as usize * 3]).unwrap();
+            .filter_in_place(&mut data[..width as usize * height as usize * 3])
+            .unwrap();
 
         image::ImageBuffer::<image::Rgb<f32>, &[f32]>::from_raw(width, height, &data)
             .unwrap()
             .save("denoiser_output.exr")
             .unwrap();
-
-        let temp_slice = temp_buffer.try_as_slice_mut::<f32>().unwrap();
 
         for (a, b) in temp_slice.chunks_mut(4).zip(data.chunks(3)) {
             if a[3] > 0.5 {
@@ -293,7 +296,6 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
     }
 
     device.submit_and_wait_on_command_buffer(&command_buffer);
-
 
     image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
         .unwrap()
