@@ -258,8 +258,6 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
             .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect();
 
-        let size = width as usize * height as usize * 3;
-
         let device = oidn::Device::new();
         oidn::RayTracing::new(&device)
             .hdr(true)
