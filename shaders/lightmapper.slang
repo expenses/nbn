@@ -32,25 +32,34 @@ struct Lights: Contribution<float2> {
     HitInfo info;
     PushConstants push_constants;
 
-    UnshadowedContribution unshadowed_contribution(float2 rand) {
-        let light_index = uint(rand.x * push_constants.num_lights);
+    void get_light_info(float2 rand, out float3 emission, out float3 direction, out float distance_sq) {
+        rand.x *= push_constants.num_lights;
+        let light_index = uint(rand.x);
+        rand.x = frac(rand.x);
         let light = push_constants.lights[light_index];
 
-        var emission = light.emission;
+        emission = light.emission;
 
-        let vector = light.position - info.position;
-        let distance_sq = dot(vector,vector);
+        let vector = (light.position + sample_shere(rand) * 0.25) - info.position;
+        distance_sq = dot(vector,vector);
         let distance = sqrt(distance_sq);
 
-        let direction = vector / distance;
-
-        let n_dot_l = max(dot(info.normal, direction), 0.0);
+        direction = vector / distance;
 
         // spotlights
         {
             let theta = dot(direction, light.spotlight_direction);
             emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
         }
+    }
+
+    UnshadowedContribution unshadowed_contribution(float2 rand) {
+        float3 emission;
+        float3 direction;
+        float distance_sq;
+        get_light_info(rand, emission, direction, distance_sq);
+
+        let n_dot_l = max(dot(info.normal, direction), 0.0);
 
         UnshadowedContribution contribution;
         contribution.contribution = emission * (n_dot_l / distance_sq);
@@ -59,16 +68,10 @@ struct Lights: Contribution<float2> {
     }
 
     float3 shadowed_contribution(float2 rand) {
-        let light_index = uint(rand.x * push_constants.num_lights);
-        let light = push_constants.lights[light_index];
-
-        var emission = light.emission;
-
-        let vector = light.position - info.position;
-        let distance_sq = dot(vector,vector);
-        let distance = sqrt(distance_sq);
-
-        let direction = vector / distance;
+        float3 emission;
+        float3 direction;
+        float distance_sq;
+        get_light_info(rand, emission, direction, distance_sq);
 
         let n_dot_l = max(dot(info.normal, direction), 0.0);
 
@@ -76,16 +79,10 @@ struct Lights: Contribution<float2> {
             return 0.0;
         }
 
-        // spotlights
-        {
-            let theta = dot(direction, light.spotlight_direction);
-            emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
-        }
-
         RayDesc desc;
         desc.Origin = info.position;
         desc.Direction = direction;
-        desc.TMax = distance;
+        desc.TMax = sqrt(distance_sq);
         desc.TMin = 0.0;
         var query = RayQuery<
             RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();

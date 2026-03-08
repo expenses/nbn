@@ -15,3 +15,15 @@ float3 sample_cosine_weighted_hemisphere(float2 u) {
 float3 sample_cosine_weighted_hemisphere<R: Rng>(R* rng) {
     return sample_cosine_weighted_hemisphere(rng.rand2());
 }
+
+float3 sample_shere(float2 rand) {
+    let z = 1.0 - 2.0 * rand.x;
+    let phi = 2.0 * PI * rand.y;
+    let r = sqrt(1.0 - z * z);
+
+    return float3(
+        r * cos(phi),
+        r * sin(phi),
+        z
+    );
+}
