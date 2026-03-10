@@ -12,12 +12,13 @@ import shared.restir;
 
 float3 ris<C: Contribution<float2>>(C contributor, uint num_samples, SobolRng* rng) {
     var reservoir = Reservoir<float2>(float2(-1));
+    var lcg = LCG(rng.thread, rng.sample);
 
     for (uint i = 0; i < num_samples; i++) {
         let rng_state = rng.rand2();
         // Get the unshadowed contribution for a random light
         let value = contributor.unshadowed_contribution(rng_state);
-        reservoir.update(rng_state, value.weight(), 1, rng.rand());
+        reservoir.update(rng_state, value.weight(), 1, lcg.rand());
     }
 
     let value = any(reservoir.data != float2(-1)) ? contributor.shadowed_contribution(reservoir.data) : ShadowedValue();
@@ -195,11 +196,13 @@ float3 uv_to_direction(float2 uv) {
 }
 
 struct SobolRng {
-    uint pixel_seed;
-    uint sample;
+    uint pixel_seed = 0;
+    uint sample = 0;
     uint dimension = 0;
+    uint2 thread;
 
-    __init(uint2 thread, uint sample_) {
+    __init(uint2 thread_, uint sample_) {
+        thread = thread_;
         pixel_seed = hp_mix32(thread.x ^ (thread.y << 16));
         sample = sample_;
     }
