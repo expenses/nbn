@@ -205,6 +205,13 @@ struct SobolRng {
         dimension++;
         return rand;
     }
+
+    [mutating]
+    float3 rand3() {
+        let rand = sobol_burley_sample_3D(sample, dimension, pixel_seed);
+        dimension++;
+        return rand;
+    }
 }
 
 [shader("compute")]
