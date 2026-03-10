@@ -65,7 +65,7 @@ struct Lights: Contribution<float2> {
         return contribution_info(rand).unshadowed;
     }
 
-    ShadowedValue shadowed_contribution(float2 rand) {
+    FullShadowedValue full_shadowed_value(float2 rand) {
         var contribution_info = contribution_info(rand);
         RayDesc desc;
         desc.Origin = info.position;
@@ -82,15 +82,20 @@ struct Lights: Contribution<float2> {
         );
         query.Proceed();
 
-        ShadowedValue value;
-        value.p = contribution_info.unshadowed.p_hat;
-        value.contribution = contribution_info.contribution;
+        FullShadowedValue value;
+        value.shadowed.p = contribution_info.unshadowed.p_hat;
+        value.shadowed.contribution = contribution_info.contribution;
+        value.inv_pdf = contribution_info.unshadowed.inv_pdf;
 
         if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-            value.contribution = float3(0);
-            value.p = 0.0;
+            value.shadowed.contribution = float3(0);
+            value.shadowed.p = 0.0;
         }
         return value;
+    }
+
+    ShadowedValue shadowed_contribution(float2 rand) {
+        return full_shadowed_value(rand).shadowed;
     }
 }
 
@@ -125,32 +130,22 @@ struct EnvMap: Contribution<float2> {
         return contribution_info(rand2).unshadowed;
     }
 
-    ShadowedValue shadowed_contribution(float2 rand2) {
-        var index = uint(rand2.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
-        var alias = push_constants.alias_table[index];
-        if (rand2.y > alias.threshold) {
-            index = alias.fallback;
-            alias = push_constants.alias_table[alias.fallback];
-        }
-        let uv = (float2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x) + 0.5) / float2(push_constants.envmap_size);
-        Sampler2D envmap = sampled_images[push_constants.envmap];
+    FullShadowedValue full_shadowed_value(float2 rand2) {
+        let contribution_info = contribution_info(rand2);
 
-        let rotated_dir = uv_to_direction(uv);
+        FullShadowedValue value;
+        value.shadowed.contribution = contribution_info.contribution;
+        value.shadowed.p = contribution_info.unshadowed.p_hat;
+        value.inv_pdf = contribution_info.unshadowed.inv_pdf;
 
-        let n_dot_l = max(dot(info.normal, rotated_dir), 0.0);
-
-        ShadowedValue contribution;
-        contribution.contribution = float3(0);
-        contribution.p = 0.0;
-
-        if (n_dot_l == 0.0) {
-            return contribution;
+        if (all(value.shadowed.contribution == float3(0.0))) {
+            return value;
         }
 
         RayDesc desc;
-        desc.Direction = rotated_dir;
+        desc.Direction = contribution_info.direction;
         desc.Origin = info.position;
-        desc.TMax = 200.0;
+        desc.TMax = contribution_info.distance;
         desc.TMin = 0;
 
         var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
@@ -162,12 +157,16 @@ struct EnvMap: Contribution<float2> {
         );
         query.Proceed();
 
-        if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-            contribution.contribution = envmap.SampleLevel(uv, 0).rgb * n_dot_l;
-            contribution.p = length(contribution.contribution);
+        if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            value.shadowed.contribution = float3(0.0);
+            value.shadowed.p = 0.0;
         }
 
-        return contribution;
+        return value;
+    }
+
+    ShadowedValue shadowed_contribution(float2 rand2) {
+        return full_shadowed_value(rand2).shadowed;
     }
 }
 
