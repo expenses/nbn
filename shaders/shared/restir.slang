@@ -93,15 +93,19 @@ struct ShadowedValue {
     float p = 0.0;
 }
 
-struct SamplePoint {
-    float3 position;
-    float3 normal;
+struct ContributionInfo {
+    UnshadowedValue unshadowed;
+    float3 direction;
+    float distance;
+    float3 contribution;
+}
 
-    [mutating]
-    void fix_normal(float3 camera_pos) {
-        if (dot(camera_pos - position, normal) < 0) {
-            normal = -normal;
-        }
+struct FullShadowedValue {
+    ShadowedValue shadowed;
+    float inv_pdf;
+    
+    float3 adjusted() {
+        return shadowed.contribution * inv_pdf;
     }
 }
 /*

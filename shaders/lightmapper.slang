@@ -26,13 +26,6 @@ float3 ris<C: Contribution<float2>>(C contributor, uint num_samples, SobolRng* r
     return value.contribution * reservoir.weight;
 }
 
-struct ContributionInfo {
-    UnshadowedValue unshadowed;
-    float3 direction;
-    float distance;
-    float3 contribution;
-}
-
 struct Lights: Contribution<float2> {
     HitInfo info;
     PushConstants push_constants;
