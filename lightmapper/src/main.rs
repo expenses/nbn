@@ -37,6 +37,21 @@ struct Arguments {
     common: CommonArgs,
 }
 
+fn write_output(width: u32, height: u32, slice: &[f32], filename: &str, num_samples: f32) {
+    let mut output_vec = slice.to_vec();
+
+    output_vec.chunks_mut(4).for_each(|chunk| {
+        for i in 0..3 {
+            chunk[i] /= num_samples;
+        }
+    });
+
+    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, &output_vec)
+        .unwrap()
+        .save(filename)
+        .unwrap();
+}
+
 fn main() {
     env_logger::init();
 
@@ -112,7 +127,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         .create_buffer(nbn::BufferDescriptor {
             name: "temp buffer",
             size: width as u64 * height as u64 * 4 * 4,
-            ty: nbn::MemoryLocation::GpuOnly,
+            ty: nbn::MemoryLocation::GpuToCpu,
         })
         .unwrap();
 
@@ -167,7 +182,6 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         location_bitmasks: *location_bitmasks_buffer,
         triangle_indices: *triangle_indices_buffer,
         sample_index: 0,
-        total_samples,
         envmap: *envmap,
         envmap_size,
         alias_table: *alias_table,
@@ -225,6 +239,10 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         dbg!(sample_index);
         device.submit_and_wait_on_command_buffer(&command_buffer);
         device.reset_command_buffer(&command_buffer);
+
+        if sample_index % 128 == 0 {
+            write_output(width, height, temp_buffer.try_as_slice::<f32>().unwrap(), &format!("{}.exr", sample_index), (sample_index+1) as _);
+        }
     }
 
     unsafe {
@@ -244,12 +262,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     device.submit_and_wait_on_command_buffer(&command_buffer);
 
-    let output_slice = output_buffer.try_as_slice_mut::<f32>().unwrap();
-
-    image::ImageBuffer::<image::Rgba<f32>, &[f32]>::from_raw(width, height, output_slice)
-        .unwrap()
-        .save("out.exr")
-        .unwrap();
+    write_output(width, height, output_buffer.try_as_slice::<f32>().unwrap(), "out.exr", total_samples as _);
 
     /*
     let (solution_r, solution_g, solution_b, pixel_info) = least_squares::get_solutions(
@@ -487,7 +500,6 @@ impl winit::application::ApplicationHandler for App {
                     uv_tlas_: 0,
                     location_bitmasks: 0,
                     sample_index: 0,
-                    total_samples: 0,
                     triangle_indices: 0,
                     envmap: *state.envmap,
                     envmap_size: state.envmap_size,

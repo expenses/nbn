@@ -92,7 +92,6 @@ struct PushConstants {
     uint num_lights;
 
     uint sample_index;
-    uint total_samples;
     uint envmap;
 };
 
