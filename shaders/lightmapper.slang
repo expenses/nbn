@@ -25,64 +25,59 @@ float3 ris<C: Contribution<float2>>(C contributor, uint num_samples, SobolRng* r
     return value.contribution * reservoir.weight;
 }
 
+struct ContributionInfo {
+    UnshadowedValue unshadowed;
+    float3 direction;
+    float distance;
+    float3 contribution;
 }
 
 struct Lights: Contribution<float2> {
     HitInfo info;
     PushConstants push_constants;
 
-    void get_light_info(float2 rand, out float3 emission, out float3 direction, out float distance_sq) {
+    ContributionInfo contribution_info(float2 rand) {
         rand.x *= push_constants.num_lights;
         let light_index = uint(rand.x);
         rand.x = frac(rand.x);
         let light = push_constants.lights[light_index];
 
-        emission = light.emission;
+        var emission = light.emission;
 
         let vector = (light.position + sample_shere(rand) * 0.25) - info.position;
-        distance_sq = dot(vector,vector);
+        let distance_sq = dot(vector,vector);
         let distance = sqrt(distance_sq);
 
-        direction = vector / distance;
+        let direction = vector / distance;
 
         // spotlights
         {
             let theta = dot(direction, light.spotlight_direction);
             emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
         }
-    }
-
-    UnshadowedContribution unshadowed_contribution(float2 rand) {
-        float3 emission;
-        float3 direction;
-        float distance_sq;
-        get_light_info(rand, emission, direction, distance_sq);
 
         let n_dot_l = max(dot(info.normal, direction), 0.0);
 
-        UnshadowedContribution contribution;
+        ContributionInfo contribution;
         contribution.contribution = emission * (n_dot_l / distance_sq);
-        contribution.inv_pdf = push_constants.num_lights;
+        contribution.unshadowed.p_hat = length(contribution.contribution);
+        contribution.unshadowed.inv_pdf = float(push_constants.num_lights);
+        contribution.distance = distance;
+        contribution.direction = direction;
         return contribution;
     }
 
-    float3 shadowed_contribution(float2 rand) {
-        float3 emission;
-        float3 direction;
-        float distance_sq;
-        get_light_info(rand, emission, direction, distance_sq);
+    UnshadowedValue unshadowed_contribution(float2 rand) {
+        return contribution_info(rand).unshadowed;
+    }
 
-        let n_dot_l = max(dot(info.normal, direction), 0.0);
-
-        if (n_dot_l == 0.0) {
-            return 0.0;
-        }
-
+    ShadowedValue shadowed_contribution(float2 rand) {
+        var contribution_info = contribution_info(rand);
         RayDesc desc;
         desc.Origin = info.position;
-        desc.Direction = direction;
-        desc.TMax = sqrt(distance_sq);
+        desc.Direction = contribution_info.direction;
         desc.TMin = 0.0;
+        desc.TMax = contribution_info.distance;
         var query = RayQuery<
             RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
         query.TraceRayInline(
@@ -92,18 +87,24 @@ struct Lights: Contribution<float2> {
             desc
         );
         query.Proceed();
-        let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
 
-        return emission * (visibility * n_dot_l / distance_sq);
+        ShadowedValue value;
+        value.p = contribution_info.unshadowed.p_hat;
+        value.contribution = contribution_info.contribution;
+
+        if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            value.contribution = float3(0);
+            value.p = 0.0;
+        }
+        return value;
     }
 }
-
 
 struct EnvMap: Contribution<float2> {
     PushConstants push_constants;
     HitInfo info;
 
-    UnshadowedContribution unshadowed_contribution(float2 rand2) {
+    ContributionInfo contribution_info(float2 rand2) {
         var index = uint(rand2.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
         var alias = push_constants.alias_table[index];
         if (rand2.y > alias.threshold) {
@@ -117,13 +118,20 @@ struct EnvMap: Contribution<float2> {
 
         let n_dot_l = max(dot(info.normal, rotated_dir), 0.0);
 
-        UnshadowedContribution contribution;
+        ContributionInfo contribution;
         contribution.contribution = envmap.SampleLevel(uv, 0).rgb * n_dot_l;
-        contribution.inv_pdf = alias.inv_pdf;
+        contribution.unshadowed.p_hat = length(contribution.contribution);
+        contribution.unshadowed.inv_pdf = alias.inv_pdf;
+        contribution.distance = 200;
+        contribution.direction = rotated_dir;
         return contribution;
     }
 
-    float3 shadowed_contribution(float2 rand2) {
+    UnshadowedValue unshadowed_contribution(float2 rand2) {
+        return contribution_info(rand2).unshadowed;
+    }
+
+    ShadowedValue shadowed_contribution(float2 rand2) {
         var index = uint(rand2.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
         var alias = push_constants.alias_table[index];
         if (rand2.y > alias.threshold) {
@@ -137,8 +145,12 @@ struct EnvMap: Contribution<float2> {
 
         let n_dot_l = max(dot(info.normal, rotated_dir), 0.0);
 
+        ShadowedValue contribution;
+        contribution.contribution = float3(0);
+        contribution.p = 0.0;
+
         if (n_dot_l == 0.0) {
-            return float3(0);
+            return contribution;
         }
 
         RayDesc desc;
@@ -157,10 +169,11 @@ struct EnvMap: Contribution<float2> {
         query.Proceed();
 
         if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
-            return envmap.SampleLevel(uv, 0).rgb * n_dot_l;
+            contribution.contribution = envmap.SampleLevel(uv, 0).rgb * n_dot_l;
+            contribution.p = length(contribution.contribution);
         }
 
-        return float3(0);
+        return contribution;
     }
 }
 
@@ -423,11 +436,7 @@ float3 get_lighting(HitInfo info, PushConstants push_constants, SobolRng* rng) {
     env_map.info = info;
     env_map.push_constants = push_constants;
 
-    Split<Lights, EnvMap> split;
-    split.a = lights;
-    split.b = env_map;
-
-    return ris(split, 4, rng);
+    return ris(lights, 1, rng);//lights.shadowed_contribution2(rng.rand2()).adjusted();// + env_map.shadowed_contribution2(rng.rand2()).adjusted();
 }
 
 float4 dilate(float4* values, uint2 coord, uint2 extent) {
