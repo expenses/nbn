@@ -63,8 +63,8 @@ struct Reservoir<T> {
     }
 
     [mutating]
-    void set_weight(float p_hat) {
-        W_y = p_hat > 0.0 ? average_weight() / p_hat : 0.0;
+    void set_weight_from_p(float p) {
+        W_y = p > 0.0 ? average_weight() / p : 0.0;
     }
 
     [mutating]
@@ -74,14 +74,23 @@ struct Reservoir<T> {
 };
 
 interface Contribution<T> {
-    UnshadowedContribution unshadowed_contribution(T data);
-    float3 shadowed_contribution(T data);
+    UnshadowedValue unshadowed_contribution(T data);
+    ShadowedValue shadowed_contribution(T data);
 }
 
-struct UnshadowedContribution {
-    float3 contribution;
+struct UnshadowedValue {
+    float p_hat = 0.0;
     // 1.0 / pdf
-    float inv_pdf;
+    float inv_pdf = 0.0;
+
+    float weight() {
+        return p_hat * inv_pdf;
+    }
+}
+
+struct ShadowedValue {
+    float3 contribution = float3(0.0);
+    float p = 0.0;
 }
 
 struct SamplePoint {
@@ -95,85 +104,7 @@ struct SamplePoint {
         }
     }
 }
-
-struct Environment: Contribution<float2> {
-    SamplePoint point;
-    RaytracingAccelerationStructure acceleration_structure;
-    float3 colour;
-
-    __init(SamplePoint point_, RaytracingAccelerationStructure acceleration_structure_, float3 colour_) {
-        point = point_;
-        acceleration_structure = acceleration_structure_;
-        colour = colour_;
-    }
-
-    UnshadowedContribution unshadowed_contribution(float2 _rand2) {
-        UnshadowedContribution contribution;
-        contribution.contribution = colour;
-        contribution.inv_pdf = 1;
-        return contribution;
-    }
-
-    float3 shadowed_contribution(float2 rand) {
-        let hemisphere_dir = sample_cosine_weighted_hemisphere(rand);
-        let rotated_dir = mul(build_tbn(point.normal), hemisphere_dir);
-
-        RayDesc desc;
-        desc.Origin = point.position;
-        desc.Direction = rotated_dir;
-        desc.TMin = 2e-4f;
-        desc.TMax = 100000.0;
-        var query = RayQuery<
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        query.TraceRayInline(
-            acceleration_structure,
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xff,
-            desc
-        );
-        query.Proceed();
-        let visibility = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-
-        return visibility * colour;
-    }
-}
-
-struct BlueNoise<T: Contribution<float2>>: Contribution<uint> {
-    T inner;
-    BlueNoiseData blue_noise_data;
-
-    __init(T inner_, BlueNoiseData blue_noise_data_) {
-        inner = inner_;
-        blue_noise_data = blue_noise_data_;
-    }
-
-    UnshadowedContribution unshadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(blue_noise_data, blue_noise_state);
-        return inner.unshadowed_contribution(blue_noise.rand2());
-    }
-
-    float3 shadowed_contribution(uint blue_noise_state) {
-        var blue_noise = ThreadBlueNoise(blue_noise_data, blue_noise_state);
-        return inner.shadowed_contribution(blue_noise.rand2());
-    }
-
-    float3 shadowed_contribution_from_reservoir(Reservoir<uint> reservoir) {
-        if (reservoir.data != MAX_UINT_VALUE) {
-            return shadowed_contribution(reservoir.data);
-        } else {
-            return float3(0.0);
-        }
-    }
-
-    float3 unshadowed_contribution_from_reservoir(Reservoir<uint> reservoir) {
-        if (reservoir.data != MAX_UINT_VALUE) {
-            return unshadowed_contribution(reservoir.data).contribution;
-        } else {
-            return float3(0.0);
-        }
-    }
-}
-
+/*
 void stream_into_reservoir<T: Contribution<float2>, R: Rng>(BlueNoise<T> state, Reservoir<uint>* reservoir, R* rng, uint2 thread, uint frame_index, uint num_samples) {
     for (uint i = 0; i < num_samples; i++) {
         let rng_state = pack_blue_noise_state(thread, frame_index * num_samples + i);
@@ -208,3 +139,4 @@ void temporal_accumulation<T: Contribution<float2>, R: Rng>(
 
     *frame_reservoir = temporal_reservoir;
 }
+*/

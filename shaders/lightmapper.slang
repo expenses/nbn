@@ -16,16 +16,15 @@ float3 ris<C: Contribution<float2>>(C contributor, uint num_samples, SobolRng* r
     for (uint i = 0; i < num_samples; i++) {
         let rng_state = rng.rand2();
         // Get the unshadowed contribution for a random light
-        let contribution = contributor.unshadowed_contribution(rng_state);
-        let p_hat = length(contribution.contribution);
-        let weight = p_hat * contribution.inv_pdf;
-        reservoir.update(rng_state, weight, 1, rng.rand());
+        let value = contributor.unshadowed_contribution(rng_state);
+        reservoir.update(rng_state, value.weight(), 1, rng.rand());
     }
 
-    let contribution = any(reservoir.data != float2(-1)) ? contributor.shadowed_contribution(reservoir.data) : float3(0.0);
-    var p_hat = length(contribution);
-    reservoir.set_weight(p_hat);
-    return contribution * reservoir.weight;
+    let value = any(reservoir.data != float2(-1)) ? contributor.shadowed_contribution(reservoir.data) : ShadowedValue();
+    reservoir.set_weight_from_p(value.p);
+    return value.contribution * reservoir.weight;
+}
+
 }
 
 struct Lights: Contribution<float2> {
