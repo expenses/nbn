@@ -71,6 +71,18 @@ struct Reservoir<T> {
     void clamp(uint max_samples) {
         M = min(M, max_samples);
     }
+    
+    [mutating]
+    float3 set_from_shadowed_contribution<C: Contribution<T>>(C contributor, bool is_set) {
+        if (is_set) {
+            let value = contributor.shadowed_contribution(data);
+            set_weight_from_p(value.p);
+            return value.contribution * weight;
+        } else {
+            W_y = 0.0;
+            return float3(0);
+        }
+    }
 };
 
 interface Contribution<T> {

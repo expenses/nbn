@@ -21,9 +21,7 @@ float3 ris<C: Contribution<float2>>(C contributor, uint num_samples, SobolRng* r
         reservoir.update(rng_state, value.weight(), 1, lcg.rand());
     }
 
-    let value = any(reservoir.data != float2(-1)) ? contributor.shadowed_contribution(reservoir.data) : ShadowedValue();
-    reservoir.set_weight_from_p(value.p);
-    return value.contribution * reservoir.weight;
+    return reservoir.set_from_shadowed_contribution(contributor, any(reservoir.data != float2(-1)));
 }
 
 struct Lights: Contribution<float2> {
@@ -228,44 +226,42 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
         return;
     }
 
-    for (uint vv = 0; vv < 8; vv++) {
-        let loc = thread.y * push_constants.extent.x + thread.x;
-        let location_bitmask = push_constants.location_bitmasks[loc];
+    let loc = thread.y * push_constants.extent.x + thread.x;
+    let location_bitmask = push_constants.location_bitmasks[loc];
 
-        if (location_bitmask == 0) {
-            return;
-        }
-
-        var accum = float3(0);
-
-        var rng = SobolRng(thread, push_constants.sample_index * 4 + vv);
-
-        let bit = random_bit(location_bitmask, rng.rand());
-        let triangle_index = push_constants.triangle_indices[loc * 64 + bit];
-        let indices = push_constants.model.read_indices(triangle_index);
-
-        let uv_ray_offset = frac(0.5 + R2(bit));
-
-        let uv = (float2(thread)+uv_ray_offset)/push_constants.extent;
-
-        let barycentrics = barycentrics2d(
-            uv,
-            push_constants.model.uv2s[indices.x],
-            push_constants.model.uv2s[indices.y],
-            push_constants.model.uv2s[indices.z]
-        );
-
-        let info = generate_hit(barycentrics, triangle_index, push_constants.model);
-
-        accum += get_lighting(info, push_constants, &rng);
-
-        //if (let infov = bounce(info, rng.rand2(), push_constants)) {
-        //    accum += infov.diffuse * get_lighting(infov, push_constants, &rng);
-        //}
-
-        push_constants.temp[loc].rgb += accum;
-        push_constants.temp[loc].a = 1.0;
+    if (location_bitmask == 0) {
+        return;
     }
+
+    var accum = float3(0);
+
+    var rng = SobolRng(thread, push_constants.sample_index);
+
+    let bit = random_bit(location_bitmask, rng.rand());
+    let triangle_index = push_constants.triangle_indices[loc * 64 + bit];
+    let indices = push_constants.model.read_indices(triangle_index);
+
+    let uv_ray_offset = frac(0.5 + R2(bit));
+
+    let uv = (float2(thread)+uv_ray_offset)/push_constants.extent;
+
+    let barycentrics = barycentrics2d(
+        uv,
+        push_constants.model.uv2s[indices.x],
+        push_constants.model.uv2s[indices.y],
+        push_constants.model.uv2s[indices.z]
+    );
+
+    let info = generate_hit(barycentrics, triangle_index, push_constants.model);
+
+    accum += get_lighting(info, push_constants, &rng);
+
+    //if (let infov = bounce(info, rng.rand2(), push_constants)) {
+    //    accum += infov.diffuse * get_lighting(infov, push_constants, &rng);
+    //}
+
+    push_constants.temp[loc].rgb += accum;
+    push_constants.temp[loc].a = 1.0;
 }
 
 bool check_for_backfaces(float2 barycentrics, uint triangle_index, PushConstants push_constants) {
@@ -431,7 +427,8 @@ float3 get_lighting(HitInfo info, PushConstants push_constants, SobolRng* rng) {
     env_map.info = info;
     env_map.push_constants = push_constants;
 
-    return ris(lights, 1, rng);//lights.shadowed_contribution2(rng.rand2()).adjusted();// + env_map.shadowed_contribution2(rng.rand2()).adjusted();
+    //return ris(lights, 8, rng) + ris(env_map, 8, rng);
+    return lights.full_shadowed_value(rng.rand2()).adjusted() + env_map.full_shadowed_value(rng.rand2()).adjusted();
 }
 
 float4 dilate(float4* values, uint2 coord, uint2 extent) {
