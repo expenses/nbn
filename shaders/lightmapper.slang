@@ -8,6 +8,7 @@ import shared.colour;
 import shared.constants;
 import shared.barycentrics;
 import shared.sobol;
+import shared.envmap;
 
 bool is_blocked(float3 position, float3 direction, float distance, PushConstants push_constants) {
     RayDesc desc;
@@ -77,6 +78,12 @@ Sample get_direct_point_lighting(
     return sample;
 }
 
+float mis_power_heuristic(float pdf_a, float pdf_b) {
+    let pdf_a2 = pdf_a * pdf_a;
+    let pdf_b2 = pdf_b * pdf_b;
+    return pdf_a2 / (pdf_a2 + pdf_b2);
+}
+
 Sample get_direct_env_map_lighting(
     float3 position,
     Optional<float3> normal,
@@ -94,7 +101,9 @@ Sample get_direct_env_map_lighting(
 
     Sample sample;
     sample.radiance = float3(0);
-    sample.direction = uv_to_direction(uv);
+    sample.direction = envmap_uv_to_direction(uv);
+
+    var mis_weight = 1.0;
 
     if (let normal = normal) {
         if (dot(normal, sample.direction) <= 0) {
@@ -103,7 +112,7 @@ Sample get_direct_env_map_lighting(
     }
 
     if (!is_blocked(position, sample.direction, 200, push_constants)) {
-        sample.radiance = envmap.SampleLevel(uv, 0).rgb * alias.inv_pdf;
+        sample.radiance = envmap.SampleLevel(uv, 0).rgb * alias.inv_pdf * mis_weight;
     }
 
     return sample;
@@ -111,6 +120,7 @@ Sample get_direct_env_map_lighting(
 
 Sample get_indirect_lighting(
     float3 position,
+    Optional<float3> normal,
     float3 direction,
     PushConstants push_constants
 ) {
@@ -120,28 +130,24 @@ Sample get_indirect_lighting(
 
     if (!(is_blocked(position, direction, 200, push_constants))) {
         Sampler2D envmap = sampled_images[push_constants.envmap];
-        let uv = envmap_uv(direction);
-        sample.radiance += envmap.SampleLevel(uv, 0).rgb;
+        let uv = envmap_direction_to_uv(direction);
+        let envmap_pdf = envmap_pdf(direction, push_constants);
+        var bounce_pdf = 2.0 * PI;
+        if (let normal = normal) {
+            bounce_pdf *= dot(normal, direction);
+        }
+        //let mis_weight = mis_power_heuristic(bounce_pdf, envmap_pdf);
+        sample.radiance = envmap.SampleLevel(uv, 0).rgb / bounce_pdf;
     }
 
     return sample;
 }
 
-float2 envmap_uv(float3 direction) {
-    return float2(
-        atan2(direction.z, direction.x) / (2.0 * PI),
-        acos(direction.y) / PI
-    );
-}
-
-float3 uv_to_direction(float2 uv) {
-    let phi   = uv.x * 2.0 * PI;
-    let theta = uv.y * PI;
-    return float3(
-        sin(theta) * cos(phi),
-        cos(theta),
-        sin(theta) * sin(phi),
-    );
+float envmap_pdf(float3 direction, PushConstants push_constants) {
+    let uv = envmap_direction_to_uv(direction);
+    let location = uint2(uv * push_constants.envmap_size);
+    let index = location.y * push_constants.envmap_size.x + location.x;
+    return 1.0 / push_constants.alias_table[index].inv_pdf;
 }
 
 struct SobolRng {
@@ -214,10 +220,10 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     let info = generate_hit(barycentrics, triangle_index, push_constants.model);
 
     //accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
-    accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
+    //accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
 
     let bounce_direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rng.rand2()));
-    accum += get_indirect_lighting(info.position, bounce_direction, push_constants).calculate(info.normal);
+    accum += get_indirect_lighting(info.position, info.normal, bounce_direction, push_constants).calculate(info.normal);
 
     push_constants.temp[loc].rgb += accum;
     push_constants.temp[loc].a = 1.0;
@@ -461,7 +467,7 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
         value = hit.diffuse;
     } else {
         Sampler2D image = sampled_images[constants.base.envmap];
-        value = image.SampleLevel(envmap_uv(direction), 0).rgb;
+        value = image.SampleLevel(envmap_direction_to_uv(direction), 0).rgb;
     }
 
     WTexture2D<float4> output = storage_images[constants.image];
