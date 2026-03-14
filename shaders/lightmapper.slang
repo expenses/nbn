@@ -109,6 +109,24 @@ Sample get_direct_env_map_lighting(
     return sample;
 }
 
+Sample get_indirect_lighting(
+    float3 position,
+    float3 direction,
+    PushConstants push_constants
+) {
+    Sample sample;
+    sample.direction = direction;
+    sample.radiance = float3(0);
+
+    if (!(is_blocked(position, direction, 200, push_constants))) {
+        Sampler2D envmap = sampled_images[push_constants.envmap];
+        let uv = envmap_uv(direction);
+        sample.radiance += envmap.SampleLevel(uv, 0).rgb;
+    }
+
+    return sample;
+}
+
 float2 envmap_uv(float3 direction) {
     return float2(
         atan2(direction.z, direction.x) / (2.0 * PI),
@@ -199,12 +217,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
 
     let bounce_direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rng.rand2()));
-
-    //if (!(is_blocked(info.position, bounce_direction, 200, push_constants))) {
-    //    Sampler2D envmap = sampled_images[push_constants.envmap];
-    //    let uv = envmap_uv(bounce_direction);
-    //    accum += envmap.SampleLevel(uv, 0).rgb;
-    //}
+    accum += get_indirect_lighting(info.position, bounce_direction, push_constants).calculate(info.normal);
 
     push_constants.temp[loc].rgb += accum;
     push_constants.temp[loc].a = 1.0;
