@@ -96,7 +96,8 @@ Sample get_direct_env_map_lighting(
         index = alias.fallback;
         alias = push_constants.alias_table[alias.fallback];
     }
-    let uv = (float2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x) + 0.5) / float2(push_constants.envmap_size);
+    let tex_coord = uint2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x);
+    let uv = (float2(tex_coord)+0.5) / float2(push_constants.envmap_size);
     Sampler2D envmap = sampled_images[push_constants.envmap];
 
     Sample sample;
@@ -109,10 +110,13 @@ Sample get_direct_env_map_lighting(
         if (dot(normal, sample.direction) <= 0) {
             return sample;
         }
+
+        let brdf_pdf = (2.0 * PI)/dot(normal, sample.direction);
+        mis_weight = mis_power_heuristic(1.0 / alias.inv_pdf, brdf_pdf);
     }
 
     if (!is_blocked(position, sample.direction, 200, push_constants)) {
-        sample.radiance = envmap.SampleLevel(uv, 0).rgb * alias.inv_pdf * mis_weight;
+        sample.radiance = envmap[tex_coord].rgb * alias.inv_pdf * mis_weight;
     }
 
     return sample;
@@ -131,23 +135,34 @@ Sample get_indirect_lighting(
     if (!(is_blocked(position, direction, 200, push_constants))) {
         Sampler2D envmap = sampled_images[push_constants.envmap];
         let uv = envmap_direction_to_uv(direction);
-        let envmap_pdf = envmap_pdf(direction, push_constants);
+        let envmap_sample = sample_envmap_by_direction(direction, push_constants);
         var bounce_pdf = 2.0 * PI;
         if (let normal = normal) {
             bounce_pdf *= dot(normal, direction);
         }
-        //let mis_weight = mis_power_heuristic(bounce_pdf, envmap_pdf);
-        sample.radiance = envmap.SampleLevel(uv, 0).rgb / bounce_pdf;
+        let mis_weight = mis_power_heuristic(bounce_pdf, 1.0 / envmap_sample.inv_pdf);
+        sample.radiance = envmap_sample.value * mis_weight / bounce_pdf;
     }
 
     return sample;
 }
 
-float envmap_pdf(float3 direction, PushConstants push_constants) {
+struct EnvmapSample {
+    float3 value;
+    float inv_pdf;
+}
+
+EnvmapSample sample_envmap_by_direction(float3 direction, PushConstants push_constants) {
     let uv = envmap_direction_to_uv(direction);
-    let location = uint2(uv * push_constants.envmap_size);
+    let location = uint2(uv * float2(push_constants.envmap_size));
     let index = location.y * push_constants.envmap_size.x + location.x;
-    return 1.0 / push_constants.alias_table[index].inv_pdf;
+
+    Sampler2D envmap = sampled_images[push_constants.envmap];
+
+    EnvmapSample sample;
+    sample.inv_pdf = push_constants.alias_table[index].inv_pdf;
+    sample.value = envmap[location].rgb;
+    return sample;
 }
 
 struct SobolRng {
@@ -220,7 +235,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     let info = generate_hit(barycentrics, triangle_index, push_constants.model);
 
     //accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
-    //accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
+    accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
 
     let bounce_direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rng.rand2()));
     accum += get_indirect_lighting(info.position, info.normal, bounce_direction, push_constants).calculate(info.normal);
@@ -466,8 +481,8 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
 
         value = hit.diffuse;
     } else {
-        Sampler2D image = sampled_images[constants.base.envmap];
-        value = image.SampleLevel(envmap_direction_to_uv(direction), 0).rgb;
+        let s = sample_envmap_by_direction(direction, *constants.base);
+        value = s.value * s.inv_pdf;
     }
 
     WTexture2D<float4> output = storage_images[constants.image];
