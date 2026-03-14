@@ -8,164 +8,105 @@ import shared.colour;
 import shared.constants;
 import shared.barycentrics;
 import shared.sobol;
-import shared.restir;
 
-float3 ris<C: Contribution<float2>>(C contributor, uint num_samples, SobolRng* rng) {
-    var reservoir = Reservoir<float2>(float2(-1));
-    var lcg = LCG(rng.thread, rng.sample);
+bool is_blocked(float3 position, float3 direction, float distance, PushConstants push_constants) {
+    RayDesc desc;
+    desc.Origin = position;
+    desc.Direction = direction;
+    desc.TMin = 0.0;
+    desc.TMax = distance;
+    var query = RayQuery<
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+    query.TraceRayInline(
+        push_constants.tlas,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        0xff,
+        desc
+    );
+    query.Proceed();
 
-    for (uint i = 0; i < num_samples; i++) {
-        let rng_state = rng.rand2();
-        // Get the unshadowed contribution for a random light
-        let value = contributor.unshadowed_contribution(rng_state);
-        reservoir.update(rng_state, value.weight(), 1, lcg.rand());
-    }
-
-    return reservoir.set_from_shadowed_contribution(contributor, any(reservoir.data != float2(-1)));
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
 }
 
-struct Lights: Contribution<float2> {
-    HitInfo info;
-    PushConstants push_constants;
+struct Sample {
+    float3 radiance = float3(0);
+    float3 direction = float3(0);
 
-    ContributionInfo contribution_info(float2 rand) {
-        rand.x *= push_constants.num_lights;
-        let light_index = uint(rand.x);
-        rand.x = frac(rand.x);
-        let light = push_constants.lights[light_index];
-
-        var emission = light.emission;
-
-        let vector = (light.position + sample_shere(rand) * 0.25) - info.position;
-        let distance_sq = dot(vector,vector);
-        let distance = sqrt(distance_sq);
-
-        let direction = vector / distance;
-
-        // spotlights
-        {
-            let theta = dot(direction, light.spotlight_direction);
-            emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
-        }
-
-        let n_dot_l = max(dot(info.normal, direction), 0.0);
-
-        ContributionInfo contribution;
-        contribution.contribution = emission * (n_dot_l / distance_sq);
-        contribution.unshadowed.p_hat = length(contribution.contribution);
-        contribution.unshadowed.inv_pdf = float(push_constants.num_lights);
-        contribution.distance = distance;
-        contribution.direction = direction;
-        return contribution;
-    }
-
-    UnshadowedValue unshadowed_contribution(float2 rand) {
-        return contribution_info(rand).unshadowed;
-    }
-
-    FullShadowedValue full_shadowed_value(float2 rand) {
-        var contribution_info = contribution_info(rand);
-        RayDesc desc;
-        desc.Origin = info.position;
-        desc.Direction = contribution_info.direction;
-        desc.TMin = 0.0;
-        desc.TMax = contribution_info.distance;
-        var query = RayQuery<
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        query.TraceRayInline(
-            push_constants.tlas,
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xff,
-            desc
-        );
-        query.Proceed();
-
-        FullShadowedValue value;
-        value.shadowed.p = contribution_info.unshadowed.p_hat;
-        value.shadowed.contribution = contribution_info.contribution;
-        value.inv_pdf = contribution_info.unshadowed.inv_pdf;
-
-        if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-            value.shadowed.contribution = float3(0);
-            value.shadowed.p = 0.0;
-        }
-        return value;
-    }
-
-    ShadowedValue shadowed_contribution(float2 rand) {
-        return full_shadowed_value(rand).shadowed;
+    float3 calculate(float3 normal) {
+        return radiance * max(dot(normal, direction), 0.0);
     }
 }
 
-struct EnvMap: Contribution<float2> {
-    PushConstants push_constants;
-    HitInfo info;
+Sample get_direct_point_lighting(
+    float3 position,
+    Optional<float3> normal,
+    float2 rand,
+    PushConstants push_constants
+) {
+    rand.x *= push_constants.num_lights;
+    let light_index = uint(rand.x);
+    rand.x = frac(rand.x);
+    let light = push_constants.lights[light_index];
 
-    ContributionInfo contribution_info(float2 rand2) {
-        var index = uint(rand2.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
-        var alias = push_constants.alias_table[index];
-        if (rand2.y > alias.threshold) {
-            index = alias.fallback;
-            alias = push_constants.alias_table[alias.fallback];
+    var emission = light.emission;
+
+    let vector = (light.position + sample_shere(rand) * 0.25) - position;
+    let distance_sq = dot(vector,vector);
+    let distance = sqrt(distance_sq);
+
+    Sample sample;
+    sample.radiance = float3(0);
+    sample.direction = vector / distance;
+
+    if (let normal = normal) {
+        if (dot(normal, sample.direction) <= 0) {
+            return sample;
         }
-        let uv = (float2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x) + 0.5) / float2(push_constants.envmap_size);
-        Sampler2D envmap = sampled_images[push_constants.envmap];
-
-        let rotated_dir = uv_to_direction(uv);
-
-        let n_dot_l = max(dot(info.normal, rotated_dir), 0.0);
-
-        ContributionInfo contribution;
-        contribution.contribution = envmap.SampleLevel(uv, 0).rgb * n_dot_l;
-        contribution.unshadowed.p_hat = length(contribution.contribution);
-        contribution.unshadowed.inv_pdf = alias.inv_pdf;
-        contribution.distance = 200;
-        contribution.direction = rotated_dir;
-        return contribution;
     }
 
-    UnshadowedValue unshadowed_contribution(float2 rand2) {
-        return contribution_info(rand2).unshadowed;
+    // spotlights
+    {
+        let theta = dot(sample.direction, light.spotlight_direction);
+        emission *= saturate(theta * light.spotlight_angle_scale + light.spotlight_angle_offset);
     }
 
-    FullShadowedValue full_shadowed_value(float2 rand2) {
-        let contribution_info = contribution_info(rand2);
+    if (!is_blocked(position, sample.direction, distance, push_constants)) {
+        sample.radiance = push_constants.num_lights * emission / distance_sq;
+    }
 
-        FullShadowedValue value;
-        value.shadowed.contribution = contribution_info.contribution;
-        value.shadowed.p = contribution_info.unshadowed.p_hat;
-        value.inv_pdf = contribution_info.unshadowed.inv_pdf;
+    return sample;
+}
 
-        if (all(value.shadowed.contribution == float3(0.0))) {
-            return value;
+Sample get_direct_env_map_lighting(
+    float3 position,
+    Optional<float3> normal,
+    float2 rand,
+    PushConstants push_constants
+) {
+    var index = uint(rand.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
+    var alias = push_constants.alias_table[index];
+    if (rand.y > alias.threshold) {
+        index = alias.fallback;
+        alias = push_constants.alias_table[alias.fallback];
+    }
+    let uv = (float2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x) + 0.5) / float2(push_constants.envmap_size);
+    Sampler2D envmap = sampled_images[push_constants.envmap];
+
+    Sample sample;
+    sample.radiance = float3(0);
+    sample.direction = uv_to_direction(uv);
+
+    if (let normal = normal) {
+        if (dot(normal, sample.direction) <= 0) {
+            return sample;
         }
-
-        RayDesc desc;
-        desc.Direction = contribution_info.direction;
-        desc.Origin = info.position;
-        desc.TMax = contribution_info.distance;
-        desc.TMin = 0;
-
-        var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        query.TraceRayInline(
-            push_constants.tlas,
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xff,
-            desc
-        );
-        query.Proceed();
-
-        if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-            value.shadowed.contribution = float3(0.0);
-            value.shadowed.p = 0.0;
-        }
-
-        return value;
     }
 
-    ShadowedValue shadowed_contribution(float2 rand2) {
-        return full_shadowed_value(rand2).shadowed;
+    if (!is_blocked(position, sample.direction, 200, push_constants)) {
+        sample.radiance = envmap.SampleLevel(uv, 0).rgb * alias.inv_pdf;
     }
+
+    return sample;
 }
 
 float2 envmap_uv(float3 direction) {
@@ -254,10 +195,15 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
     let info = generate_hit(barycentrics, triangle_index, push_constants.model);
 
-    accum += get_lighting(info, push_constants, &rng);
+    //accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
+    accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
 
-    //if (let infov = bounce(info, rng.rand2(), push_constants)) {
-    //    accum += infov.diffuse * get_lighting(infov, push_constants, &rng);
+    let bounce_direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rng.rand2()));
+
+    //if (!(is_blocked(info.position, bounce_direction, 200, push_constants))) {
+    //    Sampler2D envmap = sampled_images[push_constants.envmap];
+    //    let uv = envmap_uv(bounce_direction);
+    //    accum += envmap.SampleLevel(uv, 0).rgb;
     //}
 
     push_constants.temp[loc].rgb += accum;
@@ -416,19 +362,6 @@ Optional<HitInfo> bounce(HitInfo info, float2 rand2, PushConstants push_constant
     }
 
     return none;
-}
-
-float3 get_lighting(HitInfo info, PushConstants push_constants, SobolRng* rng) {
-    Lights lights;
-    lights.info = info;
-    lights.push_constants = push_constants;
-
-    EnvMap env_map;
-    env_map.info = info;
-    env_map.push_constants = push_constants;
-
-    //return ris(lights, 8, rng) + ris(env_map, 8, rng);
-    return lights.full_shadowed_value(rng.rand2()).adjusted() + env_map.full_shadowed_value(rng.rand2()).adjusted();
 }
 
 float4 dilate(float4* values, uint2 coord, uint2 extent) {
