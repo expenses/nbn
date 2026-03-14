@@ -2,7 +2,7 @@ import constants;
 
 float2 envmap_direction_to_uv(float3 direction) {
     return float2(
-        atan2(direction.z, direction.x) / (2.0 * PI) + 0.5,
+        frac(atan2(direction.z, direction.x) / (2.0 * PI) + 1.0),
         acos(direction.y) / PI
     );
 }

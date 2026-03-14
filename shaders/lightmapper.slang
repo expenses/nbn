@@ -9,6 +9,7 @@ import shared.constants;
 import shared.barycentrics;
 import shared.sobol;
 import shared.envmap;
+import shared.importance_sampling;
 
 bool is_blocked(float3 position, float3 direction, float distance, PushConstants push_constants) {
     RayDesc desc;
@@ -78,31 +79,17 @@ Sample get_direct_point_lighting(
     return sample;
 }
 
-float mis_power_heuristic(float pdf_a, float pdf_b) {
-    let pdf_a2 = pdf_a * pdf_a;
-    let pdf_b2 = pdf_b * pdf_b;
-    return pdf_a2 / (pdf_a2 + pdf_b2);
-}
-
 Sample get_direct_env_map_lighting(
     float3 position,
     Optional<float3> normal,
     float2 rand,
     PushConstants push_constants
 ) {
-    var index = uint(rand.x * push_constants.envmap_size.x * push_constants.envmap_size.y);
-    var alias = push_constants.alias_table[index];
-    if (rand.y > alias.threshold) {
-        index = alias.fallback;
-        alias = push_constants.alias_table[alias.fallback];
-    }
-    let tex_coord = uint2(index % push_constants.envmap_size.x, index / push_constants.envmap_size.x);
-    let uv = (float2(tex_coord)+0.5) / float2(push_constants.envmap_size);
-    Sampler2D envmap = sampled_images[push_constants.envmap];
+    let light_sample = sample_envmap_by_rand(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, rand);
 
     Sample sample;
     sample.radiance = float3(0);
-    sample.direction = envmap_uv_to_direction(uv);
+    sample.direction = light_sample.direction;
 
     var mis_weight = 1.0;
 
@@ -112,11 +99,11 @@ Sample get_direct_env_map_lighting(
         }
 
         let brdf_pdf = (2.0 * PI)/dot(normal, sample.direction);
-        mis_weight = mis_power_heuristic(1.0 / alias.inv_pdf, brdf_pdf);
+        mis_weight = mis_power_heuristic(light_sample.pdf, brdf_pdf);
     }
 
     if (!is_blocked(position, sample.direction, 200, push_constants)) {
-        sample.radiance = envmap[tex_coord].rgb * alias.inv_pdf * mis_weight;
+        sample.radiance = light_sample.radiance / light_sample.pdf * mis_weight;
     }
 
     return sample;
@@ -135,33 +122,15 @@ Sample get_indirect_lighting(
     if (!(is_blocked(position, direction, 200, push_constants))) {
         Sampler2D envmap = sampled_images[push_constants.envmap];
         let uv = envmap_direction_to_uv(direction);
-        let envmap_sample = sample_envmap_by_direction(direction, push_constants);
+        let envmap_sample = sample_envmap_by_direction(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, direction);
         var bounce_pdf = 2.0 * PI;
         if (let normal = normal) {
             bounce_pdf *= dot(normal, direction);
         }
-        let mis_weight = mis_power_heuristic(bounce_pdf, 1.0 / envmap_sample.inv_pdf);
-        sample.radiance = envmap_sample.value * mis_weight / bounce_pdf;
+        let mis_weight = mis_power_heuristic(bounce_pdf, envmap_sample.pdf);
+        sample.radiance = envmap_sample.radiance * mis_weight / bounce_pdf;
     }
 
-    return sample;
-}
-
-struct EnvmapSample {
-    float3 value;
-    float inv_pdf;
-}
-
-EnvmapSample sample_envmap_by_direction(float3 direction, PushConstants push_constants) {
-    let uv = envmap_direction_to_uv(direction);
-    let location = uint2(uv * float2(push_constants.envmap_size));
-    let index = location.y * push_constants.envmap_size.x + location.x;
-
-    Sampler2D envmap = sampled_images[push_constants.envmap];
-
-    EnvmapSample sample;
-    sample.inv_pdf = push_constants.alias_table[index].inv_pdf;
-    sample.value = envmap[location].rgb;
     return sample;
 }
 
@@ -481,8 +450,8 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
 
         value = hit.diffuse;
     } else {
-        let s = sample_envmap_by_direction(direction, *constants.base);
-        value = s.value * s.inv_pdf;
+        let s = sample_envmap_by_direction(constants.base.alias_table, sampled_images[constants.base.envmap], constants.base.envmap_size, direction);
+        value = s.radiance;
     }
 
     WTexture2D<float4> output = storage_images[constants.image];

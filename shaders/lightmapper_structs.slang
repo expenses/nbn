@@ -1,6 +1,7 @@
 import shared.noise;
 import shared.restir;
 import shared.barycentrics;
+import shared.importance_sampling;
 
 [Flags] enum MaterialFlags {
     AlphaClipped
@@ -55,12 +56,6 @@ struct Light {
     float spotlight_angle_scale;
     float spotlight_angle_offset;
     float3 spotlight_direction;
-};
-
-struct Alias {
-    float threshold;
-    float inv_pdf;
-    uint fallback;
 };
 
 struct PushConstants {
