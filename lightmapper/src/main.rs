@@ -21,6 +21,8 @@ struct LightmapperArgs {
     height: u32,
     #[arg(short, default_value_t = 1024)]
     num_samples: u32,
+    #[arg(short, long, default_value = "out.exr")]
+    output: String
 }
 
 #[derive(clap::Subcommand)]
@@ -240,9 +242,9 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         device.submit_and_wait_on_command_buffer(&command_buffer);
         device.reset_command_buffer(&command_buffer);
 
-        if sample_index % 128 == 0 {
-            write_output(width, height, temp_buffer.try_as_slice::<f32>().unwrap(), &format!("{}.exr", sample_index), (sample_index+1) as _);
-        }
+        //if sample_index % 128 == 0 {
+        //    write_output(width, height, temp_buffer.try_as_slice::<f32>().unwrap(), &format!("{}.exr", sample_index), (sample_index+1) as _);
+        //}
     }
 
     unsafe {
@@ -262,7 +264,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     device.submit_and_wait_on_command_buffer(&command_buffer);
 
-    write_output(width, height, output_buffer.try_as_slice::<f32>().unwrap(), "out.exr", total_samples as _);
+    write_output(width, height, output_buffer.try_as_slice::<f32>().unwrap(), &lightmapper_args.output, total_samples as _);
 
     /*
     let (solution_r, solution_g, solution_b, pixel_info) = least_squares::get_solutions(
