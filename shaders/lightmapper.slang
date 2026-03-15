@@ -109,7 +109,7 @@ Sample get_direct_env_map_lighting(
             return sample;
         }
 
-        let bounce_pdf = (2.0 * PI)/dot(normal, sample.direction);
+        let bounce_pdf = (2.0 * PI)*dot(normal, sample.direction);
         mis_weight = mis_power_heuristic(envmap_sample.pdf, bounce_pdf);
     }
 
