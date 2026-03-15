@@ -96,11 +96,11 @@ Sample get_direct_env_map_lighting(
     float2 rand,
     PushConstants push_constants
 ) {
-    let light_sample = sample_envmap_by_rand(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, rand);
+    let envmap_sample = sample_envmap_by_rand(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, rand);
 
     Sample sample;
     sample.radiance = float3(0);
-    sample.direction = light_sample.direction;
+    sample.direction = envmap_sample.direction;
 
     var mis_weight = 1.0;
 
@@ -109,12 +109,12 @@ Sample get_direct_env_map_lighting(
             return sample;
         }
 
-        let brdf_pdf = (2.0 * PI)/dot(normal, sample.direction);
-        mis_weight = mis_power_heuristic(light_sample.pdf, brdf_pdf);
+        let bounce_pdf = (2.0 * PI)/dot(normal, sample.direction);
+        mis_weight = mis_power_heuristic(envmap_sample.pdf, bounce_pdf);
     }
 
     if (!is_blocked(position, sample.direction, 200, push_constants)) {
-        sample.radiance = light_sample.radiance / light_sample.pdf * mis_weight;
+        sample.radiance = envmap_sample.radiance / envmap_sample.pdf * mis_weight;
     }
 
     return sample;
@@ -131,14 +131,13 @@ Sample get_indirect_lighting(
     sample.radiance = float3(0);
 
     if (!(is_blocked(position, direction, 200, push_constants))) {
-        let uv = envmap_direction_to_uv(direction);
         let envmap_sample = sample_envmap_by_direction(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, direction);
         var bounce_pdf = 2.0 * PI;
         if (let normal = normal) {
             bounce_pdf *= dot(normal, direction);
         }
         let mis_weight = mis_power_heuristic(bounce_pdf, envmap_sample.pdf);
-        sample.radiance = envmap_sample.radiance * mis_weight / bounce_pdf;
+        sample.radiance = envmap_sample.radiance / bounce_pdf * mis_weight;
     }
 
     return sample;

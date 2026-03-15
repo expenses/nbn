@@ -26,10 +26,10 @@ AliasAndIndex sample_alias_table(Alias* aliases, uint num_aliases, float2 rand) 
     return output;
 }
 
-float mis_power_heuristic(float pdf_a, float pdf_b) {
-    let pdf_a2 = pdf_a * pdf_a;
-    let pdf_b2 = pdf_b * pdf_b;
-    return pdf_a2 / (pdf_a2 + pdf_b2);
+float mis_power_heuristic(float current_pdf, float other_pdf) {
+    let current_pdf_2 = current_pdf * current_pdf;
+    let other_pdf_2 = other_pdf * other_pdf;
+    return current_pdf_2 / (current_pdf_2 + other_pdf_2);
 }
 
 struct LightSample {
@@ -42,7 +42,7 @@ LightSample sample_envmap_by_rand(Alias* aliases, Sampler2D envmap, uint2 size, 
     let alias = sample_alias_table(aliases, size.x * size.y, rand);
     let tex_coord = uint2(alias.index % size.x, alias.index / size.x);
     let uv = (tex_coord+0.5) / size;
-    
+
     LightSample sample;
     sample.radiance = envmap[tex_coord].rgb;
     sample.direction = envmap_uv_to_direction(uv);
