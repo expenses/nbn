@@ -50,8 +50,6 @@ struct Sample {
     }
 }
 
-static const float BOUNCE_PDF = PI;
-
 Sample get_direct_point_lighting(
     float3 position,
     Optional<float3> normal,
@@ -95,6 +93,7 @@ Sample get_direct_point_lighting(
 Sample get_direct_env_map_lighting(
     float3 position,
     Optional<float3> normal,
+    float directional_pdf,
     float2 rand,
     PushConstants push_constants
 ) {
@@ -104,15 +103,13 @@ Sample get_direct_env_map_lighting(
     sample.radiance = float3(0);
     sample.direction = envmap_sample.direction;
 
-    var mis_weight = 1.0;
-
     if (let normal = normal) {
         if (dot(normal, sample.direction) <= 0) {
             return sample;
         }
-
-        mis_weight = mis_power_heuristic(envmap_sample.pdf, BOUNCE_PDF);
     }
+
+    var mis_weight = mis_power_heuristic(envmap_sample.pdf, directional_pdf);
 
     if (!is_blocked(position, sample.direction, 200, push_constants)) {
         sample.radiance = envmap_sample.radiance / envmap_sample.pdf * mis_weight;
@@ -121,23 +118,13 @@ Sample get_direct_env_map_lighting(
     return sample;
 }
 
-Sample get_indirect_lighting(
-    float3 position,
-    Optional<float3> normal,
-    float3 direction,
-    PushConstants push_constants
-) {
+Sample get_env_map_lighting_for_direction(float3 position, float bounce_pdf, float3 direction, PushConstants push_constants) {
+    let envmap_sample = sample_envmap_by_direction(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, direction);
+    let mis_weight = mis_power_heuristic(bounce_pdf, envmap_sample.pdf);
+
     Sample sample;
     sample.direction = direction;
-    sample.radiance = float3(0);
-
-    if (!(is_blocked(position, direction, 200, push_constants))) {
-        let envmap_sample = sample_envmap_by_direction(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, direction);
-        let bounce_pdf = BOUNCE_PDF;
-        let mis_weight = mis_power_heuristic(bounce_pdf, envmap_sample.pdf);
-        sample.radiance = envmap_sample.radiance / bounce_pdf * mis_weight;
-    }
-
+    sample.radiance = envmap_sample.radiance / bounce_pdf * mis_weight;
     return sample;
 }
 
@@ -176,11 +163,32 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
 
     let info = generate_hit(barycentrics, triangle_index, push_constants.model);
 
-    //accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
-    accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
+    // pdf compared to the env map values.
+    let bounce_pdf = PI;
+
+    accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
+    accum += get_direct_env_map_lighting(info.position, info.normal, bounce_pdf, rng.rand2(), push_constants).calculate(info.normal);
 
     let bounce_direction = mul(build_tbn(info.normal), sample_uniform_hemisphere(&rng));
-    accum += get_indirect_lighting(info.position, info.normal, bounce_direction, push_constants).calculate(info.normal);
+
+    RayDesc desc;
+    desc.Origin = info.position;
+    desc.Direction = bounce_direction;
+    desc.TMax = 200.0;
+    desc.TMin = 0;
+
+    var query = RayQuery<RAY_FLAG_NONE>();
+    query.TraceRayInline(
+        push_constants.tlas,
+        RAY_FLAG_NONE,
+        0xff,
+        desc
+    );
+    query.Proceed();
+
+    if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) {
+        accum += get_env_map_lighting_for_direction(info.position, bounce_pdf, bounce_direction, push_constants).calculate(info.normal);
+    }
 
     push_constants.temp[loc].rgb += accum;
     push_constants.temp[loc].a = 1.0;
@@ -300,29 +308,6 @@ void check_locations(uint2 thread : SV_DispatchThreadID, uniform PushConstants p
     }
 
     push_constants.location_bitmasks[loc] = bitmask;
-}
-
-Optional<HitInfo> bounce(HitInfo info, float2 rand2, PushConstants push_constants) {
-    RayDesc desc;
-    desc.Origin = info.position;
-    desc.Direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rand2));
-    desc.TMax = 200.0;
-    desc.TMin = 0;
-
-    var query = RayQuery<RAY_FLAG_NONE>();
-    query.TraceRayInline(
-        push_constants.tlas,
-        RAY_FLAG_NONE,
-        0xff,
-        desc
-    );
-    query.Proceed();
-
-    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        return generate_hit(query.CommittedRayBarycentrics(), query.CommittedPrimitiveIndex(), push_constants.model);
-    }
-
-    return none;
 }
 
 float4 dilate(float4* values, uint2 coord, uint2 extent) {
