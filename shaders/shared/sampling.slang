@@ -30,7 +30,7 @@ float3 sample_uniform_hemisphere<R: Rng>(R* rng) {
 }
 
 
-float3 sample_shere(float2 rand) {
+float3 sample_sphere(float2 rand) {
     let z = 1.0 - 2.0 * rand.x;
     let phi = 2.0 * PI * rand.y;
     let r = sqrt(1.0 - z * z);

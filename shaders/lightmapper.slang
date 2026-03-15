@@ -63,7 +63,7 @@ Sample get_direct_point_lighting(
 
     var emission = light.emission;
 
-    let vector = (light.position + sample_shere(rand) * 0.25) - position;
+    let vector = (light.position + sample_sphere(rand) * 0.25) - position;
     let distance_sq = dot(vector,vector);
     let distance = sqrt(distance_sq);
 
