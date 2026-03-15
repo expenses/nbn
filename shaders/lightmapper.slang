@@ -50,6 +50,8 @@ struct Sample {
     }
 }
 
+static const float BOUNCE_PDF = PI;
+
 Sample get_direct_point_lighting(
     float3 position,
     Optional<float3> normal,
@@ -109,8 +111,7 @@ Sample get_direct_env_map_lighting(
             return sample;
         }
 
-        let bounce_pdf = (2.0 * PI)*dot(normal, sample.direction);
-        mis_weight = mis_power_heuristic(envmap_sample.pdf, bounce_pdf);
+        mis_weight = mis_power_heuristic(envmap_sample.pdf, BOUNCE_PDF);
     }
 
     if (!is_blocked(position, sample.direction, 200, push_constants)) {
@@ -132,10 +133,7 @@ Sample get_indirect_lighting(
 
     if (!(is_blocked(position, direction, 200, push_constants))) {
         let envmap_sample = sample_envmap_by_direction(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, direction);
-        var bounce_pdf = 2.0 * PI;
-        if (let normal = normal) {
-            bounce_pdf *= dot(normal, direction);
-        }
+        let bounce_pdf = BOUNCE_PDF;
         let mis_weight = mis_power_heuristic(bounce_pdf, envmap_sample.pdf);
         sample.radiance = envmap_sample.radiance / bounce_pdf * mis_weight;
     }
@@ -181,7 +179,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     //accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
     accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
 
-    let bounce_direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(&rng));
+    let bounce_direction = mul(build_tbn(info.normal), sample_uniform_hemisphere(&rng));
     accum += get_indirect_lighting(info.position, info.normal, bounce_direction, push_constants).calculate(info.normal);
 
     push_constants.temp[loc].rgb += accum;
