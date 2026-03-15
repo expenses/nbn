@@ -7,7 +7,6 @@ import shared.util;
 import shared.colour;
 import shared.constants;
 import shared.barycentrics;
-import shared.sobol;
 import shared.envmap;
 import shared.importance_sampling;
 
@@ -36,6 +35,18 @@ struct Sample {
 
     float3 calculate(float3 normal) {
         return radiance * max(dot(normal, direction), 0.0);
+    }
+
+    float3 x() {
+        return radiance * direction.x;
+    }
+
+    float3 y() {
+        return radiance * direction.y;
+    }
+
+    float3 z() {
+        return radiance * direction.z;
     }
 }
 
@@ -120,7 +131,6 @@ Sample get_indirect_lighting(
     sample.radiance = float3(0);
 
     if (!(is_blocked(position, direction, 200, push_constants))) {
-        Sampler2D envmap = sampled_images[push_constants.envmap];
         let uv = envmap_direction_to_uv(direction);
         let envmap_sample = sample_envmap_by_direction(push_constants.alias_table, sampled_images[push_constants.envmap], push_constants.envmap_size, direction);
         var bounce_pdf = 2.0 * PI;
@@ -132,40 +142,6 @@ Sample get_indirect_lighting(
     }
 
     return sample;
-}
-
-struct SobolRng {
-    uint pixel_seed = 0;
-    uint sample = 0;
-    uint dimension = 0;
-    uint2 thread;
-
-    __init(uint2 thread_, uint sample_) {
-        thread = thread_;
-        pixel_seed = hp_mix32(thread.x ^ (thread.y << 16));
-        sample = sample_;
-    }
-
-    [mutating]
-    float rand() {
-        let rand = sobol_burley_sample_1D(sample, dimension, pixel_seed);
-        dimension++;
-        return rand;
-    }
-
-    [mutating]
-    float2 rand2() {
-        let rand = sobol_burley_sample_2D(sample, dimension, pixel_seed);
-        dimension++;
-        return rand;
-    }
-
-    [mutating]
-    float3 rand3() {
-        let rand = sobol_burley_sample_3D(sample, dimension, pixel_seed);
-        dimension++;
-        return rand;
-    }
 }
 
 [shader("compute")]
@@ -206,11 +182,50 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     //accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
     accum += get_direct_env_map_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
 
-    let bounce_direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(rng.rand2()));
+    let bounce_direction = mul(build_tbn(info.normal), sample_cosine_weighted_hemisphere(&rng));
     accum += get_indirect_lighting(info.position, info.normal, bounce_direction, push_constants).calculate(info.normal);
 
     push_constants.temp[loc].rgb += accum;
     push_constants.temp[loc].a = 1.0;
+}
+
+struct HitInfo {
+    float3 position;
+    float3 normal;
+    float3 diffuse;
+};
+
+HitInfo generate_hit(float2 barycentrics, uint triangle_index, Model* model) {
+    let indices = model.read_indices(triangle_index);
+    let a = model.positions[indices.x];
+    let b = model.positions[indices.y];
+    let c = model.positions[indices.z];
+
+    let geom_normal = normalize(cross(b - a, c - a));
+
+    HitInfo info;
+    info.position = offset_ray(shadow_terminator_hack(
+        a, b, c,
+        model.normals[indices.x],
+        model.normals[indices.y],
+        model.normals[indices.z],
+        float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
+    ), geom_normal);
+
+    info.normal = normalize(interpolate_from_buffer(model.normals, indices, barycentrics));
+
+    let material_index = model.material_indices[triangle_index];
+    let material = model.materials[material_index];
+
+    info.diffuse = material.base_color_factor.rgb;
+
+    if (material.base_colour_image != MAX_UINT_VALUE) {
+        let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
+        Sampler2D img = sampled_images[NonUniformResourceIndex(material.base_colour_image)];
+        info.diffuse *= img.SampleLevel(uv, 0).rgb;
+    }
+
+    return info;
 }
 
 bool check_for_backfaces(float2 barycentrics, uint triangle_index, PushConstants push_constants) {
@@ -288,60 +303,6 @@ void check_locations(uint2 thread : SV_DispatchThreadID, uniform PushConstants p
     }
 
     push_constants.location_bitmasks[loc] = bitmask;
-}
-
-struct PartitionedRand {
-    uint index;
-    float rand;
-    float inv_probability;
-};
-
-PartitionedRand partition_rand(float rand, uint num_values) {
-    let scaled = rand * num_values;
-    PartitionedRand part;
-    part.index = uint(scaled);
-    part.rand = frac(scaled);
-    part.inv_probability = float(num_values);
-    return part;
-}
-
-struct HitInfo {
-    float3 position;
-    float3 normal;
-    float3 diffuse;
-};
-
-HitInfo generate_hit(float2 barycentrics, uint triangle_index, Model* model) {
-    let indices = model.read_indices(triangle_index);
-    let a = model.positions[indices.x];
-    let b = model.positions[indices.y];
-    let c = model.positions[indices.z];
-
-    let geom_normal = normalize(cross(b - a, c - a));
-
-    HitInfo info;
-    info.position = offset_ray(shadow_terminator_hack(
-        a, b, c,
-        model.normals[indices.x],
-        model.normals[indices.y],
-        model.normals[indices.z],
-        float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
-    ), geom_normal);
-
-    info.normal = normalize(interpolate_from_buffer(model.normals, indices, barycentrics));
-
-    let material_index = model.material_indices[triangle_index];
-    let material = model.materials[material_index];
-
-    info.diffuse = material.base_color_factor.rgb;
-
-    if (material.base_colour_image != MAX_UINT_VALUE) {
-        let uv = interpolate_from_buffer(model.uvs, indices, barycentrics);
-        Sampler2D img = sampled_images[NonUniformResourceIndex(material.base_colour_image)];
-        info.diffuse *= img.SampleLevel(uv, 0).rgb;
-    }
-
-    return info;
 }
 
 Optional<HitInfo> bounce(HitInfo info, float2 rand2, PushConstants push_constants) {
