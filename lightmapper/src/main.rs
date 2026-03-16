@@ -22,7 +22,7 @@ struct LightmapperArgs {
     #[arg(short, default_value_t = 1024)]
     num_samples: u32,
     #[arg(short, long, default_value = "out.exr")]
-    output: String
+    output: String,
 }
 
 #[derive(clap::Subcommand)]
@@ -264,7 +264,13 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     device.submit_and_wait_on_command_buffer(&command_buffer);
 
-    write_output(width, height, output_buffer.try_as_slice::<f32>().unwrap(), &lightmapper_args.output, total_samples as _);
+    write_output(
+        width,
+        height,
+        output_buffer.try_as_slice::<f32>().unwrap(),
+        &lightmapper_args.output,
+        total_samples as _,
+    );
 
     /*
     let (solution_r, solution_g, solution_b, pixel_info) = least_squares::get_solutions(
@@ -723,7 +729,11 @@ fn load_gltf(
                 &[0],
             );
             nbn::IndexedImage {
-                index: device.register_image(*image.view, false),
+                index: device.register_image_with_sampler(
+                    *image.view,
+                    &device.samplers.nearest_repeat,
+                    false,
+                ),
                 image,
             }
         })

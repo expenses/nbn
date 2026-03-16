@@ -189,6 +189,7 @@ pub struct Samplers {
     pub repeat: Sampler,
     pub clamp: Sampler,
     pub nearest_clamp: Sampler,
+    pub nearest_repeat: Sampler,
 }
 
 pub struct Device {
@@ -538,6 +539,7 @@ impl Device {
                     vk::SamplerAddressMode::CLAMP_TO_EDGE,
                     vk::Filter::NEAREST,
                 ),
+                nearest_repeat: create_sampler(vk::SamplerAddressMode::REPEAT, vk::Filter::NEAREST),
             }),
 
             device,
