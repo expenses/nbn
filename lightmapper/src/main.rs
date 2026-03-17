@@ -27,10 +27,16 @@ struct LightmapperArgs {
     output: String,
 }
 
+#[derive(Args)]
+struct ViewerArgs {
+    #[arg(short, long)]
+    lightmap: Option<std::path::PathBuf>,
+}
+
 #[derive(clap::Subcommand)]
 enum Mode {
     Lightmapper(#[command(flatten)] LightmapperArgs),
-    Viewer,
+    Viewer(#[command(flatten)] ViewerArgs),
 }
 
 #[derive(Parser)]
@@ -62,12 +68,13 @@ fn main() {
     let args = Arguments::parse();
 
     match args.mode {
-        Mode::Viewer => {
+        Mode::Viewer(viewer_args) => {
             let event_loop = winit::event_loop::EventLoop::new().unwrap();
             event_loop
                 .run_app(&mut App {
                     state: None,
                     args: args.common,
+                    viewer_args,
                 })
                 .unwrap();
         }
@@ -324,11 +331,13 @@ struct State {
     alias_table: nbn::Buffer,
     uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
     frame_index: u32,
+    lightmap: Option<nbn::IndexedImage>,
 }
 
 struct App {
     state: Option<State>,
     args: CommonArgs,
+    viewer_args: ViewerArgs,
 }
 
 impl winit::application::ApplicationHandler for App {
@@ -397,6 +406,24 @@ impl winit::application::ApplicationHandler for App {
             .to_vk()],
         );
 
+        let lightmap = self.viewer_args.lightmap.as_ref().map(|lightmap| {
+            let lightmap = image::open(&lightmap).unwrap().to_rgba32f();
+            device.register_owned_image(
+                staging_buffer.create_sampled_image(
+                    &device,
+                    nbn::SampledImageDescriptor {
+                        name: "lightmap",
+                        format: vk::Format::R32G32B32A32_SFLOAT,
+                        extent: [lightmap.width(), lightmap.height()].into(),
+                    },
+                    nbn::cast_slice(&*lightmap),
+                    nbn::QueueType::Graphics,
+                    &[0],
+                ),
+                false,
+            )
+        });
+
         staging_buffer.finish(&device);
 
         let shader = device.load_shader("../shaders/compiled/lightmapper.spv");
@@ -452,6 +479,7 @@ impl winit::application::ApplicationHandler for App {
             lights,
             alias_table,
             frame_index: 0,
+            lightmap,
         })
     }
 
@@ -566,6 +594,11 @@ impl winit::application::ApplicationHandler for App {
                         view_inv: view.inverse().to_cols_array(),
                         proj_inv: proj.inverse().to_cols_array(),
                         frame_index: state.frame_index,
+                        lightmap: state
+                            .lightmap
+                            .as_ref()
+                            .map(|lightmap| **lightmap)
+                            .unwrap_or(u32::max_value()),
                     },
                 );
 

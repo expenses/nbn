@@ -96,4 +96,5 @@ struct ViewerConstants {
     PushConstants* base;
     uint image;
     uint frame_index;
+    uint lightmap;
 }

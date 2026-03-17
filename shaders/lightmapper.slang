@@ -392,6 +392,16 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
         let hit = generate_hit(query.CommittedTriangleBarycentrics(), query.CommittedPrimitiveIndex(), constants.base.model);
 
         value = hit.diffuse;
+
+        if (constants.lightmap != MAX_UINT_VALUE) {
+            let indices = constants.base.model.read_indices(query.CommittedPrimitiveIndex());
+            let uv2 = interpolate_from_buffer(model.uv2s, indices, query.CommittedTriangleBarycentrics());
+
+            Sampler2D lightmap = sampled_images[constants.lightmap];
+            
+            value *= lightmap.SampleLevel(uv2, 0).rgb;
+
+        }
     } else {
         let s = sample_envmap_by_direction(constants.base.alias_table, sampled_images[constants.base.envmap], constants.base.envmap_size, direction);
         value = s.radiance;
