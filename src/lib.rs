@@ -1410,31 +1410,33 @@ impl Device {
                 .get_physical_device_properties2(self.physical_device, &mut properties)
         };
 
-        let mut stages = vec![
-            vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::RAYGEN_KHR)
-                .name(desc.raygen)
-                .module(**desc.module)
-        ];
+        let mut stages = vec![vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::RAYGEN_KHR)
+            .name(desc.raygen)
+            .module(**desc.module)];
 
         for miss in desc.miss {
-            stages.push(vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::MISS_KHR)
-                .name(miss)
-                .module(**desc.module));
+            stages.push(
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::MISS_KHR)
+                    .name(miss)
+                    .module(**desc.module),
+            );
         }
 
         for closest_hit in desc.closest_hit {
-            stages.push(vk::PipelineShaderStageCreateInfo::default()
-                .stage(vk::ShaderStageFlags::CLOSEST_HIT_KHR)
-                .name(closest_hit)
-                .module(**desc.module));
+            stages.push(
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::CLOSEST_HIT_KHR)
+                    .name(closest_hit)
+                    .module(**desc.module),
+            );
         }
 
-        let mut groups = Vec::with_capacity(desc.miss.len()+desc.closest_hit.len()+1);
+        let mut groups = Vec::with_capacity(desc.miss.len() + desc.closest_hit.len() + 1);
 
         // raygen and closest hit shaders
-        for i in 0..desc.miss.len()+1 {
+        for i in 0..desc.miss.len() + 1 {
             groups.push(
                 vk::RayTracingShaderGroupCreateInfoKHR::default()
                     .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
@@ -1445,7 +1447,7 @@ impl Device {
             );
         }
 
-        for i in desc.miss.len()+1..desc.miss.len()+1+desc.closest_hit.len() {
+        for i in desc.miss.len() + 1..desc.miss.len() + 1 + desc.closest_hit.len() {
             groups.push(
                 vk::RayTracingShaderGroupCreateInfoKHR::default()
                     .ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
@@ -1455,7 +1457,6 @@ impl Device {
                     .intersection_shader(vk::SHADER_UNUSED_KHR),
             );
         }
-
 
         let create_info = vk::RayTracingPipelineCreateInfoKHR::default()
             .layout(**self.pipeline_layout)
@@ -1508,7 +1509,7 @@ impl Device {
                 size: handle_size,
             },
             hit: vk::StridedDeviceAddressRegionKHR {
-                device_address: *group_handles + handle_size * (1+desc.miss.len() as u64),
+                device_address: *group_handles + handle_size * (1 + desc.miss.len() as u64),
                 stride: handle_size,
                 size: handle_size,
             },
@@ -2058,7 +2059,7 @@ pub struct RayTracingPipelineDesc<'a> {
     pub module: &'a ShaderModule,
     pub raygen: &'a ffi::CStr,
     pub miss: &'a [&'a ffi::CStr],
-    pub closest_hit: &'a [&'a ffi::CStr]
+    pub closest_hit: &'a [&'a ffi::CStr],
 }
 
 #[derive(Clone)]
