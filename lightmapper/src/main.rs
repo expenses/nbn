@@ -13,6 +13,8 @@ struct CommonArgs {
     path: std::path::PathBuf,
     #[arg(short, long)]
     envmap: std::path::PathBuf,
+    #[arg(long, default_value_t = 1.0)]
+    envmap_strength: f32,
 }
 
 #[derive(Args)]
@@ -81,7 +83,12 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
     let mut staging_buffer =
         nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
 
-    let envmap = image::open(&args.envmap).unwrap().to_rgba32f();
+    let mut envmap = image::open(&args.envmap).unwrap().to_rgba32f();
+    envmap.pixels_mut().for_each(|p| {
+        p[0] *= args.envmap_strength;
+        p[1] *= args.envmap_strength;
+        p[2] *= args.envmap_strength;
+    });
 
     let envmap_size = dbg!([envmap.width(), envmap.height()]);
 
