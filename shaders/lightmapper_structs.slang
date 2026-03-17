@@ -91,6 +91,7 @@ struct PushConstants {
 };
 
 struct ViewerConstants {
+    float4x4 combined;
     float4x4 view_inv;
     float4x4 proj_inv;
     PushConstants* base;

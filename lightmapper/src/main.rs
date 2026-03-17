@@ -593,6 +593,7 @@ impl winit::application::ApplicationHandler for App {
                         image: *state.swapchain_image_heap_indices[next_image as usize],
                         view_inv: view.inverse().to_cols_array(),
                         proj_inv: proj.inverse().to_cols_array(),
+                        combined: (proj * view).to_cols_array(),
                         frame_index: state.frame_index,
                         lightmap: state
                             .lightmap

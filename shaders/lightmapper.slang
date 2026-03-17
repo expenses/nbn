@@ -410,3 +410,42 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
     WTexture2D<float4> output = storage_images[constants.image];
     output.Store(thread, float4(srgb_lin2encoded(value), 1));
 }
+
+struct Interp {
+    float4 position: SV_Position;
+    float2 uv;
+    float2 uv2;
+    uint material_index;
+}
+
+[shader("vertex")]
+Interp viewer_vertex(uint vertex_id : SV_VertexID, uniform ViewerConstants constants) {
+    let model = constants.base.model;
+
+    let index = model.read_index(vertex_id);
+    Interp interp;
+    interp.position = mul(constants.combined, float4(model.positions[index], 1.0));
+    interp.uv = model.uvs[index];
+    interp.uv2 = model.uv2s[index];
+    interp.material_index = model.material_indices[vertex_id / 3];
+    return interp;
+}
+
+[shader("pixel")]
+float3 viewer_pixel(Interp interp, uniform ViewerConstants constants) {
+    let material = constants.base.model.materials[interp.material_index];
+
+    var value = material.base_color_factor.rgb;
+
+    if (material.base_colour_image != MAX_UINT_VALUE) {
+        Sampler2D img = sampled_images[material.base_colour_image];
+        value *= img.Sample(interp.uv, 0).rgb;
+    }
+    
+    if (constants.lightmap != MAX_UINT_VALUE) {
+        Sampler2D lightmap = sampled_images[constants.lightmap];
+        value *= lightmap.SampleLevel(interp.uv2, 0).rgb;
+    }
+    
+    return value;
+}
