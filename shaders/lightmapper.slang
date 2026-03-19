@@ -398,7 +398,7 @@ void render(uint2 thread: SV_DispatchThreadID, uniform ViewerConstants constants
             let uv2 = interpolate_from_buffer(model.uv2s, indices, query.CommittedTriangleBarycentrics());
 
             Sampler2D lightmap = sampled_images[constants.lightmap];
-            
+
             value *= lightmap.SampleLevel(uv2, 0).rgb;
 
         }
@@ -441,11 +441,11 @@ float3 viewer_pixel(Interp interp, uniform ViewerConstants constants) {
         Sampler2D img = sampled_images[material.base_colour_image];
         value *= img.Sample(interp.uv, 0).rgb;
     }
-    
+
     if (constants.lightmap != MAX_UINT_VALUE) {
         Sampler2D lightmap = sampled_images[constants.lightmap];
         value *= lightmap.SampleLevel(interp.uv2, 0).rgb;
     }
-    
+
     return value;
 }
