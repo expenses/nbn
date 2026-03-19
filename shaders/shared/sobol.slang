@@ -8,6 +8,17 @@ uint count_leading_zeros(uint v) {
     return 31 - firstbithigh(v);
 }
 
+/* [0, uint_max] -> [0.0, 1.0) */
+float uint_to_float_excl(const uint n)
+{
+  /* NOTE: we divide by 4294967808 instead of 2^32 because the latter
+   * leads to a [0.0, 1.0] mapping instead of [0.0, 1.0) due to floating
+   * point rounding error. 4294967808 unfortunately leaves (precisely)
+   * one unused ULP between the max number this outputs and 1.0, but
+   * that's the best you can do with this construction. */
+  return (float)n * (1.0f / 4294967808.0f);
+}
+
 /*
  * A shuffled, Owen-scrambled Sobol sampler, implemented with the
  * techniques from the paper "Practical Hash-based Owen Scrambling"
@@ -17,9 +28,6 @@ uint count_leading_zeros(uint v) {
  * Sobol sampler uses padding to achieve higher dimensions, as described
  * in Burley's paper.
  */
-
-#define SOBOL_BURLEY_DIMENSIONS 4
-#define SOBOL_BURLEY_BITS 32
 
 /*
  * A fast, high-quality 32-bit mixing function.
@@ -59,12 +67,13 @@ uint reversed_bit_owen(uint n, uint seed) {
  * The direction vectors for the first four dimensions of the Sobol
  * sequence, stored with reversed-order bits.
  *
- * We don't need more than four dimensions because we achieve higher
- * dimensions with padding.  They're stored with reversed bits
- * because we need them reversed for the fast hash-based Owen
- * scrambling anyway, and this avoids doing that at run time.
+ * This is used in the Sobol-Burley sampler implementation.  We don't
+ * need more than four dimensions because we achieve higher dimensions
+ * with padding.  They're stored with reversed bits because we need
+ * them reversed for the fast hash-based Owen scrambling anyway, and
+ * this avoids doing that at run time.
  */
-const static uint sobol_burley_table[SOBOL_BURLEY_DIMENSIONS][SOBOL_BURLEY_BITS] = {
+const static uint sobol_burley_table[4][32] = {
   {
     0x00000001, 0x00000002, 0x00000004, 0x00000008,
     0x00000010, 0x00000020, 0x00000040, 0x00000080,
@@ -148,7 +157,7 @@ float sobol_burley(uint rev_bit_index,
   /* Apply Owen scrambling. */
   result = reversebits(reversed_bit_owen(result, scramble_seed));
 
-  return (float)result * (1.0f / (float)0xFFFFFFFF);
+  return uint_to_float_excl(result);
 }
 
 /*
@@ -176,7 +185,7 @@ float sobol_burley(uint rev_bit_index,
  * `shuffled_index_mask` limits the sample sequence length, improving
  * performance. It must be a string of binary 1 bits followed by a
  * string of binary 0 bits (e.g. 0xffff0000) for the sampler to operate
- * correctly. In general, `reversebits(shuffled_index_mask)`
+ * correctly. In general, `reverse_integer_bits(shuffled_index_mask)`
  * should be >= the maximum number of samples expected to be taken. A safe
  * default (but least performant) is 0xffffffff, for maximum sequence
  * length.
