@@ -175,27 +175,27 @@ public struct SobolRng: Rng {
     uint dimension = 0;
 
     public __init(uint2 thread, uint sample_) {
-        pixel_seed = hp_mix32(thread.x ^ (thread.y << 16));
+        pixel_seed = hash_hp_uint(thread.x ^ (thread.y << 16));
         sample = sample_;
     }
 
     [mutating]
     public float rand() {
-        let rand = sobol_burley_sample_1D(sample, dimension, pixel_seed);
+        let rand = sobol_burley_sample_1D(sample, dimension, pixel_seed, 0xffffffff);
         dimension++;
         return rand;
     }
 
     [mutating]
     public float2 rand2() {
-        let rand = sobol_burley_sample_2D(sample, dimension, pixel_seed);
+        let rand = sobol_burley_sample_2D(sample, dimension, pixel_seed, 0xffffffff);
         dimension++;
         return rand;
     }
 
     [mutating]
     public float3 rand3() {
-        let rand = sobol_burley_sample_3D(sample, dimension, pixel_seed);
+        let rand = sobol_burley_sample_3D(sample, dimension, pixel_seed, 0xffffffff);
         dimension++;
         return rand;
     }
