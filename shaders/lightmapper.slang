@@ -241,7 +241,13 @@ bool check_for_backfaces(float2 barycentrics, uint triangle_index, PushConstants
     let c = push_constants.model.positions[indices.z];
     let geom_normal = normalize(cross(b - a, c - a));
 
-    let pos = offset_ray(interpolate_from_buffer(push_constants.model.positions, indices, barycentrics), geom_normal);
+    let pos = offset_ray(shadow_terminator_hack(
+        a, b, c,
+        push_constants.model.normals[indices.x],
+        push_constants.model.normals[indices.y],
+        push_constants.model.normals[indices.z],
+        float3(1.0-barycentrics.x-barycentrics.y, barycentrics)
+    ), geom_normal);
 
     float3[4] dirs = float3[4](float3(1,0,0), float3(0,1,0), float3(-1,0,0), float3(0,-1,0));
 
