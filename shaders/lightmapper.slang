@@ -164,7 +164,7 @@ void lightmap(uint2 thread : SV_DispatchThreadID, uniform PushConstants push_con
     let info = generate_hit(barycentrics, triangle_index, push_constants.model);
 
     // pdf compared to the env map values.
-    let bounce_pdf = PI;
+    let bounce_pdf = 1.0 / (2.0 * PI);
 
     accum += get_direct_point_lighting(info.position, info.normal, rng.rand2(), push_constants).calculate(info.normal);
     accum += get_direct_env_map_lighting(info.position, info.normal, bounce_pdf, rng.rand2(), push_constants).calculate(info.normal);

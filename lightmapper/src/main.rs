@@ -101,12 +101,14 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     let alias_table =
         alias_table::construct(envmap.rows().enumerate().flat_map(|(row, pixels)| {
+            use std::f32::consts::PI;
+
             let height = envmap.height() as usize;
-            let theta = std::f32::consts::PI * (row as f32 + 0.5) / height as f32;
+            let theta = PI * (row as f32 + 0.5) / height as f32;
             let sin_theta = theta.sin();
             pixels.map(move |p| {
                 use image::Pixel;
-                (p.to_luma()[0] * sin_theta, sin_theta)
+                (p.to_luma()[0] * sin_theta, sin_theta * 2.0 * PI * PI)
             })
         }));
 
