@@ -165,7 +165,8 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     let model_buffer = staging_buffer.create_buffer_from_slice(&device, "models", &[model]);
     let num_lights = dbg!(lights.len() as _);
-    let lights = staging_buffer.create_buffer_from_slice(&device, "lights", &lights);
+    let lights = if !lights.is_empty() {
+        Some(staging_buffer.create_buffer_from_slice(&device, "lights", &lights))} else {None};
 
     let tlas = device.create_tlas_from_instances(
         &mut staging_buffer,
@@ -188,7 +189,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
 
     let push_constants = PushConstants {
         extent: [width, height],
-        lights: *lights,
+        lights: lights.as_ref().map(|lights| **lights).unwrap_or(0),
         model: *model_buffer,
         output: *output_buffer,
         temp: *temp_buffer,
