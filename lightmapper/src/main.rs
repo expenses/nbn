@@ -168,7 +168,10 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
     let model_buffer = staging_buffer.create_buffer_from_slice(&device, "models", &[model]);
     let num_lights = dbg!(lights.len() as _);
     let lights = if !lights.is_empty() {
-        Some(staging_buffer.create_buffer_from_slice(&device, "lights", &lights))} else {None};
+        Some(staging_buffer.create_buffer_from_slice(&device, "lights", &lights))
+    } else {
+        None
+    };
 
     let tlas = device.create_tlas_from_instances(
         &mut staging_buffer,
