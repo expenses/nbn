@@ -1433,11 +1433,11 @@ impl Device {
             );
         }
 
-        let num_general_shaders = desc.miss.len() + 1;
+        let num_general_shaders = 1 + desc.miss.len();
 
         let mut groups = Vec::with_capacity(num_general_shaders + desc.closest_hit.len());
 
-        // raygen and closest hit shaders
+        // raygen and miss shaders
         for i in 0..num_general_shaders {
             groups.push(
                 vk::RayTracingShaderGroupCreateInfoKHR::default()
