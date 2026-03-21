@@ -80,7 +80,13 @@ impl FreeCam {
         false
     }
 
-    pub fn update(&mut self, width: u32, height: u32, delta_time: f32) -> (glam::Mat4, glam::Mat4) {
+    pub fn update(
+        &mut self,
+        width: u32,
+        height: u32,
+        delta_time: f32,
+        speed: f32,
+    ) -> (glam::Mat4, glam::Mat4) {
         let forward = self.keyboard.forwards as i32 - self.keyboard.backwards as i32;
         let right = self.keyboard.right as i32 - self.keyboard.left as i32;
 
@@ -91,7 +97,7 @@ impl FreeCam {
             .translate(
                 ((glam::Vec3::from_array(prev_transform.forward()) * forward as f32
                     + glam::Vec3::from_array(prev_transform.right()) * right as f32)
-                    * 0.25)
+                    * speed)
                     .to_array(),
             );
 
