@@ -1,5 +1,4 @@
 use ash::vk;
-use std::sync::Arc;
 
 fn create_pipeline(
     device: &nbn::Device,
@@ -9,7 +8,7 @@ fn create_pipeline(
     device.create_compute_pipeline(shader, c"main")
 }
 
-struct WindowState {
+struct State {
     window: winit::window::Window,
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
@@ -24,11 +23,11 @@ struct WindowState {
     tlas: nbn::AccelerationStructure,
     _accel: nbn::AccelerationStructure,
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
+    device: nbn::Device,
 }
 
 struct App {
-    window_state: Option<WindowState>,
-    device: Option<Arc<nbn::Device>>,
+    state: Option<State>,
 }
 
 impl winit::application::ApplicationHandler for App {
@@ -36,7 +35,7 @@ impl winit::application::ApplicationHandler for App {
         let window = event_loop
             .create_window(winit::window::WindowAttributes::default().with_resizable(true))
             .unwrap();
-        let device = Arc::new(nbn::Device::new(Some(&window)));
+        let device = nbn::Device::new(Some(&window));
 
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 16 * 1024 * 1024, nbn::QueueType::Compute);
@@ -113,7 +112,7 @@ impl winit::application::ApplicationHandler for App {
 
         let egui_ctx = egui::Context::default();
 
-        self.window_state = Some(WindowState {
+        self.state = Some(State {
             _accel: accel,
             _data_buffer: data_buffer,
             tlas,
@@ -149,8 +148,8 @@ impl winit::application::ApplicationHandler for App {
                 None,
             ),
             window,
+            device,
         });
-        self.device = Some(device);
     }
 
     fn window_event(
@@ -159,7 +158,8 @@ impl winit::application::ApplicationHandler for App {
         _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
-        let state = self.window_state.as_mut().unwrap();
+        let state = self.state.as_mut().unwrap();
+        let device = &state.device;
 
         let _ = state.egui_winit.on_window_event(&state.window, &event);
 
@@ -169,7 +169,6 @@ impl winit::application::ApplicationHandler for App {
                     width: new_size.width,
                     height: new_size.height,
                 };
-                let device = self.device.as_ref().unwrap();
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
                 device.recreate_swapchain(&mut state.swapchain);
                 state.swapchain_image_heap_indices.clear();
@@ -182,8 +181,6 @@ impl winit::application::ApplicationHandler for App {
                 );
             }
             winit::event::WindowEvent::RedrawRequested => {
-                let device = self.device.as_ref().unwrap();
-
                 if state.shader.try_reload(device) {
                     unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
                     state.pipeline = create_pipeline(device, &state.shader, &state.swapchain);
@@ -250,18 +247,11 @@ impl winit::application::ApplicationHandler for App {
                         &output.textures_delta,
                     );
 
-                    device.cmd_pipeline_barrier2(
-                        **command_buffer,
-                        &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::ImageBarrier {
-                                image,
-                                src: Some(nbn::BarrierOp::Acquire),
-                                dst: nbn::BarrierOp::ComputeStorageWrite,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                        ]),
+                    device.insert_image_pipeline_barrier(
+                        command_buffer,
+                        image,
+                        Some(nbn::BarrierOp::Acquire),
+                        nbn::BarrierOp::ComputeStorageWrite,
                     );
                     let extent = state.swapchain.create_info.image_extent;
 
@@ -302,18 +292,11 @@ impl winit::application::ApplicationHandler for App {
                         1,
                     );
 
-                    device.cmd_pipeline_barrier2(
-                        **command_buffer,
-                        &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::ImageBarrier {
-                                image,
-                                src: Some(nbn::BarrierOp::ComputeStorageWrite),
-                                dst: nbn::BarrierOp::ColorAttachmentReadWrite,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                        ]),
+                    device.insert_image_pipeline_barrier(
+                        command_buffer,
+                        image,
+                        Some(nbn::BarrierOp::ComputeStorageWrite),
+                        nbn::BarrierOp::ColorAttachmentReadWrite,
                     );
 
                     device.begin_rendering(
@@ -339,18 +322,11 @@ impl winit::application::ApplicationHandler for App {
 
                     device.cmd_end_rendering(**command_buffer);
 
-                    device.cmd_pipeline_barrier2(
-                        **command_buffer,
-                        &vk::DependencyInfo::default().image_memory_barriers(&[
-                            nbn::ImageBarrier {
-                                image,
-                                src: Some(nbn::BarrierOp::ColorAttachmentWrite),
-                                dst: nbn::BarrierOp::Present,
-                                src_queue_family_index: command_buffer.queue_family_index,
-                                dst_queue_family_index: command_buffer.queue_family_index,
-                            }
-                            .into(),
-                        ]),
+                    device.insert_image_pipeline_barrier(
+                        command_buffer,
+                        image,
+                        Some(nbn::BarrierOp::ColorAttachmentWrite),
+                        nbn::BarrierOp::Present,
                     );
                     device.end_command_buffer(**command_buffer).unwrap();
 
@@ -388,19 +364,19 @@ impl winit::application::ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _: &winit::event_loop::ActiveEventLoop) {
-        let device = self.device.as_ref().unwrap();
+        let state = self.state.as_mut().unwrap();
+        let device = &state.device;
 
         unsafe {
             device.device_wait_idle().unwrap();
         }
 
-        self.window_state = None;
-        self.device = None;
+        self.state = None;
     }
 
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        if let Some(app_state) = self.window_state.as_mut() {
-            app_state.window.request_redraw();
+        if let Some(state) = self.state.as_mut() {
+            state.window.request_redraw();
         }
     }
 }
@@ -409,10 +385,5 @@ fn main() {
     env_logger::init();
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
-    event_loop
-        .run_app(&mut App {
-            device: None,
-            window_state: None,
-        })
-        .unwrap();
+    event_loop.run_app(&mut App { state: None }).unwrap();
 }
