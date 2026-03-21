@@ -1433,10 +1433,12 @@ impl Device {
             );
         }
 
-        let mut groups = Vec::with_capacity(desc.miss.len() + desc.closest_hit.len() + 1);
+        let num_general_shaders = desc.miss.len() + 1;
+
+        let mut groups = Vec::with_capacity(num_general_shaders + desc.closest_hit.len());
 
         // raygen and closest hit shaders
-        for i in 0..desc.miss.len() + 1 {
+        for i in 0..num_general_shaders {
             groups.push(
                 vk::RayTracingShaderGroupCreateInfoKHR::default()
                     .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
@@ -1447,7 +1449,7 @@ impl Device {
             );
         }
 
-        for i in desc.miss.len() + 1..desc.miss.len() + 1 + desc.closest_hit.len() {
+        for i in num_general_shaders..num_general_shaders + desc.closest_hit.len() {
             groups.push(
                 vk::RayTracingShaderGroupCreateInfoKHR::default()
                     .ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
@@ -1509,7 +1511,7 @@ impl Device {
                 size: handle_size,
             },
             hit: vk::StridedDeviceAddressRegionKHR {
-                device_address: *group_handles + handle_size * (1 + desc.miss.len() as u64),
+                device_address: *group_handles + handle_size * num_general_shaders as u64,
                 stride: handle_size,
                 size: handle_size,
             },
