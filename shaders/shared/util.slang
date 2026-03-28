@@ -196,3 +196,10 @@ public float2 barycentrics2d(float2 p, float2 a, float2 b, float2 c) {
         cross2d(b - a, p - a)
     ) / denom;
 }
+
+public struct DrawIndirectCommand {
+    public uint vertex_count;
+    public uint instance_count;
+    public uint first_vertex;
+    public uint first_instance;
+};
