@@ -25,18 +25,18 @@ fn create_pipeline(
     })
 }
 
-struct WindowState {
+struct State {
     window: winit::window::Window,
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
     pipeline: nbn::Pipeline,
     shader: nbn::ReloadableShader,
+    device: nbn::Device,
 }
 
 struct App {
-    window_state: Option<WindowState>,
-    device: Option<nbn::Device>,
+    state: Option<State>,
 }
 
 impl winit::application::ApplicationHandler for App {
@@ -57,7 +57,7 @@ impl winit::application::ApplicationHandler for App {
         let shader = device.load_reloadable_shader("shaders/compiled/triangle.spv");
         let pipeline = create_pipeline(&device, &shader, &swapchain);
 
-        self.window_state = Some(WindowState {
+        self.state = Some(State {
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -68,8 +68,8 @@ impl winit::application::ApplicationHandler for App {
             window,
             pipeline,
             shader,
+            device,
         });
-        self.device = Some(device);
     }
 
     fn window_event(
@@ -78,15 +78,8 @@ impl winit::application::ApplicationHandler for App {
         _window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
-        let (state, device) = if let Some((state, device)) = self
-            .window_state
-            .as_mut()
-            .and_then(|state| self.device.as_ref().map(|device| (state, device)))
-        {
-            (state, device)
-        } else {
-            return;
-        };
+        let state = self.state.as_mut().unwrap();
+        let device = &state.device;
 
         match event {
             winit::event::WindowEvent::Resized(new_size) => {
@@ -198,19 +191,18 @@ impl winit::application::ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _: &winit::event_loop::ActiveEventLoop) {
-        let device = self.device.as_ref().unwrap();
+        let device = &self.state.as_ref().unwrap().device;
 
         unsafe {
             device.device_wait_idle().unwrap();
         }
 
-        self.window_state = None;
-        self.device = None;
+        self.state = None;
     }
 
     fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        if let Some(app_state) = self.window_state.as_mut() {
-            app_state.window.request_redraw();
+        if let Some(state) = self.state.as_mut() {
+            state.window.request_redraw();
         }
     }
 }
@@ -219,10 +211,5 @@ fn main() {
     env_logger::init();
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
-    event_loop
-        .run_app(&mut App {
-            device: None,
-            window_state: None,
-        })
-        .unwrap();
+    event_loop.run_app(&mut App { state: None }).unwrap();
 }
