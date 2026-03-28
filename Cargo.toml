@@ -38,4 +38,4 @@ blue_noise = ["dep:blue-noise-sampler"]
 freecam = ["dep:dolly"]
 
 [workspace]
-members = [".", "alias-table", "gltf-compress", "gltf-meshlets", "lightmapper", "meshlet-renderer", "voxelizer"]
+members = [".", "alias-table", "gltf-compress", "gltf-meshlets", "lightmapper", "meshlet-renderer", "particles", "voxelizer"]
