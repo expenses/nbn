@@ -1,0 +1,10 @@
+[package]
+name = "jungle"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nbn = {path = "..", features = ["freecam"]}
+goth-gltf = "0.3.0"
+slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
+ddsfile = "0.6.0"
