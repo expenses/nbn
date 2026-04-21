@@ -16,6 +16,19 @@ struct Meshlet {
     triangle_count: u8,
 }
 
+#[test]
+fn test_meshlet_size() {
+    assert_eq!(
+        std::mem::size_of::<Meshlet>(),
+        4 * 4
+            + 4
+            + 8
+            + 2
+            // padding to make 32
+            + 2
+    )
+}
+
 fn main() {
     let path = std::env::args().nth(1).unwrap();
     let path = Path::new(&path);
@@ -70,13 +83,13 @@ fn main() {
             let slice = get_buffer_slice(positions);
             let adapter = meshopt::utilities::VertexDataAdapter::new(slice, 4 * 3, 0).unwrap();
             let max_vertices = 64;
-            let max_triangles = 124;
+            let max_triangles = 96;
             let meshlets = meshopt::clusterize::build_meshlets(
                 &indices,
                 &adapter,
                 max_vertices,
                 max_triangles,
-                0.0,
+                0.25,
             );
 
             write_val(&mut output, meshlets.meshlets.len() as _);
