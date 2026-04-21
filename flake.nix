@@ -77,7 +77,7 @@
               '')
             ];
             buildInputs = [vulkan-loader];
-            LD_LIBRARY_PATH = lib.makeLibraryPath [wayland libxkbcommon libxcursor libx11 libxi];
+            LD_LIBRARY_PATH = lib.makeLibraryPath [vulkan-loader wayland libxkbcommon libxcursor libx11 libxi];
           };
         devShells.slang-build = with pkgs;
           mkShell {
