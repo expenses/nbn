@@ -1,4 +1,3 @@
-
 use nbn::{vk, winit};
 
 slang_struct::slang_include!("shaders/particles_structs.slang");

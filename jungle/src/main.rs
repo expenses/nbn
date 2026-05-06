@@ -3,19 +3,16 @@ use nbn::winit::{self, event::ElementState, keyboard::KeyCode};
 
 slang_struct::slang_include!("shaders/jungle/structs.slang");
 
-
 fn main() {
     let filename = std::env::args().nth(1).unwrap();
-
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     event_loop
         .run_app(&mut App {
             state: None,
-            filepath: filename
+            filepath: filename,
         })
         .unwrap();
-
 }
 
 struct State {
@@ -88,7 +85,7 @@ impl winit::application::ApplicationHandler for App {
 
         let size = window.inner_size();
         let width = size.width;
-        let height= size.height;
+        let height = size.height;
 
         let depthbuffer = device.create_image(nbn::ImageDescriptor {
             name: "depth attachment",
@@ -118,7 +115,7 @@ impl winit::application::ApplicationHandler for App {
             render_pipeline,
             swapchain,
             _data: data,
-            freecam: nbn::freecam::FreeCam::new([0.01;3].into()),
+            freecam: nbn::freecam::FreeCam::new([0.01; 3].into()),
             frame_index: 0,
         })
     }
@@ -162,14 +159,14 @@ impl winit::application::ApplicationHandler for App {
                         .images
                         .iter()
                         .map(|image| device.register_image(*image.view, true)),
-
-
-
                 );
                 state.depthbuffer = device.create_image(nbn::ImageDescriptor {
                     name: "depth attachment",
                     format: vk::Format::D32_SFLOAT,
-                    extent: nbn::ImageExtent::D2 { width: new_size.width, height: new_size.height },
+                    extent: nbn::ImageExtent::D2 {
+                        width: new_size.width,
+                        height: new_size.height,
+                    },
                     usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     mip_levels: 1,
@@ -208,14 +205,12 @@ impl winit::application::ApplicationHandler for App {
                     nbn::BarrierOp::ColorAttachmentWrite,
                 );
 
-
                 device.insert_image_pipeline_barrier(
                     command_buffer,
                     &state.depthbuffer,
                     None,
                     nbn::BarrierOp::DepthStencilAttachmentReadWrite,
                 );
-
 
                 device.begin_rendering(
                     command_buffer,
@@ -238,7 +233,6 @@ impl winit::application::ApplicationHandler for App {
                                 },
                             })
                             .load_op(vk::AttachmentLoadOp::CLEAR)
-
                             .store_op(vk::AttachmentStoreOp::STORE)
                             .image_view(*state.depthbuffer.view)
                             .image_layout(vk::ImageLayout::GENERAL),
@@ -251,24 +245,29 @@ impl winit::application::ApplicationHandler for App {
                     *state.render_pipeline,
                 );
 
-                let (view, proj) = state
-                    .freecam
-                    .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
+                let (view, proj) =
+                    state
+                        .freecam
+                        .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
 
-                for i in 0 .. state._data.instances_cpu.len() {
+                for i in 0..state._data.instances_cpu.len() {
+                    device.push_constants::<PushConstants>(
+                        &command_buffer,
+                        PushConstants {
+                            camera: (proj * view).to_cols_array(),
+                            instances: *state._data.instances,
+                            instance_index: i as _,
+                        },
+                    );
 
-
-                device.push_constants::<PushConstants>(
-                    &command_buffer,
-                    PushConstants {
-                        camera: (proj * view).to_cols_array(),
-                        instances: *state._data.instances,
-                        instance_index: i as _
-                    },
-                );
-
-                device.cmd_draw(**command_buffer, state._data.instances_cpu[i].num_indices, 1, 0, 0);
-}
+                    device.cmd_draw(
+                        **command_buffer,
+                        state._data.instances_cpu[i].num_indices,
+                        1,
+                        0,
+                        0,
+                    );
+                }
 
                 device.cmd_end_rendering(**command_buffer);
 
@@ -372,8 +371,8 @@ fn load_gltf<P: AsRef<std::path::Path>>(
     };
 
     let mut instances = Vec::new();
-let mut images = Vec::new();
-    
+    let mut images = Vec::new();
+
     gltf.nodes
         .iter()
         .filter_map(|node| node.mesh.map(|mesh_index| (node, mesh_index)))
@@ -404,9 +403,13 @@ let mut images = Vec::new();
                     other => unimplemented!("{:?}", other),
                 };
 
-
                 let material = &gltf.materials[primitive.material.unwrap_or(0)];
-                let texture = &gltf.textures[material.pbr_metallic_roughness.base_color_texture.as_ref().unwrap().index];
+                let texture = &gltf.textures[material
+                    .pbr_metallic_roughness
+                    .base_color_texture
+                    .as_ref()
+                    .unwrap()
+                    .index];
                 let image = &gltf.images[texture.source.unwrap()];
                 let path = path.with_file_name(image.uri.as_ref().unwrap());
                 let image = load_dds(device, staging_buffer, path);
@@ -448,7 +451,7 @@ let mut images = Vec::new();
 fn load_dds<P: AsRef<std::path::Path>>(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
-    path: P
+    path: P,
 ) -> nbn::Image {
     let path = path.as_ref();
     let dds = match std::fs::File::open(path) {
@@ -483,11 +486,12 @@ fn load_dds<P: AsRef<std::path::Path>>(
         nbn::SampledImageDescriptor {
             name: &path.display().to_string(),
             extent: vk::Extent3D {
-                width: dds.get_width()/2,
-                height: dds.get_height()/2,
+                width: dds.get_width() / 2,
+                height: dds.get_height() / 2,
                 depth: dds.get_depth(),
-            }.into(),
-            format: vk::Format:: BC7_SRGB_BLOCK,
+            }
+            .into(),
+            format: vk::Format::BC7_SRGB_BLOCK,
         },
         &dds.data,
         nbn::QueueType::Graphics,
