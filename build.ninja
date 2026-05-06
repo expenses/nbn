@@ -1,5 +1,5 @@
 rule slang
-    command = slangc $in -o $out -O3 -warnings-as-errors all -I shaders 
+    command = slangc $in -o $out -O3 -warnings-as-errors all -I shaders  -experimental-feature
 build shaders/compiled/compute_example.spv: slang shaders/compute_example.slang
 build shaders/compiled/compute.spv: slang shaders/compute.slang | shaders/models.slang shaders/uniforms.slang shaders/dispatches.slang shaders/prefix_sum.slang shaders/shared/noise.slang shaders/shared/random.slang shaders/shared/sobol.slang shaders/shared/util.slang shaders/shared/derivatives.slang
 build shaders/compiled/debugging.spv: slang shaders/debugging.slang | shaders/uniforms.slang shaders/models.slang shaders/dispatches.slang shaders/prefix_sum.slang shaders/shared/noise.slang shaders/shared/random.slang shaders/shared/sobol.slang shaders/shared/util.slang shaders/shared/derivatives.slang shaders/shared/constants.slang shaders/shared/colour.slang
@@ -14,4 +14,4 @@ build shaders/compiled/shadows.spv: slang shaders/shadows.slang | shaders/unifor
 build shaders/compiled/triangle_hdr.spv: slang shaders/triangle_hdr.slang | shaders/shared/colour.slang shaders/shared/hdr10.slang
 build shaders/compiled/triangle.spv: slang shaders/triangle.slang | shaders/shared/colour.slang
 build shaders/compiled/voxelize.spv: slang shaders/voxelize.slang | shaders/gltf.slang shaders/shared/constants.slang
-build shaders/compiled/jungle.spv: slang shaders/jungle/jungle.slang | shaders/jungle/structs.slang shaders/shared/colour.slang
+build shaders/compiled/jungle.spv: slang shaders/jungle/jungle.slang | shaders/jungle/structs.slang shaders/shared/colour.slang shaders/fallback_bindings.slang
