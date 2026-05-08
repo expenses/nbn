@@ -1,10 +1,16 @@
 import slang.neural;
 import ntc.structs;
 
+static const int SubgroupSize = 64;
+static const int SubgroupCount = 1;
+
+typealias ShMemSize = SharedMemorySize<float, TargetEnum.SPIR_V, ExecutionMode.Training, SubgroupSize, SubgroupCount>;
+typealias ShMemSizeForNetwork = ShMemSize.OfLayer3<16, 64, 64, 16>;
+
 typealias Address = PointerAddress<float>;
-typealias InputVec = InlineVector<float, 16>;
-typealias HiddenVec = InlineVector<float, 64>;
-typealias OutputVec = InlineVector<float, 16>;
+typealias InputVec = WaveTangledVector<float, ShMemSizeForNetwork, 16, SubgroupSize>;
+typealias HiddenVec = WaveTangledVector<float, ShMemSizeForNetwork, 64, SubgroupSize>;
+typealias OutputVec = WaveTangledVector<float, ShMemSizeForNetwork, 16, SubgroupSize>;
 
 typealias Layer0 = FFLayer<float, InputVec, HiddenVec, LinearLayout, ReLU<float>>;
 typealias Layer1 = FFLayer<float, HiddenVec, HiddenVec, LinearLayout, ReLU<float>>;
@@ -324,7 +330,7 @@ float4 render_texture(
 }
 
 [shader("compute")]
-[NumThreads(8, 8, 1)]
+[NumThreads(64, 1, 1)]
 void render_compute(
     uint2 thread : SV_DispatchThreadID,
     uniform RenderComputePushConstants pc
