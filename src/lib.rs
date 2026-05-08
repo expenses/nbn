@@ -331,6 +331,8 @@ impl Device {
 
         let mut ray_query_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
 
+        let mut coop_mat_features = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default();
+
         let mut enabled_features = vk::PhysicalDeviceFeatures2::default()
             .push_next(&mut enabled_vulkan_1_1_features)
             .push_next(&mut enabled_vulkan_1_2_features)
@@ -339,7 +341,8 @@ impl Device {
             .push_next(&mut enabled_mutable_descriptor_features)
             .push_next(&mut enabled_acceleration_structure_features)
             .push_next(&mut ray_tracing_pipeline_features)
-            .push_next(&mut ray_query_features);
+            .push_next(&mut ray_query_features)
+            .push_next(&mut coop_mat_features);
 
         unsafe { instance.get_physical_device_features2(pdevice, &mut enabled_features) };
         assert!(enabled_features.features.shader_int16 > 0);
@@ -356,6 +359,7 @@ impl Device {
         assert!(enabled_vulkan_1_2_features.timeline_semaphore > 0);
         assert!(enabled_vulkan_1_2_features.shader_buffer_int64_atomics > 0);
         assert!(enabled_vulkan_1_2_features.shader_float16 > 0);
+        assert!(enabled_vulkan_1_2_features.vulkan_memory_model_device_scope > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_mesh_shader_features.mesh_shader > 0);
@@ -364,6 +368,7 @@ impl Device {
         assert!(enabled_acceleration_structure_features.acceleration_structure > 0);
         assert!(ray_tracing_pipeline_features.ray_tracing_pipeline > 0);
         assert!(ray_query_features.ray_query > 0);
+        assert!(coop_mat_features.cooperative_matrix > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
             .shader_int16(true)
@@ -389,7 +394,9 @@ impl Device {
             .timeline_semaphore(true)
             .shader_buffer_int64_atomics(true)
             .shader_float16(true)
-            .storage_push_constant8(true);
+            .storage_push_constant8(true)
+            .vulkan_memory_model(true)
+            .vulkan_memory_model_device_scope(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
@@ -412,6 +419,9 @@ impl Device {
 
         let mut ray_query_features =
             vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true);
+
+        let mut coop_mat_features =
+            vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
 
         let mut queue_infos = vec![vk::DeviceQueueCreateInfo::default()
             .queue_family_index(graphics_queue_family_index)
@@ -450,6 +460,7 @@ impl Device {
                             ash::khr::deferred_host_operations::NAME.as_ptr(),
                             ash::khr::ray_tracing_pipeline::NAME.as_ptr(),
                             ash::khr::ray_query::NAME.as_ptr(),
+                            ash::khr::cooperative_matrix::NAME.as_ptr(),
                         ])
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_1_features)
@@ -459,7 +470,8 @@ impl Device {
                         .push_next(&mut mutable_descriptor_features)
                         .push_next(&mut acceleration_structure_features)
                         .push_next(&mut ray_tracing_pipeline_features)
-                        .push_next(&mut ray_query_features),
+                        .push_next(&mut ray_query_features)
+                        .push_next(&mut coop_mat_features),
                     None,
                 )
                 .unwrap()
