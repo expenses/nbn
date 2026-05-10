@@ -12,6 +12,16 @@ struct CalculateGradsPushConstants {
     uint iteration;
 }
 
+struct OptimizerPushConstants {
+    float* primal;
+    float* grad;
+    float* mean;
+    float* variance;
+    float learning_rate;
+    int iteration;
+    int num_values;
+}
+
 uint16_t quantize(float value, uint16_t bits) {
     let size = (1 << bits) - 1;
     return uint16_t(round(value * size));

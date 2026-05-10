@@ -215,7 +215,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0348a1c054491f4bfe6ab86a7b6ab1e44e45d899005de92f58b3df180b36ddaf"
 dependencies = [
  "clipboard-win",
- "image 0.25.9",
+ "image 0.25.10",
  "log",
  "objc2 0.6.3",
  "objc2-app-kit 0.3.2",
@@ -1576,7 +1576,7 @@ name = "gltf-compress"
 version = "0.1.0"
 dependencies = [
  "goth-gltf 0.1.2",
- "image 0.25.9",
+ "image 0.25.10",
  "intel_tex_2 0.5.0",
  "ktx2",
  "ktx2-tools",
@@ -1812,9 +1812,9 @@ dependencies = [
 
 [[package]]
 name = "image"
-version = "0.25.9"
+version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6506c6c10786659413faa717ceebcb8f70731c0a60cbae39795fdf114519c1a"
+checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
@@ -1829,9 +1829,9 @@ dependencies = [
  "ravif",
  "rayon",
  "rgb",
- "tiff 0.10.3",
- "zune-core 0.5.1",
- "zune-jpeg 0.5.12",
+ "tiff 0.11.3",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -2037,7 +2037,7 @@ dependencies = [
  "ddsfile 0.6.0",
  "goth-gltf 0.3.0",
  "nbn",
- "slang_struct 0.0.2 (git+https://github.com/expenses/slang-struct-rs?branch=logos)",
+ "slang_struct",
 ]
 
 [[package]]
@@ -2149,12 +2149,12 @@ dependencies = [
  "env_logger",
  "glam 0.32.0",
  "goth-gltf 0.1.2",
- "image 0.25.9",
+ "image 0.25.10",
  "nalgebra",
  "nalgebra-sparse",
  "nbn",
  "ordered-float",
- "slang_struct 0.0.2 (git+https://github.com/expenses/slang-struct-rs?branch=logos)",
+ "slang_struct",
  "winit",
 ]
 
@@ -2294,7 +2294,7 @@ dependencies = [
  "gpu-allocator",
  "ktx2",
  "nbn",
- "slang_struct 0.0.2 (git+https://github.com/expenses/slang-struct-rs?branch=logos)",
+ "slang_struct",
  "winit",
  "zstd",
 ]
@@ -2340,9 +2340,9 @@ dependencies = [
 
 [[package]]
 name = "moxcms"
-version = "0.7.11"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac9557c559cd6fc9867e122e20d2cbefc9ca29d80d027a8e39310920ed2f0a97"
+checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
@@ -2432,16 +2432,12 @@ dependencies = [
  "glam 0.31.1",
  "goth-gltf 0.1.2",
  "gpu-allocator",
- "image 0.25.9",
+ "image 0.25.10",
  "ktx2",
  "log",
- "ndarray",
- "ndarray-npy",
  "notify",
  "parking_lot",
  "presser",
- "rand 0.10.1",
- "slang_struct 0.0.2",
  "winit",
  "zstd",
 ]
@@ -2557,6 +2553,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
 dependencies = [
  "bitflags 2.10.0",
+]
+
+[[package]]
+name = "ntc"
+version = "0.1.0"
+dependencies = [
+ "image 0.25.10",
+ "nbn",
+ "ndarray",
+ "ndarray-npy",
+ "rand 0.10.1",
+ "slang_struct",
 ]
 
 [[package]]
@@ -3009,7 +3017,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "nbn",
- "slang_struct 0.0.2 (git+https://github.com/expenses/slang-struct-rs?branch=logos)",
+ "slang_struct",
 ]
 
 [[package]]
@@ -3417,9 +3425,9 @@ dependencies = [
 
 [[package]]
 name = "ravif"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef69c1990ceef18a116855938e74793a5f7496ee907562bd0857b6ac734ab285"
+checksum = "e52310197d971b0f5be7fe6b57530dcd27beb35c1b013f29d66c1ad73fbbcc45"
 dependencies = [
  "avif-serialize",
  "imgref",
@@ -3722,18 +3730,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "slang_struct"
 version = "0.0.2"
-dependencies = [
- "logos",
- "proc-macro2",
- "quote",
- "regex",
- "syn 2.0.114",
-]
-
-[[package]]
-name = "slang_struct"
-version = "0.0.2"
-source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#cbdf61a5242b68222829290e2cb1fd16d91bf8f9"
+source = "git+https://github.com/expenses/slang-struct-rs?branch=logos#443c59f1cb5014da4c3d1314793c70efcbbc6db9"
 dependencies = [
  "logos",
  "proc-macro2",
@@ -3963,16 +3960,16 @@ dependencies = [
 
 [[package]]
 name = "tiff"
-version = "0.10.3"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af9605de7fee8d9551863fd692cce7637f548dbd9db9180fcc07ccc6d26c336f"
+checksum = "b63feaf3343d35b6ca4d50483f94843803b0f51634937cc2ec519fc32232bc52"
 dependencies = [
  "fax",
  "flate2",
  "half",
  "quick-error",
  "weezl",
- "zune-jpeg 0.4.21",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -4180,12 +4177,12 @@ dependencies = [
  "env_logger",
  "glam 0.31.1",
  "goth-gltf 0.1.2",
- "image 0.25.9",
+ "image 0.25.10",
  "indicatif",
  "nbn",
  "radsort",
  "rayon",
- "slang_struct 0.0.2 (git+https://github.com/expenses/slang-struct-rs?branch=logos)",
+ "slang_struct",
  "tree64",
 ]
 
@@ -5265,12 +5262,6 @@ dependencies = [
 
 [[package]]
 name = "zune-core"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a"
-
-[[package]]
-name = "zune-core"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb8a0807f7c01457d0379ba880ba6322660448ddebc890ce29bb64da71fb40f9"
@@ -5286,18 +5277,9 @@ dependencies = [
 
 [[package]]
 name = "zune-jpeg"
-version = "0.4.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29ce2c8a9384ad323cf564b67da86e21d3cfdff87908bc1223ed5c99bc792713"
-dependencies = [
- "zune-core 0.4.12",
-]
-
-[[package]]
-name = "zune-jpeg"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "410e9ecef634c709e3831c2cfdb8d9c32164fae1c67496d5b68fff728eec37fe"
 dependencies = [
- "zune-core 0.5.1",
+ "zune-core",
 ]

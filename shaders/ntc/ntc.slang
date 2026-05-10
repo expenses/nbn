@@ -152,7 +152,31 @@ float[16] loss(
     return error;
 }
 
+[shader("compute")]
+[NumThreads(64, 1, 1)]
 void optimizer_step(
+     uint thread: SV_DispatchThreadID,
+    uniform OptimizerPushConstants pc
+) {
+    if ((thread >= pc.num_values)) {
+        return;
+    }
+
+    let primal = &pc.primal[thread];
+    let grad = pc.grad[thread];
+    let mean = pc.mean[thread];
+
+    optimizer_step_inner(
+        pc.primal[thread],
+        pc.grad[thread],
+        pc.mean[thread],
+        pc.variance[thread],
+        pc.learning_rate,
+        pc.iteration
+    );
+}
+
+void optimizer_step_inner(
     inout float primal,
     inout float grad,
     inout float mean,
