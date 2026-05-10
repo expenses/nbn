@@ -24,6 +24,7 @@ slang_struct = { path = "slang-struct-rs" }
 ndarray-npy = "0.10.0"
 ndarray = "0.17.2"
 image = { version = "0.25.9", features = ["png"] }
+rand = { version = "0.10.1", features = ["thread_rng"] }
 
 
 [dev-dependencies]

@@ -1,5 +1,7 @@
 import slang.neural;
 import ntc.structs;
+import shared.noise;
+import fallback_bindings;
 
 static const int SubgroupSize = 64;
 static const int SubgroupCount = 1;
@@ -91,16 +93,6 @@ half relu(half x) {
     return max(x, half(0.0));
 }
 
-half[16] render(
-    int2 pixel,
-    int resolution,
-    int mip,
-    Network network
-) {
-    float2 uv = (float2(pixel) + 0.5f) / float2(resolution);
-    return eval_network(network, uv, mip, Address(network.weights_and_biases));
-}
-
 [Differentiable]
 float L2(float value, float reference) {
     let diff = value - reference;
@@ -116,8 +108,7 @@ float L1(float value, float reference) {
 float[16] sample_references(
     float2 uv,
     float mip_level,
-    Texture2D<float4>[] reference,
-    SamplerState samp,
+    uint* textures,
     int num_images
 ) {
     float[16] values;
@@ -125,7 +116,8 @@ float[16] sample_references(
         values[i] = 0.0;
     }
     for (int i = 0; i < num_images; i++) {
-        let sample = reference[i].SampleLevel(samp, uv, mip_level).rgb;
+        Sampler2D texture = sampled_images[textures[i]];
+        let sample = texture.SampleLevel(uv, mip_level).rgb;
         values[i * 3] = sample.r;
         values[i * 3 + 1] = sample.g;
         values[i * 3 + 2] = sample.b;
@@ -137,14 +129,13 @@ float[16] sample_references(
 float[16] loss(
     no_diff float2 uv,
     no_diff float mip_level,
-    Texture2D<float4>[] reference,
-    SamplerState samp,
+    uint* textures,
     Network network,
     Address address,
     int num_images
 ) {
     let color = eval_network(network, uv, mip_level, address);
-    let reference_values = (no_diff sample_references(uv, mip_level, reference, samp, num_images));
+    let reference_values = (no_diff sample_references(uv, mip_level, textures, num_images));
 
     // todo: system where input images can have variable number of used channels
     let num_channels = num_images * 3;
@@ -160,26 +151,6 @@ float[16] loss(
     }
     return error;
 }
-
-struct LCG {
-    uint state;
-
-    __init(uint seed) { state = seed; }
-
-    [mutating]
-    uint next_uint() {
-        const uint A = 1664525u;
-        const uint C = 1013904223u;
-        state = (A * state + C);
-        return state;
-    }
-
-    [mutating]
-    float next_float() {
-        // Convert to float in range [0, 1)
-        return (next_uint() >> 8) * 0x1p-24;
-    }
-};
 
 void optimizer_step(
     inout float primal,
@@ -216,8 +187,7 @@ void optimizer_step(
 void sum_loss(
     int2 pixel,
     int resolution,
-    Texture2D<float4>[] reference,
-    SamplerState samp,
+    uint* reference,
     Network network,
     inout float total,
     int num_images
@@ -226,7 +196,6 @@ void sum_loss(
         (float2(pixel) + 0.5f) / float2(resolution),
         0.0f,
         reference,
-        samp,
         network,
         Address(network.weights_and_biases),
         num_images
@@ -241,25 +210,20 @@ void sum_loss(
     }
 }
 
+[shader("compute")]
+[NumThreads(64, 1, 1)]
 void calculate_grads(
-    uint seed,
-    int2 batch_index,
-    int2 batch_size,
-    Texture2D<float4>[] reference,
-    SamplerState samp,
-    Network network,
-    int num_images
+    uint thread: SV_DispatchThreadID,
+    uniform CalculateGradsPushConstants pc
 ) {
-    // Pick a random pixel for computing the loss
-    // First, sample a random UV within our cell of the training batch grid
-    LCG lcg = LCG(seed);
-    float2 uv = (batch_index + float2(lcg.next_float(), lcg.next_float())) / float2(batch_size);
-    let num_mip_levels = network.latent_texture_1.num_mip_levels;
+    var rng = SobolRng(uint2(thread, 0), pc.iteration);
+    let uv = rng.rand2();
+    let num_mip_levels = pc.network.latent_texture_1.num_mip_levels;
     float mip;
-    if (lcg.next_float() < 0.1f) {
-        mip = (lcg.next_float() * (num_mip_levels+1))-1; // uniform
+    if (rng.rand() < 0.1f) {
+        mip = (rng.rand() * (num_mip_levels+1))-1; // uniform
     } else {
-        float u = max(lcg.next_float(), 1e-6f);
+        float u = max(rng.rand(), 1e-6f);
         mip = clamp(-log(u) / log(4.0f), 0.0f, float(num_mip_levels - 1));
     }
 
@@ -267,13 +231,13 @@ void calculate_grads(
     float[16] gradient_seed;
     for (int i = 0; i < 16; ++i)
         gradient_seed[i] = 1.0f;
-    let address = DifferentialPtrPair<Address>(Address(network.weights_and_biases), Address(network.weights_and_biases_grad));
-    bwd_diff(loss)(uv, mip, reference, samp, network, address, num_images, gradient_seed);
+    let address = DifferentialPtrPair<Address>(Address(pc.network.weights_and_biases), Address(pc.network.weights_and_biases_grad));
+    bwd_diff(loss)(uv, mip, pc.textures, *pc.network, address, pc.num_textures, gradient_seed);
 }
 
 uint16_t4 compress_latent_texture(LatentTexture texture, int block) {
-    let endpoint_a = quantize(sigmoid(texture.endpoints.load(block * 2)), uint16_t3(5,6,5));
-    let endpoint_b = quantize(sigmoid(texture.endpoints.load(block * 2 + 1)), uint16_t3(5,6,5));
+    let endpoint_a = quantize(sigmoid(texture.load_endpoint(block * 2)), uint16_t3(5,6,5));
+    let endpoint_b = quantize(sigmoid(texture.load_endpoint(block * 2 + 1)), uint16_t3(5,6,5));
 
     let e1 = endpoint_a.b | (endpoint_a.g << 5) | (endpoint_a.r << 11);
     let e2 = endpoint_b.b | (endpoint_b.g << 5) | (endpoint_b.r << 11);
@@ -283,7 +247,7 @@ uint16_t4 compress_latent_texture(LatentTexture texture, int block) {
 
     uint alphas = 0;
     for (int i = 0; i < 16; ++i) {
-        var alpha = uint(quantize(sigmoid(texture.alpha.load(block * 16 + i)), 2));
+        var alpha = uint(quantize(sigmoid(texture.load_alpha(block * 16 + i)), 2));
 
         // If the endpoints were switched, make sure we flip the bits
         if (max_e != e1) {
@@ -341,7 +305,8 @@ void render_compute(
 
     let loc = thread.y * pc.resolution + thread.x;
 
-    let values = render(thread, pc.resolution, 0, *pc.network);
+    float2 uv = (float2(thread) + 0.5f) / float2(pc.resolution);
+    let values = eval_network(*pc.network, uv, 0, Address(pc.network.weights_and_biases));
 
     pc.output[loc * 3] = float(values[0]);
     pc.output[loc * 3 + 1] = float(values[1]);

@@ -5,34 +5,11 @@ struct RenderComputePushConstants {
     int resolution;
 }
 
-struct Float3Tensor {
-    float3* ptr;
-    float3* grads;
-
-    float3 load(int index) {
-        return ptr[index];
-    }
-
-    [BackwardDerivativeOf(load)]
-    void load_bwd(int index, float3 grad) {
-        InterlockedAdd(grads[index][0], grad[0]);
-        InterlockedAdd(grads[index][1], grad[1]);
-        InterlockedAdd(grads[index][2], grad[2]);
-    }
-}
-
-struct FloatTensor {
-    float* ptr;
-    float* grads;
-
-    float load(int index) {
-        return ptr[index];
-    }
-
-    [BackwardDerivativeOf(load)]
-    void load_bwd(int index, float grad) {
-        InterlockedAdd(grads[index], grad);
-    }
+struct CalculateGradsPushConstants {
+    Network* network;
+    uint* textures;
+    int num_textures;
+    uint iteration;
 }
 
 uint16_t quantize(float value, uint16_t bits) {
@@ -80,17 +57,40 @@ float3 sigmoid(float3 x) {
 }
 
 struct LatentTexture {
-    Float3Tensor endpoints;
-    FloatTensor alpha;
+    float3* endpoints;
+    float3* endpoints_grad;
+
+    float* alpha;
+    float* alpha_grad;
+
+    float load_alpha(int index) {
+        return alpha[index];
+    }
+
+    [BackwardDerivativeOf(load_alpha)]
+    void load_alpha_bwd(int index, float grad) {
+        InterlockedAdd(alpha_grad[index], grad);
+    }
+
+    float3 load_endpoint(int index) {
+        return endpoints[index];
+    }
+
+    [BackwardDerivativeOf(load_endpoint)]
+    void load_endpoint_bwd(int index, float3 grad) {
+        InterlockedAdd(endpoints_grad[index][0], grad[0]);
+        InterlockedAdd(endpoints_grad[index][1], grad[1]);
+        InterlockedAdd(endpoints_grad[index][2], grad[2]);
+    }
 
     [Differentiable]
     float3 get_value(int mip, int2 coord) {
         let block_offset = get_mip_offset(mip) / 16;
         let block_size = get_mip_size(mip) / 4;
         let block_index = block_offset + (coord.x / 4) + (coord.y / 4) * block_size;
-        let a = endpoints.load(block_index * 2);
-        let b = endpoints.load(block_index * 2 + 1);
-        let alpha = alpha.load(block_index * 16 + (coord.x % 4) + (coord.y % 4) * 4);
+        let a = load_endpoint(block_index * 2);
+        let b = load_endpoint(block_index * 2 + 1);
+        let alpha = load_alpha(block_index * 16 + (coord.x % 4) + (coord.y % 4) * 4);
         return lerp(
             as_quantized(sigmoid(a), uint16_t3(5,6,5)),
             as_quantized(sigmoid(b), uint16_t3(5,6,5)),
