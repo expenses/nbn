@@ -13,10 +13,12 @@ enum Mode {
     },
     Train {
         images: Vec<std::path::PathBuf>,
-        #[arg(short, long)]
+        #[arg(short, long, default_value_t = 10_000)]
         iterations: u32,
         #[arg(short, long)]
-        size: u32,
+        size: Option<u32>,
+        #[arg(long, default_value_t = 1000)]
+        loss_eval_freq: u32,
     },
 }
 
@@ -411,12 +413,14 @@ fn main() {
         Mode::Train {
             images,
             iterations,
-            size,
+            mut size,
+            loss_eval_freq,
         } => {
             let (images, indices) = images
                 .into_iter()
                 .map(|filepath| {
                     let image = image::open(&filepath).unwrap().to_rgba8();
+                    size = size.or(Some(image.width()));
                     let image = device.register_owned_image(
                         staging_buffer.create_sampled_image(
                             &device,
@@ -439,6 +443,9 @@ fn main() {
                     (image, index)
                 })
                 .collect::<(Vec<_>, Vec<u32>)>();
+            let size = size.unwrap();
+            dbg!(size);
+
             let image_indices =
                 staging_buffer.create_buffer_from_slice(&device, "image_indices", &indices);
 
@@ -535,7 +542,7 @@ fn main() {
                         *sum_loss,
                     );
 
-                    if i % 1000 == 0 {
+                    if i % loss_eval_freq == 0 {
                         device.cmd_fill_buffer(
                             *command_buffer,
                             *loss_total.buffer,
@@ -568,7 +575,7 @@ fn main() {
                     device.submit_and_wait_on_command_buffer(&command_buffer);
                 }
 
-                if i % 1000 == 0 {
+                if i % loss_eval_freq == 0 {
                     let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
                     let mae = loss / network.size as f32 / network.size as f32 / 16.0;
                     let psnr = 10.0 * (1.0 / mae).log10();
