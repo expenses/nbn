@@ -333,6 +333,8 @@ impl Device {
 
         let mut coop_mat_features = vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default();
 
+        let mut atomic_float_features = vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT::default();
+
         let mut enabled_features = vk::PhysicalDeviceFeatures2::default()
             .push_next(&mut enabled_vulkan_1_1_features)
             .push_next(&mut enabled_vulkan_1_2_features)
@@ -342,7 +344,8 @@ impl Device {
             .push_next(&mut enabled_acceleration_structure_features)
             .push_next(&mut ray_tracing_pipeline_features)
             .push_next(&mut ray_query_features)
-            .push_next(&mut coop_mat_features);
+            .push_next(&mut coop_mat_features)
+            .push_next(&mut atomic_float_features);
 
         unsafe { instance.get_physical_device_features2(pdevice, &mut enabled_features) };
         assert!(enabled_features.features.shader_int16 > 0);
@@ -369,6 +372,7 @@ impl Device {
         assert!(ray_tracing_pipeline_features.ray_tracing_pipeline > 0);
         assert!(ray_query_features.ray_query > 0);
         assert!(coop_mat_features.cooperative_matrix > 0);
+        assert!(atomic_float_features.shader_buffer_float32_atomic_add > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
             .shader_int16(true)
@@ -423,6 +427,9 @@ impl Device {
         let mut coop_mat_features =
             vk::PhysicalDeviceCooperativeMatrixFeaturesKHR::default().cooperative_matrix(true);
 
+        let mut atomic_float_features = vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT::default()
+            .shader_buffer_float32_atomic_add(true);
+
         let mut queue_infos = vec![vk::DeviceQueueCreateInfo::default()
             .queue_family_index(graphics_queue_family_index)
             .queue_priorities(&[1.0])];
@@ -460,7 +467,9 @@ impl Device {
                             ash::khr::deferred_host_operations::NAME.as_ptr(),
                             ash::khr::ray_tracing_pipeline::NAME.as_ptr(),
                             ash::khr::ray_query::NAME.as_ptr(),
+                            // Machine learning
                             ash::khr::cooperative_matrix::NAME.as_ptr(),
+                            ash::ext::shader_atomic_float::NAME.as_ptr(),
                         ])
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_1_features)
@@ -471,7 +480,8 @@ impl Device {
                         .push_next(&mut acceleration_structure_features)
                         .push_next(&mut ray_tracing_pipeline_features)
                         .push_next(&mut ray_query_features)
-                        .push_next(&mut coop_mat_features),
+                        .push_next(&mut coop_mat_features)
+                        .push_next(&mut atomic_float_features),
                     None,
                 )
                 .unwrap()
