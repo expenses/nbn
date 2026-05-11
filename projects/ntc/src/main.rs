@@ -402,6 +402,7 @@ fn main() {
 
             let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
             let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
+            let sum_loss = device.create_compute_pipeline(&shader, c"sum_loss");
 
             let mut rng = rand::rng();
             let network = NetworkData::train(&device, &mut staging_buffer, size, &mut rng);
@@ -417,7 +418,7 @@ fn main() {
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
                 if i % 100 == 0 {
-                    dbg!(i);
+                    println!("{}", i);
                 }
                 unsafe {
                     device
@@ -428,6 +429,12 @@ fn main() {
                         vk::PipelineBindPoint::COMPUTE,
                     );
                 }
+
+                let loss_total = device.create_buffer(nbn::BufferDescriptor {
+                    name: "loss_total",
+                    size: 4,
+                    ty: nbn::MemoryLocation::GpuToCpu
+                }).unwrap();
 
                 let grid_size = 64;
 
@@ -466,11 +473,40 @@ fn main() {
                     network
                         .latent_texture_4
                         .optimize(&device, &command_buffer, i + 1);
+                    device.cmd_bind_pipeline(
+                        *command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *sum_loss,
+                    );
+
+                    if i % 1000 == 0 {
+                        device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
+
+                        device.push_constants::<SumLossPushConstants>(
+                            &command_buffer,
+                            SumLossPushConstants {
+                                network: *network_buffer,
+                                textures: *image_indices,
+                                resolution: network.size as _,
+                                num_textures: images.len() as _,
+                                total: *loss_total
+                            },
+                        );
+                        device.cmd_dispatch(*command_buffer, (network.size*network.size).div_ceil(64), 1, 1);
+                    }
                 }
 
                 unsafe {
                     device.end_command_buffer(*command_buffer).unwrap();
                     device.submit_and_wait_on_command_buffer(&command_buffer);
+                }
+
+                if i % 1000 == 0 {
+                    let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+                    let mae = loss / network.size as f32 / network.size as f32 / 16.0;
+                    let psnr = 10.0 * (1.0/mae).log10();
+                    println!("Loss: {:.8} PSNR: {:.4} dB", mae, psnr);
+
                 }
             }
 

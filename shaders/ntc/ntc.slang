@@ -156,7 +156,7 @@ float[16] loss(
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void optimizer_step(
-     uint thread: SV_DispatchThreadID,
+    uint thread: SV_DispatchThreadID,
     uniform OptimizerPushConstants pc
 ) {
     if ((thread >= pc.num_values)) {
@@ -174,21 +174,25 @@ void optimizer_step(
     pc.grad[thread] = 0.0;
 }
 
+[shader("compute")]
+[NumThreads(64, 1, 1)]
 void sum_loss(
-    int2 pixel,
-    int resolution,
-    uint* reference,
-    Network network,
-    inout float total,
-    int num_images
+    uint thread: SV_DispatchThreadID,
+    uniform SumLossPushConstants pc
 ) {
+    if (thread >= (pc.resolution*pc.resolution)) {
+        return;
+    }
+
+    let coord = uint2(thread % pc.resolution, thread/pc.resolution);
+
     let loss = loss(
-        (float2(pixel) + 0.5f) / float2(resolution),
+        (float2(coord) + 0.5f) / float2(pc.resolution),
         0.0f,
-        reference,
-        network,
-        Address(network.weights_and_biases),
-        num_images
+        pc.textures,
+        *pc.network,
+        Address(pc.network.weights_and_biases),
+        pc.num_textures
     );
     float local_sum = 0.0;
     for (int i = 0; i < 16; ++i) {
@@ -196,7 +200,7 @@ void sum_loss(
     }
     let wave_sum = WaveActiveSum(local_sum);
     if (WaveIsFirstLane()) {
-        InterlockedAdd(total, wave_sum);
+        InterlockedAdd<float>(*pc.total, wave_sum);
     }
 }
 

@@ -23,6 +23,14 @@ struct OptimizerPushConstants {
     int num_values;
 }
 
+struct SumLossPushConstants {
+    Network* network;
+    uint* textures;
+    int num_textures;
+    int resolution;
+    float* total;
+}
+
 uint16_t quantize(float value, uint16_t bits) {
     let size = (1 << bits) - 1;
     return uint16_t(round(value * size));
