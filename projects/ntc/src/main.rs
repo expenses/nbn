@@ -411,6 +411,8 @@ fn main() {
 
             staging_buffer.finish(&device);
 
+            let start = std::time::Instant::now();
+
             for i in 0..iterations {
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
@@ -471,6 +473,9 @@ fn main() {
                     device.submit_and_wait_on_command_buffer(&command_buffer);
                 }
             }
+
+            let duration = std::time::Instant::now() - start;
+            dbg!(duration);
 
             eval(&device, &shader, &network_buffer, network.size);
         }
