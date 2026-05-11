@@ -145,10 +145,10 @@ float[16] loss(
     [ForceUnroll]
     for (int i = 0; i < 16; ++i) {
         error[i] = L2(color[i], reference_values[i]);
-        // todo: useful?
-        // if (i >= num_channels) {
-        //     error[i] = 0.0;
-        // }
+        // Let the network focus on channels we care about.
+        if (i >= num_channels) {
+            error[i] = 0.0;
+        }
     }
     return error;
 }
