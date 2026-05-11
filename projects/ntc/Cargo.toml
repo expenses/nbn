@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-image = { version = "0.25.10", default-features = false, features = ["exr", "png"] }
+image = { version = "0.25.10", default-features = false, features = ["exr", "jpeg", "png"] }
 nbn = { version = "0.1.0", path = "../.." }
 ndarray-npy = "0.10.0"
 ndarray = "0.17.2"

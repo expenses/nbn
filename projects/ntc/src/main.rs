@@ -8,8 +8,16 @@ use ndarray::{Array0, Array1};
 
 #[derive(clap::Subcommand)]
 enum Mode {
-    Eval { path: std::path::PathBuf },
-    Train { images: Vec<std::path::PathBuf> },
+    Eval {
+        path: std::path::PathBuf,
+    },
+    Train {
+        images: Vec<std::path::PathBuf>,
+        #[arg(short, long)]
+        iterations: u32,
+        #[arg(short, long)]
+        size: u32,
+    },
 }
 
 use clap::Parser;
@@ -58,7 +66,7 @@ fn network_data<R: Rng>(rng: &mut R) -> Vec<f32> {
 struct TextureData {
     endpoints: Tensor,
     alpha: Tensor,
-    size: i32,
+    size: u32,
     num_mip_levels: i32,
 }
 
@@ -66,7 +74,7 @@ impl TextureData {
     fn train<R: Rng>(
         device: &nbn::Device,
         staging_buffer: &mut nbn::StagingBuffer,
-        size: i32,
+        size: u32,
         rng: &mut R,
     ) -> Self {
         let mut size_in_blocks = size / 4;
@@ -110,12 +118,12 @@ impl TextureData {
                 .map(|t| *t.grad)
                 .unwrap_or(0),
             alpha_grad: self.alpha.training.as_ref().map(|t| *t.grad).unwrap_or(0),
-            size: self.size,
+            size: self.size as _,
             num_mip_levels: self.num_mip_levels,
         }
     }
 
-    fn optimize(&self, device: &nbn::Device, command_buffer: &nbn::CommandBuffer, iter: i32) {
+    fn optimize(&self, device: &nbn::Device, command_buffer: &nbn::CommandBuffer, iter: u32) {
         optimize(device, command_buffer, &self.alpha, iter);
         optimize(device, command_buffer, &self.endpoints, iter);
     }
@@ -167,7 +175,7 @@ struct NetworkData {
     latent_texture_2: TextureData,
     latent_texture_3: TextureData,
     latent_texture_4: TextureData,
-    size: i32,
+    size: u32,
 }
 
 impl NetworkData {
@@ -177,7 +185,7 @@ impl NetworkData {
         npz: &mut npy::NpzReader<std::fs::File>,
     ) -> Self {
         let size: Array0<i64> = npz.by_name("size").unwrap();
-        let size = size.into_scalar() as i32;
+        let size = size.into_scalar() as u32;
 
         Self {
             weights_and_biases: Tensor::eval_only(upload_array(
@@ -238,7 +246,7 @@ impl NetworkData {
     fn train<R: Rng>(
         device: &nbn::Device,
         staging_buffer: &mut nbn::StagingBuffer,
-        size: i32,
+        size: u32,
         rng: &mut R,
     ) -> Self {
         Self {
@@ -268,7 +276,7 @@ impl NetworkData {
     }
 }
 
-fn eval(device: &nbn::Device, shader: &nbn::ShaderModule, network: &nbn::Buffer, size: i32) {
+fn eval(device: &nbn::Device, shader: &nbn::ShaderModule, network: &nbn::Buffer, size: u32) {
     let render = device.create_compute_pipeline(&shader, c"render_compute");
 
     let output = device
@@ -282,7 +290,7 @@ fn eval(device: &nbn::Device, shader: &nbn::ShaderModule, network: &nbn::Buffer,
     let pc = RenderComputePushConstants {
         output: *output,
         network: **network,
-        resolution: size,
+        resolution: size as _,
     };
 
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
@@ -312,7 +320,7 @@ fn optimize(
     device: &nbn::Device,
     command_buffer: &nbn::CommandBuffer,
     tensor: &Tensor,
-    iteration: i32,
+    iteration: u32,
 ) {
     unsafe {
         let training = tensor.training.as_ref().unwrap();
@@ -325,7 +333,7 @@ fn optimize(
                 variance: *training.v,
                 learning_rate: 0.001,
                 num_values: tensor.size as _,
-                iteration,
+                iteration: iteration as _,
             },
         );
         device.cmd_dispatch(**command_buffer, (tensor.size as u32).div_ceil(64), 1, 1);
@@ -358,7 +366,11 @@ fn main() {
 
             eval(&device, &shader, &network_buffer, network.size);
         }
-        Mode::Train { images } => {
+        Mode::Train {
+            images,
+            iterations,
+            size,
+        } => {
             let (images, indices) = images
                 .into_iter()
                 .map(|filepath| {
@@ -392,14 +404,14 @@ fn main() {
             let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
 
             let mut rng = rand::rng();
-            let network = NetworkData::train(&device, &mut staging_buffer, 256, &mut rng);
+            let network = NetworkData::train(&device, &mut staging_buffer, size, &mut rng);
 
             let network_buffer =
                 staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
 
             staging_buffer.finish(&device);
 
-            for i in 0..10_000 {
+            for i in 0..iterations {
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
                 if i % 100 == 0 {
@@ -415,6 +427,8 @@ fn main() {
                     );
                 }
 
+                let grid_size = 64;
+
                 unsafe {
                     device.cmd_bind_pipeline(
                         *command_buffer,
@@ -428,10 +442,10 @@ fn main() {
                             textures: *image_indices,
                             num_textures: images.len() as _,
                             iteration: i as _,
-                            grid_size: 64,
+                            grid_size,
                         },
                     );
-                    device.cmd_dispatch(*command_buffer, 64, 1, 1);
+                    device.cmd_dispatch(*command_buffer, (grid_size * grid_size).div_ceil(64), 1, 1);
                     device.cmd_bind_pipeline(
                         *command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
