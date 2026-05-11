@@ -88,18 +88,18 @@ impl TextureData {
         }
 
         Self {
-            endpoints: Tensor::from_data(
+            endpoints: Tensor::from_halfs(
                 device,
                 staging_buffer,
                 &(0..num_blocks * 3 * 2)
-                    .map(|_| rng.random_range(0.0..1.0))
+                    .map(|_| half::f16::from_f32(rng.random_range(0.0..1.0)))
                     .collect::<Vec<_>>(),
             ),
-            alpha: Tensor::from_data(
+            alpha: Tensor::from_halfs(
                 device,
                 staging_buffer,
                 &(0..num_blocks * 16)
-                    .map(|_| rng.random_range(0.0..1.0))
+                    .map(|_| half::f16::from_f32(rng.random_range(0.0..1.0)))
                     .collect::<Vec<_>>(),
             ),
             size,
@@ -124,8 +124,8 @@ impl TextureData {
     }
 
     fn optimize(&self, device: &nbn::Device, command_buffer: &nbn::CommandBuffer, iter: u32) {
-        optimize(device, command_buffer, &self.alpha, iter);
-        optimize(device, command_buffer, &self.endpoints, iter);
+        optimize_half(device, command_buffer, &self.alpha, iter);
+        optimize_half(device, command_buffer, &self.endpoints, iter);
     }
 }
 
@@ -147,6 +147,24 @@ impl Tensor {
             data,
             training: None,
             size: 0,
+        }
+    }
+
+    fn from_halfs(
+        device: &nbn::Device,
+        staging_buffer: &mut nbn::StagingBuffer,
+        data: &[half::f16],
+    ) -> Self {
+        let zeros = vec![0.0_f32; data.len()];
+
+        Self {
+            data: staging_buffer.create_buffer_from_slice(device, "data", data),
+            training: Some(Training {
+                grad: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
+                m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
+                v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
+            }),
+            size: data.len(),
         }
     }
 
@@ -340,6 +358,30 @@ fn optimize(
     }
 }
 
+fn optimize_half(
+    device: &nbn::Device,
+    command_buffer: &nbn::CommandBuffer,
+    tensor: &Tensor,
+    iteration: u32,
+) {
+    unsafe {
+        let training = tensor.training.as_ref().unwrap();
+        device.push_constants::<OptimizerHalfPushConstants>(
+            command_buffer,
+            OptimizerHalfPushConstants {
+                primal: *tensor.data,
+                grad: *training.grad,
+                mean: *training.m,
+                variance: *training.v,
+                learning_rate: 0.001,
+                num_values: tensor.size as _,
+                iteration: iteration as _,
+            },
+        );
+        device.cmd_dispatch(**command_buffer, (tensor.size as u32).div_ceil(64), 1, 1);
+    }
+}
+
 fn main() {
     let device = nbn::Device::new(None);
 
@@ -402,6 +444,8 @@ fn main() {
 
             let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
             let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
+            let optimizer_step_half =
+                device.create_compute_pipeline(&shader, c"optimizer_step_half");
             let sum_loss = device.create_compute_pipeline(&shader, c"sum_loss");
 
             let mut rng = rand::rng();
@@ -430,11 +474,13 @@ fn main() {
                     );
                 }
 
-                let loss_total = device.create_buffer(nbn::BufferDescriptor {
-                    name: "loss_total",
-                    size: 4,
-                    ty: nbn::MemoryLocation::GpuToCpu
-                }).unwrap();
+                let loss_total = device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: "loss_total",
+                        size: 4,
+                        ty: nbn::MemoryLocation::GpuToCpu,
+                    })
+                    .unwrap();
 
                 let grid_size = 64;
 
@@ -454,13 +500,23 @@ fn main() {
                             grid_size,
                         },
                     );
-                    device.cmd_dispatch(*command_buffer, (grid_size * grid_size).div_ceil(64), 1, 1);
+                    device.cmd_dispatch(
+                        *command_buffer,
+                        (grid_size * grid_size).div_ceil(64),
+                        1,
+                        1,
+                    );
                     device.cmd_bind_pipeline(
                         *command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         *optimizer_step,
                     );
                     optimize(&device, &command_buffer, &network.weights_and_biases, i + 1);
+                    device.cmd_bind_pipeline(
+                        *command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *optimizer_step_half,
+                    );
                     network
                         .latent_texture_1
                         .optimize(&device, &command_buffer, i + 1);
@@ -480,7 +536,13 @@ fn main() {
                     );
 
                     if i % 1000 == 0 {
-                        device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
+                        device.cmd_fill_buffer(
+                            *command_buffer,
+                            *loss_total.buffer,
+                            0,
+                            vk::WHOLE_SIZE,
+                            0,
+                        );
 
                         device.push_constants::<SumLossPushConstants>(
                             &command_buffer,
@@ -489,10 +551,15 @@ fn main() {
                                 textures: *image_indices,
                                 resolution: network.size as _,
                                 num_textures: images.len() as _,
-                                total: *loss_total
+                                total: *loss_total,
                             },
                         );
-                        device.cmd_dispatch(*command_buffer, (network.size*network.size).div_ceil(64), 1, 1);
+                        device.cmd_dispatch(
+                            *command_buffer,
+                            (network.size * network.size).div_ceil(64),
+                            1,
+                            1,
+                        );
                     }
                 }
 
@@ -504,9 +571,8 @@ fn main() {
                 if i % 1000 == 0 {
                     let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
                     let mae = loss / network.size as f32 / network.size as f32 / 16.0;
-                    let psnr = 10.0 * (1.0/mae).log10();
+                    let psnr = 10.0 * (1.0 / mae).log10();
                     println!("Loss: {:.8} PSNR: {:.4} dB", mae, psnr);
-
                 }
             }
 

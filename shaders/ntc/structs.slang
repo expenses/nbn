@@ -23,6 +23,16 @@ struct OptimizerPushConstants {
     int num_values;
 }
 
+struct OptimizerHalfPushConstants {
+    half* primal;
+    float* grad;
+    float* mean;
+    float* variance;
+    float learning_rate;
+    int iteration;
+    int num_values;
+}
+
 struct SumLossPushConstants {
     Network* network;
     uint* textures;
@@ -76,10 +86,10 @@ float3 sigmoid(float3 x) {
 }
 
 struct LatentTexture {
-    float3* endpoints;
+    half3* endpoints;
     float3* endpoints_grad;
 
-    float* alpha;
+    half* alpha;
     float* alpha_grad;
 
     float load_alpha(int index) {

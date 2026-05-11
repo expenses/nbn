@@ -11,3 +11,4 @@ ndarray = "0.17.2"
 rand = "0.10.1"
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
 clap = { version = "4.6.1", features = ["derive"] }
+half = "2.7.1"

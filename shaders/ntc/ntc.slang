@@ -176,6 +176,28 @@ void optimizer_step(
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
+void optimizer_step_half(
+     uint thread: SV_DispatchThreadID,
+    uniform OptimizerHalfPushConstants pc
+) {
+    if ((thread >= pc.num_values)) {
+        return;
+    }
+
+    // Take an adam step
+    pc.primal[thread] += half(adam_step(
+        pc.grad[thread],
+        pc.mean[thread],
+        pc.variance[thread],
+        pc.learning_rate,
+        pc.iteration
+    ));
+    // Clear gradients
+    pc.grad[thread] = 0.0;
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
 void sum_loss(
     uint thread: SV_DispatchThreadID,
     uniform SumLossPushConstants pc
