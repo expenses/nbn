@@ -100,6 +100,11 @@ impl TextureData {
             num_mip_levels: self.num_mip_levels,
         }
     }
+
+    fn optimize(&self, device: &nbn::Device, command_buffer: &nbn::CommandBuffer, iter: i32) {
+        optimize(device, command_buffer, &self.alpha, iter);
+        optimize(device, command_buffer, &self.endpoints, iter);
+    }
 }
 
 struct Training {
@@ -111,7 +116,7 @@ struct Training {
 struct Tensor {
     data: nbn::Buffer,
     training: Option<Training>,
-    size: usize
+    size: usize,
 }
 
 impl Tensor {
@@ -137,7 +142,7 @@ impl Tensor {
                 m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
                 v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
             }),
-            size: data.len()
+            size: data.len(),
         }
     }
 }
@@ -161,32 +166,53 @@ impl NetworkData {
         let size = size.into_scalar() as i32;
 
         Self {
-            weights_and_biases: Tensor::eval_only(
-                upload_array(device, staging_buffer, npz, "weights_and_biases"),
-            ),
+            weights_and_biases: Tensor::eval_only(upload_array(
+                device,
+                staging_buffer,
+                npz,
+                "weights_and_biases",
+            )),
             latent_texture_1: TextureData {
-                endpoints: Tensor::eval_only(
-                    upload_array(device, staging_buffer, npz, "lt1_endpoints"),
-                ),
+                endpoints: Tensor::eval_only(upload_array(
+                    device,
+                    staging_buffer,
+                    npz,
+                    "lt1_endpoints",
+                )),
                 alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt1_alpha")),
                 size,
                 num_mip_levels: 1,
             },
             latent_texture_2: TextureData {
-                endpoints: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt2_endpoints")),
+                endpoints: Tensor::eval_only(upload_array(
+                    device,
+                    staging_buffer,
+                    npz,
+                    "lt2_endpoints",
+                )),
                 alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt2_alpha")),
                 size,
                 num_mip_levels: 1,
             },
             latent_texture_3: TextureData {
-                endpoints: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt3_endpoints")),
+                endpoints: Tensor::eval_only(upload_array(
+                    device,
+                    staging_buffer,
+                    npz,
+                    "lt3_endpoints",
+                )),
 
                 alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt3_alpha")),
                 size: size / 2,
                 num_mip_levels: 1,
             },
             latent_texture_4: TextureData {
-                endpoints: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt4_endpoints")),
+                endpoints: Tensor::eval_only(upload_array(
+                    device,
+                    staging_buffer,
+                    npz,
+                    "lt4_endpoints",
+                )),
                 alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt4_alpha")),
                 size: size / 2,
                 num_mip_levels: 1,
@@ -268,6 +294,30 @@ fn eval(device: &nbn::Device, shader: &nbn::ShaderModule, network: &nbn::Buffer,
         .unwrap();
 }
 
+fn optimize(
+    device: &nbn::Device,
+    command_buffer: &nbn::CommandBuffer,
+    tensor: &Tensor,
+    iteration: i32,
+) {
+    unsafe {
+        let training = tensor.training.as_ref().unwrap();
+        device.push_constants::<OptimizerPushConstants>(
+            command_buffer,
+            OptimizerPushConstants {
+                primal: *tensor.data,
+                grad: *training.grad,
+                mean: *training.m,
+                variance: *training.v,
+                learning_rate: 0.001,
+                num_values: tensor.size as _,
+                iteration,
+            },
+        );
+        device.cmd_dispatch(**command_buffer, (tensor.size as u32).div_ceil(64), 1, 1);
+    }
+}
+
 fn main() {
     let mode = std::env::args().nth(1).unwrap();
 
@@ -296,34 +346,71 @@ fn main() {
         eval(&device, &shader, &network_buffer, network.size);
     } else {
         let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
-        //let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
+        let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
 
         let mut rng = rand::rng();
-        let network = NetworkData::train(&device, &mut staging_buffer, 256, &mut rng);
+        let network = NetworkData::train(&device, &mut staging_buffer, 1024, &mut rng);
 
         let network_buffer =
             staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
 
         staging_buffer.finish(&device);
 
-        let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+        for i in 0..10_000 {
+            let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
-        unsafe {
-            device
-                .begin_command_buffer(*command_buffer, &Default::default())
-                .unwrap();
+            if i % 100 == 0 {
+                dbg!(i);
+            }
+            unsafe {
+                device
+                    .begin_command_buffer(*command_buffer, &Default::default())
+                    .unwrap();
+                device
+                    .bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+            }
 
-            device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::COMPUTE, *calculate_grads);
-            device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
-            device.push_constants::<CalculateGradsPushConstants>(&command_buffer, CalculateGradsPushConstants {
-                network: *network_buffer,
-                textures: 0,
-                num_textures: 0,
-                iteration: 0,
-            });
-            device.cmd_dispatch(*command_buffer, 64, 1, 1);
-            device.end_command_buffer(*command_buffer).unwrap();
-            device.submit_and_wait_on_command_buffer(&command_buffer);
+            unsafe {
+                device.cmd_bind_pipeline(
+                    *command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *calculate_grads,
+                );
+                device.push_constants::<CalculateGradsPushConstants>(
+                    &command_buffer,
+                    CalculateGradsPushConstants {
+                        network: *network_buffer,
+                        textures: 0,
+                        num_textures: 0,
+                        iteration: i as _,
+                        grid_size: 64
+                    },
+                );
+                device.cmd_dispatch(*command_buffer, 64, 1, 1);
+                device.cmd_bind_pipeline(
+                    *command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *optimizer_step,
+                );
+                optimize(&device, &command_buffer, &network.weights_and_biases, i + 1);
+                network
+                    .latent_texture_1
+                    .optimize(&device, &command_buffer, i + 1);
+                network
+                    .latent_texture_2
+                    .optimize(&device, &command_buffer, i + 1);
+                network
+                    .latent_texture_3
+                    .optimize(&device, &command_buffer, i + 1);
+                network
+                    .latent_texture_4
+                    .optimize(&device, &command_buffer, i + 1);
+            }
+
+            unsafe {
+                device.end_command_buffer(*command_buffer).unwrap();
+                device.submit_and_wait_on_command_buffer(&command_buffer);
+            }
         }
 
         eval(&device, &shader, &network_buffer, network.size);

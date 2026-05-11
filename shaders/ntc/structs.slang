@@ -10,6 +10,7 @@ struct CalculateGradsPushConstants {
     uint* textures;
     int num_textures;
     uint iteration;
+    uint grid_size;
 }
 
 struct OptimizerPushConstants {
@@ -123,6 +124,13 @@ struct LatentTexture {
         return offset;
     }
 
+    void mip_coords(float2 uv, int mip_size, out float2 fractional_uv, out int2 c0, out int2 c1) {
+        let mip_uv = uv * float2(mip_size) - 0.5;
+        c0 = ((int2(floor(mip_uv)) % mip_size) + mip_size) % mip_size;
+        c1 = (c0 + 1) % mip_size;
+        fractional_uv = mip_uv - floor(mip_uv);
+    }
+
     [Differentiable]
     half3 sample(no_diff float2 uv, no_diff float mip_level) {
         mip_level = clamp(mip_level, 0.0, float(num_mip_levels - 1));
@@ -133,15 +141,15 @@ struct LatentTexture {
         int mip0_size = get_mip_size(mip0);
         int mip1_size = get_mip_size(mip1);
 
-        let mip0_uv = uv * float2(mip0_size) - 0.5;
-        let mip0_c0 = clamp(int2(mip0_uv), int2(0), mip0_size-1);
-        let mip0_c1 = min(mip0_c0 + 1, mip0_size - 1);
-        let mip0_fractional_uv = mip0_uv - mip0_c0;
+        float2 mip0_fractional_uv;
+        int2 mip0_c0;
+        int2 mip0_c1;
+        mip_coords(uv, mip0_size, mip0_fractional_uv, mip0_c0, mip0_c1);
 
-        let mip1_uv = uv * float2(mip1_size) - 0.5;
-        let mip1_c0 = clamp(int2(mip1_uv), int2(0), mip1_size-1);
-        let mip1_c1 = min(mip1_c0 + 1, mip1_size - 1);
-        let mip1_fractional_uv = mip1_uv - mip1_c0;
+        float2 mip1_fractional_uv;
+        int2 mip1_c0;
+        int2 mip1_c1;
+        mip_coords(uv, mip1_size, mip1_fractional_uv, mip1_c0, mip1_c1);
 
         let v_00_m0 = get_value(mip0, int2(mip0_c0.x, mip0_c0.y));
         let v_10_m0 = get_value(mip0, int2(mip0_c1.x, mip0_c0.y));

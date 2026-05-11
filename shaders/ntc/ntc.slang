@@ -64,9 +64,9 @@ half[16] eval_from_inputs(half[16] inputs, Address address) {
 [Differentiable]
 half[16] eval_network(Network network, no_diff float2 uv, no_diff float mip_level, Address address) {
     let s_1 = network.latent_texture_1.sample(uv, mip_level);
-    let s_2 = network.latent_texture_2.sample(uv+0.5, mip_level);
+    let s_2 = network.latent_texture_2.sample(uv+(0.5/network.latent_texture_2.size), mip_level);
     let s_3 = network.latent_texture_3.sample(uv, mip_level-1);
-    let s_4 = network.latent_texture_4.sample(uv+0.5, mip_level-1);
+    let s_4 = network.latent_texture_4.sample(uv+(0.5/network.latent_texture_4.size), mip_level-1);
     half inputs[16] = {
         s_1[0],
         s_1[1],
@@ -162,10 +162,6 @@ void optimizer_step(
         return;
     }
 
-    let primal = &pc.primal[thread];
-    let grad = pc.grad[thread];
-    let mean = pc.mean[thread];
-
     optimizer_step_inner(
         pc.primal[thread],
         pc.grad[thread],
@@ -240,8 +236,9 @@ void calculate_grads(
     uint thread: SV_DispatchThreadID,
     uniform CalculateGradsPushConstants pc
 ) {
-    var rng = SobolRng(uint2(thread, 0), pc.iteration);
-    let uv = rng.rand2();
+    let coord = uint2(thread % pc.grid_size, thread/pc.grid_size);
+    var rng = SobolRng(coord, pc.iteration);
+    let uv = (coord + rng.rand2()) / float2(pc.grid_size);
     let num_mip_levels = pc.network.latent_texture_1.num_mip_levels;
     float mip;
     if (rng.rand() < 0.1f) {
