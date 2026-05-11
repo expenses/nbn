@@ -6,6 +6,20 @@ use rand::{Rng, RngExt};
 
 use ndarray::{Array0, Array1};
 
+#[derive(clap::Subcommand)]
+enum Mode {
+    Eval { path: std::path::PathBuf },
+    Train { images: Vec<std::path::PathBuf> },
+}
+
+use clap::Parser;
+
+#[derive(Parser)]
+struct Arguments {
+    #[command(subcommand)]
+    mode: Mode,
+}
+
 fn upload_array(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
@@ -319,8 +333,6 @@ fn optimize(
 }
 
 fn main() {
-    let mode = std::env::args().nth(1).unwrap();
-
     let device = nbn::Device::new(None);
 
     let mut staging_buffer =
@@ -328,91 +340,125 @@ fn main() {
 
     let shader = device.load_shader("shaders/compiled/ntc.spv");
 
-    if mode == "eval" {
-        let file = std::fs::File::open(&std::env::args().nth(2).unwrap()).unwrap();
-        let mut npz = npy::NpzReader::new(file).unwrap();
+    let args = Arguments::parse();
 
-        println!("Keys: {:?}", npz.names());
+    match args.mode {
+        Mode::Eval { path } => {
+            let file = std::fs::File::open(path).unwrap();
+            let mut npz = npy::NpzReader::new(file).unwrap();
 
-        let network = NetworkData::from_npz(&device, &mut staging_buffer, &mut npz);
+            println!("Keys: {:?}", npz.names());
 
-        let size = network.size;
+            let network = NetworkData::from_npz(&device, &mut staging_buffer, &mut npz);
 
-        let network_buffer =
-            staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
+            let network_buffer =
+                staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
 
-        staging_buffer.finish(&device);
+            staging_buffer.finish(&device);
 
-        eval(&device, &shader, &network_buffer, network.size);
-    } else {
-        let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
-        let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
-
-        let mut rng = rand::rng();
-        let network = NetworkData::train(&device, &mut staging_buffer, 1024, &mut rng);
-
-        let network_buffer =
-            staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
-
-        staging_buffer.finish(&device);
-
-        for i in 0..10_000 {
-            let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
-
-            if i % 100 == 0 {
-                dbg!(i);
-            }
-            unsafe {
-                device
-                    .begin_command_buffer(*command_buffer, &Default::default())
-                    .unwrap();
-                device
-                    .bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
-            }
-
-            unsafe {
-                device.cmd_bind_pipeline(
-                    *command_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    *calculate_grads,
-                );
-                device.push_constants::<CalculateGradsPushConstants>(
-                    &command_buffer,
-                    CalculateGradsPushConstants {
-                        network: *network_buffer,
-                        textures: 0,
-                        num_textures: 0,
-                        iteration: i as _,
-                        grid_size: 64
-                    },
-                );
-                device.cmd_dispatch(*command_buffer, 64, 1, 1);
-                device.cmd_bind_pipeline(
-                    *command_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    *optimizer_step,
-                );
-                optimize(&device, &command_buffer, &network.weights_and_biases, i + 1);
-                network
-                    .latent_texture_1
-                    .optimize(&device, &command_buffer, i + 1);
-                network
-                    .latent_texture_2
-                    .optimize(&device, &command_buffer, i + 1);
-                network
-                    .latent_texture_3
-                    .optimize(&device, &command_buffer, i + 1);
-                network
-                    .latent_texture_4
-                    .optimize(&device, &command_buffer, i + 1);
-            }
-
-            unsafe {
-                device.end_command_buffer(*command_buffer).unwrap();
-                device.submit_and_wait_on_command_buffer(&command_buffer);
-            }
+            eval(&device, &shader, &network_buffer, network.size);
         }
+        Mode::Train { images } => {
+            let (images, indices) = images
+                .into_iter()
+                .map(|filepath| {
+                    let image = image::open(&filepath).unwrap().to_rgba8();
+                    let image = device.register_owned_image(
+                        staging_buffer.create_sampled_image(
+                            &device,
+                            nbn::SampledImageDescriptor {
+                                name: &filepath.display().to_string(),
+                                format: vk::Format::R8G8B8A8_SRGB,
+                                extent: nbn::ImageExtent::D2 {
+                                    width: image.width(),
+                                    height: image.height(),
+                                },
+                            },
+                            &image,
+                            nbn::QueueType::Compute,
+                            &[0],
+                        ),
+                        false,
+                    );
 
-        eval(&device, &shader, &network_buffer, network.size);
+                    let index = *image;
+                    (image, index)
+                })
+                .collect::<(Vec<_>, Vec<u32>)>();
+            let image_indices =
+                staging_buffer.create_buffer_from_slice(&device, "image_indices", &indices);
+
+            let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
+            let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
+
+            let mut rng = rand::rng();
+            let network = NetworkData::train(&device, &mut staging_buffer, 256, &mut rng);
+
+            let network_buffer =
+                staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
+
+            staging_buffer.finish(&device);
+
+            for i in 0..10_000 {
+                let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+                if i % 100 == 0 {
+                    dbg!(i);
+                }
+                unsafe {
+                    device
+                        .begin_command_buffer(*command_buffer, &Default::default())
+                        .unwrap();
+                    device.bind_internal_descriptor_sets(
+                        &command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                    );
+                }
+
+                unsafe {
+                    device.cmd_bind_pipeline(
+                        *command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *calculate_grads,
+                    );
+                    device.push_constants::<CalculateGradsPushConstants>(
+                        &command_buffer,
+                        CalculateGradsPushConstants {
+                            network: *network_buffer,
+                            textures: *image_indices,
+                            num_textures: images.len() as _,
+                            iteration: i as _,
+                            grid_size: 64,
+                        },
+                    );
+                    device.cmd_dispatch(*command_buffer, 64, 1, 1);
+                    device.cmd_bind_pipeline(
+                        *command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *optimizer_step,
+                    );
+                    optimize(&device, &command_buffer, &network.weights_and_biases, i + 1);
+                    network
+                        .latent_texture_1
+                        .optimize(&device, &command_buffer, i + 1);
+                    network
+                        .latent_texture_2
+                        .optimize(&device, &command_buffer, i + 1);
+                    network
+                        .latent_texture_3
+                        .optimize(&device, &command_buffer, i + 1);
+                    network
+                        .latent_texture_4
+                        .optimize(&device, &command_buffer, i + 1);
+                }
+
+                unsafe {
+                    device.end_command_buffer(*command_buffer).unwrap();
+                    device.submit_and_wait_on_command_buffer(&command_buffer);
+                }
+            }
+
+            eval(&device, &shader, &network_buffer, network.size);
+        }
     };
 }
