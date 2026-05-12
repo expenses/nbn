@@ -74,7 +74,8 @@ struct TextureData {
     data: Tensor,
     size: u32,
     num_mip_levels: i32,
-    num_blocks: u32
+    num_blocks: u32,
+    bitmasks: nbn::Buffer,
 }
 
 impl TextureData {
@@ -94,14 +95,23 @@ impl TextureData {
             num_blocks += size_in_blocks * size_in_blocks
         }
 
+        let num_values = num_blocks as usize * (3 * 2 + 16);
+
+        let bitmasks = staging_buffer.create_buffer_from_slice(
+            device,
+            "bitmasks",
+            &vec![0_u32; num_values.div_ceil(32)],
+        );
+
         Self {
             data: Tensor::from_halfs(
                 device,
                 staging_buffer,
-                &(0..num_blocks * (3 * 2 + 16))
+                &(0..num_values)
                     .map(|_| half::f16::from_f32(rng.random_range(0.0..1.0)))
                     .collect::<Vec<_>>(),
             ),
+            bitmasks,
             num_blocks,
             size,
             num_mip_levels,
@@ -111,15 +121,11 @@ impl TextureData {
     fn as_struct(&self) -> LatentTexture {
         LatentTexture {
             data: *self.data.data,
-            grads: self
-                .data
-                .training
-                .as_ref()
-                .map(|t| *t.grad)
-                .unwrap_or(0),
+            grads: self.data.training.as_ref().map(|t| *t.grad).unwrap_or(0),
             num_blocks: self.num_blocks,
             size: self.size as _,
             num_mip_levels: self.num_mip_levels,
+            bitmasks: *self.bitmasks,
         }
     }
 }
@@ -358,25 +364,26 @@ fn optimize(
 fn optimize_half(
     device: &nbn::Device,
     command_buffer: &nbn::CommandBuffer,
-    tensor: &Tensor,
+    texture: &TextureData,
     iteration: u32,
-    learning_rate: f32
+    learning_rate: f32,
 ) {
     unsafe {
-        let training = tensor.training.as_ref().unwrap();
+        let training = texture.data.training.as_ref().unwrap();
         device.push_constants::<OptimizeLatentTexturesConstants>(
             command_buffer,
             OptimizeLatentTexturesConstants {
-                primal: *tensor.data,
+                primal: *texture.data.data,
                 grad: *training.grad,
                 mean: *training.m,
                 variance: *training.v,
                 learning_rate,
-                num_values: tensor.size as _,
+                num_values: texture.data.size as _,
                 iteration: iteration as _,
+                bitmask: *texture.bitmasks
             },
         );
-        device.cmd_dispatch(**command_buffer, (tensor.size as u32).div_ceil(64), 1, 1);
+        device.cmd_dispatch(**command_buffer, (texture.data.size as u32).div_ceil(64), 1, 1);
     }
 }
 
@@ -412,12 +419,14 @@ fn main() {
             mut size,
             loss_eval_freq,
             learning_rate,
-            batch_size
+            batch_size,
         } => {
             let (images, indices) = images
                 .into_iter()
                 .map(|filepath| {
-                    let image = image::open(&filepath).unwrap().to_rgba8();
+                    let image = image::open(&filepath)
+                        .expect(&format!("{}", filepath.display()))
+                        .to_rgba8();
                     size = size.or(Some(image.width()));
                     let image = device.register_owned_image(
                         staging_buffer.create_sampled_image(
@@ -518,16 +527,46 @@ fn main() {
                         vk::PipelineBindPoint::COMPUTE,
                         *optimizer_step,
                     );
-                    optimize(&device, &command_buffer, &network.weights_and_biases, i + 1, learning_rate);
+                    optimize(
+                        &device,
+                        &command_buffer,
+                        &network.weights_and_biases,
+                        i + 1,
+                        learning_rate,
+                    );
                     device.cmd_bind_pipeline(
                         *command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                         *optimize_latent_textures,
                     );
-                    optimize_half(&device, &command_buffer, &network.latent_texture_1.data, i+1, learning_rate);
-                    optimize_half(&device, &command_buffer, &network.latent_texture_2.data, i+1, learning_rate);
-                    optimize_half(&device, &command_buffer, &network.latent_texture_3.data, i+1, learning_rate);
-                    optimize_half(&device, &command_buffer, &network.latent_texture_4.data, i+1, learning_rate);
+                    optimize_half(
+                        &device,
+                        &command_buffer,
+                        &network.latent_texture_1,
+                        i + 1,
+                        learning_rate,
+                    );
+                    optimize_half(
+                        &device,
+                        &command_buffer,
+                        &network.latent_texture_2,
+                        i + 1,
+                        learning_rate,
+                    );
+                    optimize_half(
+                        &device,
+                        &command_buffer,
+                        &network.latent_texture_3,
+                        i + 1,
+                        learning_rate,
+                    );
+                    optimize_half(
+                        &device,
+                        &command_buffer,
+                        &network.latent_texture_4,
+                        i + 1,
+                        learning_rate,
+                    );
 
                     if i % loss_eval_freq == 0 {
                         device.cmd_fill_buffer(

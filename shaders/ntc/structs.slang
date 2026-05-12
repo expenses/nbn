@@ -29,6 +29,7 @@ struct OptimizeLatentTexturesConstants {
     float* mean;
     float* variance;
     float learning_rate;
+    uint* bitmask;
     int iteration;
     int num_values;
 }
@@ -88,6 +89,7 @@ float3 sigmoid(float3 x) {
 struct LatentTexture {
     half* data;
     float* grads;
+    uint* bitmasks;
     uint num_blocks;
 
     half load_value(int index) {
@@ -96,6 +98,7 @@ struct LatentTexture {
 
     [BackwardDerivativeOf(load_value)]
     void load_value_bwd(int index, half grad) {
+        InterlockedOr(bitmasks[index>>5], 1 << (index&31));
         InterlockedAdd(grads[index], grad);
     }
 

@@ -184,6 +184,12 @@ void optimize_latent_textures(
         return;
     }
 
+    uint* mask = &pc.bitmask[thread>>5];
+
+    if (!bool(*mask & (1 << (thread&31)))) {
+        return;
+    }
+
     if (pc.grad[thread] == 0.0) {
         return;
     }
@@ -198,6 +204,7 @@ void optimize_latent_textures(
     ));
     // Clear gradients
     pc.grad[thread] = 0.0;
+    *mask = 0;
 }
 
 [shader("compute")]
