@@ -19,6 +19,10 @@ enum Mode {
         size: Option<u32>,
         #[arg(long, default_value_t = 1000)]
         loss_eval_freq: u32,
+        #[arg(long, default_value_t = 0.001)]
+        learning_rate: f32,
+        #[arg(long, default_value_t = 64)]
+        batch_size: u32
     },
 }
 
@@ -66,10 +70,10 @@ fn network_data<R: Rng>(rng: &mut R) -> Vec<f32> {
 }
 
 struct TextureData {
-    endpoints: Tensor,
-    alpha: Tensor,
+    data: Tensor,
     size: u32,
     num_mip_levels: i32,
+    num_blocks: u32
 }
 
 impl TextureData {
@@ -90,20 +94,14 @@ impl TextureData {
         }
 
         Self {
-            endpoints: Tensor::from_halfs(
+            data: Tensor::from_halfs(
                 device,
                 staging_buffer,
-                &(0..num_blocks * 3 * 2)
+                &(0..num_blocks * (3 * 2 + 16))
                     .map(|_| half::f16::from_f32(rng.random_range(0.0..1.0)))
                     .collect::<Vec<_>>(),
             ),
-            alpha: Tensor::from_halfs(
-                device,
-                staging_buffer,
-                &(0..num_blocks * 16)
-                    .map(|_| half::f16::from_f32(rng.random_range(0.0..1.0)))
-                    .collect::<Vec<_>>(),
-            ),
+            num_blocks,
             size,
             num_mip_levels,
         }
@@ -111,23 +109,17 @@ impl TextureData {
 
     fn as_struct(&self) -> LatentTexture {
         LatentTexture {
-            endpoints: *self.endpoints.data,
-            alpha: *self.alpha.data,
-            endpoints_grad: self
-                .endpoints
+            data: *self.data.data,
+            grads: self
+                .data
                 .training
                 .as_ref()
                 .map(|t| *t.grad)
                 .unwrap_or(0),
-            alpha_grad: self.alpha.training.as_ref().map(|t| *t.grad).unwrap_or(0),
+            num_blocks: self.num_blocks,
             size: self.size as _,
             num_mip_levels: self.num_mip_levels,
         }
-    }
-
-    fn optimize(&self, device: &nbn::Device, command_buffer: &nbn::CommandBuffer, iter: u32) {
-        optimize_half(device, command_buffer, &self.alpha, iter);
-        optimize_half(device, command_buffer, &self.endpoints, iter);
     }
 }
 
@@ -207,60 +199,61 @@ impl NetworkData {
         let size: Array0<i64> = npz.by_name("size").unwrap();
         let size = size.into_scalar() as u32;
 
-        Self {
-            weights_and_biases: Tensor::eval_only(upload_array(
-                device,
-                staging_buffer,
-                npz,
-                "weights_and_biases",
-            )),
-            latent_texture_1: TextureData {
-                endpoints: Tensor::eval_only(upload_array(
-                    device,
-                    staging_buffer,
-                    npz,
-                    "lt1_endpoints",
-                )),
-                alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt1_alpha")),
-                size,
-                num_mip_levels: 1,
-            },
-            latent_texture_2: TextureData {
-                endpoints: Tensor::eval_only(upload_array(
-                    device,
-                    staging_buffer,
-                    npz,
-                    "lt2_endpoints",
-                )),
-                alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt2_alpha")),
-                size,
-                num_mip_levels: 1,
-            },
-            latent_texture_3: TextureData {
-                endpoints: Tensor::eval_only(upload_array(
-                    device,
-                    staging_buffer,
-                    npz,
-                    "lt3_endpoints",
-                )),
+        // Self {
+        //     weights_and_biases: Tensor::eval_only(upload_array(
+        //         device,
+        //         staging_buffer,
+        //         npz,
+        //         "weights_and_biases",
+        //     )),
+        //     latent_texture_1: TextureData {
+        //         endpoints: Tensor::eval_only(upload_array(
+        //             device,
+        //             staging_buffer,
+        //             npz,
+        //             "lt1_endpoints",
+        //         )),
+        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt1_alpha")),
+        //         size,
+        //         num_mip_levels: 1,
+        //     },
+        //     latent_texture_2: TextureData {
+        //         endpoints: Tensor::eval_only(upload_array(
+        //             device,
+        //             staging_buffer,
+        //             npz,
+        //             "lt2_endpoints",
+        //         )),
+        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt2_alpha")),
+        //         size,
+        //         num_mip_levels: 1,
+        //     },
+        //     latent_texture_3: TextureData {
+        //         endpoints: Tensor::eval_only(upload_array(
+        //             device,
+        //             staging_buffer,
+        //             npz,
+        //             "lt3_endpoints",
+        //         )),
 
-                alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt3_alpha")),
-                size: size / 2,
-                num_mip_levels: 1,
-            },
-            latent_texture_4: TextureData {
-                endpoints: Tensor::eval_only(upload_array(
-                    device,
-                    staging_buffer,
-                    npz,
-                    "lt4_endpoints",
-                )),
-                alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt4_alpha")),
-                size: size / 2,
-                num_mip_levels: 1,
-            },
-            size: size as _,
-        }
+        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt3_alpha")),
+        //         size: size / 2,
+        //         num_mip_levels: 1,
+        //     },
+        //     latent_texture_4: TextureData {
+        //         endpoints: Tensor::eval_only(upload_array(
+        //             device,
+        //             staging_buffer,
+        //             npz,
+        //             "lt4_endpoints",
+        //         )),
+        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt4_alpha")),
+        //         size: size / 2,
+        //         num_mip_levels: 1,
+        //     },
+        //     size: size as _,
+        // }
+        panic!()
     }
 
     fn train<R: Rng>(
@@ -341,6 +334,7 @@ fn optimize(
     command_buffer: &nbn::CommandBuffer,
     tensor: &Tensor,
     iteration: u32,
+    learning_rate: f32,
 ) {
     unsafe {
         let training = tensor.training.as_ref().unwrap();
@@ -351,7 +345,7 @@ fn optimize(
                 grad: *training.grad,
                 mean: *training.m,
                 variance: *training.v,
-                learning_rate: 0.001,
+                learning_rate,
                 num_values: tensor.size as _,
                 iteration: iteration as _,
             },
@@ -365,17 +359,18 @@ fn optimize_half(
     command_buffer: &nbn::CommandBuffer,
     tensor: &Tensor,
     iteration: u32,
+    learning_rate: f32
 ) {
     unsafe {
         let training = tensor.training.as_ref().unwrap();
-        device.push_constants::<OptimizerHalfPushConstants>(
+        device.push_constants::<OptimizeLatentTexturesConstants>(
             command_buffer,
-            OptimizerHalfPushConstants {
+            OptimizeLatentTexturesConstants {
                 primal: *tensor.data,
                 grad: *training.grad,
                 mean: *training.m,
                 variance: *training.v,
-                learning_rate: 0.001,
+                learning_rate,
                 num_values: tensor.size as _,
                 iteration: iteration as _,
             },
@@ -415,6 +410,8 @@ fn main() {
             iterations,
             mut size,
             loss_eval_freq,
+            learning_rate,
+            batch_size
         } => {
             let (images, indices) = images
                 .into_iter()
@@ -489,8 +486,6 @@ fn main() {
                     })
                     .unwrap();
 
-                let grid_size = 64;
-
                 unsafe {
                     device.cmd_bind_pipeline(
                         *command_buffer,
@@ -504,12 +499,12 @@ fn main() {
                             textures: *image_indices,
                             num_textures: images.len() as _,
                             iteration: i as _,
-                            grid_size,
+                            grid_size: batch_size,
                         },
                     );
                     device.cmd_dispatch(
                         *command_buffer,
-                        (grid_size * grid_size).div_ceil(64),
+                        (batch_size * batch_size).div_ceil(64),
                         1,
                         1,
                     );
@@ -518,29 +513,16 @@ fn main() {
                         vk::PipelineBindPoint::COMPUTE,
                         *optimizer_step,
                     );
-                    optimize(&device, &command_buffer, &network.weights_and_biases, i + 1);
+                    optimize(&device, &command_buffer, &network.weights_and_biases, i + 1, learning_rate);
                     device.cmd_bind_pipeline(
                         *command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
-                        *optimizer_step_half,
+                        *optimize_latent_textures,
                     );
-                    network
-                        .latent_texture_1
-                        .optimize(&device, &command_buffer, i + 1);
-                    network
-                        .latent_texture_2
-                        .optimize(&device, &command_buffer, i + 1);
-                    network
-                        .latent_texture_3
-                        .optimize(&device, &command_buffer, i + 1);
-                    network
-                        .latent_texture_4
-                        .optimize(&device, &command_buffer, i + 1);
-                    device.cmd_bind_pipeline(
-                        *command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        *sum_loss,
-                    );
+                    optimize_half(&device, &command_buffer, &network.latent_texture_1.data, i+1, learning_rate);
+                    optimize_half(&device, &command_buffer, &network.latent_texture_2.data, i+1, learning_rate);
+                    optimize_half(&device, &command_buffer, &network.latent_texture_3.data, i+1, learning_rate);
+                    optimize_half(&device, &command_buffer, &network.latent_texture_4.data, i+1, learning_rate);
 
                     if i % loss_eval_freq == 0 {
                         device.cmd_fill_buffer(
@@ -550,7 +532,11 @@ fn main() {
                             vk::WHOLE_SIZE,
                             0,
                         );
-
+                        device.cmd_bind_pipeline(
+                            *command_buffer,
+                            vk::PipelineBindPoint::COMPUTE,
+                            *sum_loss,
+                        );
                         device.push_constants::<SumLossPushConstants>(
                             &command_buffer,
                             SumLossPushConstants {

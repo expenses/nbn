@@ -86,30 +86,31 @@ float3 sigmoid(float3 x) {
 }
 
 struct LatentTexture {
-    half3* endpoints;
-    float3* endpoints_grad;
+    half* data;
+    float* grads;
+    uint num_blocks;
 
-    half* alpha;
-    float* alpha_grad;
+    half load_value(int index) {
+        return data[index];
+    }
 
+    [BackwardDerivativeOf(load_value)]
+    void load_value_bwd(int index, half grad) {
+        InterlockedAdd(grads[index], grad);
+    }
+
+    [Differentiable]
     float load_alpha(int index) {
-        return alpha[index];
+        return load_value(index+num_blocks*3*2);
     }
 
-    [BackwardDerivativeOf(load_alpha)]
-    void load_alpha_bwd(int index, float grad) {
-        InterlockedAdd(alpha_grad[index], grad);
-    }
-
-    float3 load_endpoint(int index) {
-        return endpoints[index];
-    }
-
-    [BackwardDerivativeOf(load_endpoint)]
-    void load_endpoint_bwd(int index, float3 grad) {
-        InterlockedAdd(endpoints_grad[index][0], grad[0]);
-        InterlockedAdd(endpoints_grad[index][1], grad[1]);
-        InterlockedAdd(endpoints_grad[index][2], grad[2]);
+    [Differentiable]
+    half3 load_endpoint(int index) {
+        return half3(
+            load_value(index*3),
+            load_value(index*3+1),
+            load_value(index*3+2)
+        );
     }
 
     [Differentiable]
