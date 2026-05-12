@@ -49,7 +49,7 @@ pub fn create_image(
             },
             &dds.data,
             transition_to,
-            &offsets,
+            nbn::ImageLods::Offsets(&offsets),
         )
     } else {
         assert!(filename.ends_with(".ktx2"));
@@ -85,7 +85,7 @@ pub fn create_image(
             },
             &data,
             transition_to,
-            &offsets,
+            nbn::ImageLods::Offsets(&offsets),
         )
     }
 }

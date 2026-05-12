@@ -2342,15 +2342,25 @@ impl StagingBuffer {
         desc: SampledImageDescriptor,
         bytes: &[u8],
         transition_to: QueueType,
-        lod_offsets: &[u64],
+        lods: ImageLods,
     ) -> Image {
+        let mut usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+
+        if let ImageLods::Generate(_) = lods {
+            usage |= vk::ImageUsageFlags::TRANSFER_SRC
+        }
+
+        let mip_levels = match lods {
+            ImageLods::Generate(mip_levels) => mip_levels,
+            ImageLods::Offsets(offsets) => offsets.len() as u32,
+        };
+
         let offset = self.allocate(device, bytes.len() as _, std::io::Cursor::new(bytes));
-        let mip_levels = lod_offsets.len() as u32;
         let image = device.create_image(ImageDescriptor {
             name: desc.name,
             format: desc.format,
             extent: desc.extent,
-            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            usage,
 
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
@@ -2366,37 +2376,148 @@ impl StagingBuffer {
                 > {
                     image: &image,
                     src: None,
-                    dst: BarrierOp::TransferWrite,
+                    dst: BarrierOp::TransferOrBlitWrite,
                     src_queue_family_index: device.get_queue(self.command_buffer.ty).index,
                     dst_queue_family_index: device.get_queue(self.command_buffer.ty).index,
                 }
                 .into()]),
             );
 
-            let copies: Vec<_> = lod_offsets
-                .iter()
-                .enumerate()
-                .map(|(i, &lod_offset)| {
-                    vk::BufferImageCopy::default()
-                        .buffer_offset(offset as u64 + lod_offset)
+            match lods {
+                ImageLods::Offsets(offsets) => {
+                    let copies: Vec<_> = offsets
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &lod_offset)| {
+                            vk::BufferImageCopy::default()
+                                .buffer_offset(offset as u64 + lod_offset)
+                                .image_extent(vk::Extent3D {
+                                    width: image.extent.width >> i,
+                                    height: image.extent.height >> i,
+                                    depth: image.extent.depth,
+                                })
+                                .image_subresource(
+                                    image.subresource_layer().mip_level(i as _).layer_count(1),
+                                )
+                        })
+                        .collect();
+
+                    device.cmd_copy_buffer_to_image(
+                        *self.command_buffer,
+                        *self.staging_buffer.buffer,
+                        *image.image,
+                        vk::ImageLayout::GENERAL,
+                        &copies,
+                    );
+                }
+                ImageLods::Generate(num_mips) => {
+                    let copy = vk::BufferImageCopy::default()
+                        .buffer_offset(offset as u64)
                         .image_extent(vk::Extent3D {
-                            width: image.extent.width >> i,
-                            height: image.extent.height >> i,
+                            width: image.extent.width,
+                            height: image.extent.height,
                             depth: image.extent.depth,
                         })
-                        .image_subresource(
-                            image.subresource_layer().mip_level(i as _).layer_count(1),
-                        )
-                })
-                .collect();
+                        .image_subresource(image.subresource_layer().mip_level(0).layer_count(1));
 
-            device.cmd_copy_buffer_to_image(
-                *self.command_buffer,
-                *self.staging_buffer.buffer,
-                *image.image,
-                vk::ImageLayout::GENERAL,
-                &copies,
-            );
+                    device.cmd_copy_buffer_to_image(
+                        *self.command_buffer,
+                        *self.staging_buffer.buffer,
+                        *image.image,
+                        vk::ImageLayout::GENERAL,
+                        &[copy],
+                    );
+
+                    for i in 0..num_mips - 1 {
+                        let (src_stage_mask, src_access_mask, old_layout) =
+                            BarrierOp::TransferOrBlitWrite.into();
+                        let (dst_stage_mask, dst_access_mask, new_layout) =
+                            BarrierOp::TransferOrBlitRead.into();
+
+                        device.cmd_pipeline_barrier2(
+                            *self.command_buffer,
+                            &vk::DependencyInfo::default().image_memory_barriers(&[
+                                vk::ImageMemoryBarrier2::default()
+                                    .image(*image.image)
+                                    .subresource_range(
+                                        image.subresource_range.base_mip_level(i).level_count(1),
+                                    )
+                                    .dst_stage_mask(dst_stage_mask)
+                                    .dst_access_mask(dst_access_mask)
+                                    .src_queue_family_index(
+                                        device.get_queue(self.command_buffer.ty).index,
+                                    )
+                                    .dst_queue_family_index(
+                                        device.get_queue(self.command_buffer.ty).index,
+                                    )
+                                    .new_layout(new_layout)
+                                    .src_stage_mask(src_stage_mask)
+                                    .src_access_mask(src_access_mask)
+                                    .old_layout(old_layout),
+                            ]),
+                        );
+
+                        device.cmd_blit_image(
+                            *self.command_buffer,
+                            *image.image,
+                            vk::ImageLayout::GENERAL,
+                            *image.image,
+                            vk::ImageLayout::GENERAL,
+                            &[vk::ImageBlit::default()
+                                .src_subresource(
+                                    image.subresource_layer().mip_level(i).layer_count(1),
+                                )
+                                .src_offsets([
+                                    Default::default(),
+                                    vk::Offset3D {
+                                        x: image.extent.width as i32 >> i,
+                                        y: image.extent.height as i32 >> i,
+                                        z: 1,
+                                    },
+                                ])
+                                .dst_subresource(
+                                    image.subresource_layer().mip_level(i + 1).layer_count(1),
+                                )
+                                .dst_offsets([
+                                    Default::default(),
+                                    vk::Offset3D {
+                                        x: image.extent.width as i32 >> (i + 1),
+                                        y: image.extent.height as i32 >> (i + 1),
+                                        z: 1,
+                                    },
+                                ])],
+                            vk::Filter::LINEAR,
+                        );
+                    }
+                }
+            }
+
+            if let ImageLods::Offsets(offsets) = lods {
+                let copies: Vec<_> = offsets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &lod_offset)| {
+                        vk::BufferImageCopy::default()
+                            .buffer_offset(offset as u64 + lod_offset)
+                            .image_extent(vk::Extent3D {
+                                width: image.extent.width >> i,
+                                height: image.extent.height >> i,
+                                depth: image.extent.depth,
+                            })
+                            .image_subresource(
+                                image.subresource_layer().mip_level(i as _).layer_count(1),
+                            )
+                    })
+                    .collect();
+
+                device.cmd_copy_buffer_to_image(
+                    *self.command_buffer,
+                    *self.staging_buffer.buffer,
+                    *image.image,
+                    vk::ImageLayout::GENERAL,
+                    &copies,
+                );
+            }
 
             device.cmd_pipeline_barrier2(
                 *self.command_buffer,
@@ -2406,7 +2527,7 @@ impl StagingBuffer {
                     _,
                 > {
                     image: &image,
-                    src: Some(BarrierOp::TransferWrite),
+                    src: Some(BarrierOp::TransferOrBlitWrite),
                     dst: BarrierOp::AllCommandsSampledRead,
                     src_queue_family_index: device.get_queue(self.command_buffer.ty).index,
                     dst_queue_family_index: device.get_queue(transition_to).index,
@@ -2417,6 +2538,11 @@ impl StagingBuffer {
 
         image
     }
+}
+
+pub enum ImageLods<'a> {
+    Offsets(&'a [u64]),
+    Generate(u32),
 }
 
 enum BufferAlignmentType {
@@ -2496,6 +2622,8 @@ pub enum BarrierOp {
     TransferRead,
     TransferWrite,
     AllCommandsSampledRead,
+    TransferOrBlitRead,
+    TransferOrBlitWrite,
     Present,
     Acquire,
     AllCommands,
@@ -2512,6 +2640,9 @@ impl BarrierOp {
             | Self::ComputeStorageReadWrite => vk::PipelineStageFlags2::COMPUTE_SHADER,
             Self::DepthStencilAttachmentReadWrite => vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
             Self::TransferRead | Self::TransferWrite => vk::PipelineStageFlags2::COPY,
+            Self::TransferOrBlitRead | Self::TransferOrBlitWrite => {
+                vk::PipelineStageFlags2::COPY | vk::PipelineStageFlags2::BLIT
+            }
             Self::AllCommandsSampledRead | Self::AllCommands => {
                 vk::PipelineStageFlags2::ALL_COMMANDS
             }
@@ -2530,8 +2661,8 @@ impl BarrierOp {
             Self::ComputeStorageReadWrite => {
                 vk::AccessFlags2::SHADER_STORAGE_READ | vk::AccessFlags2::SHADER_STORAGE_WRITE
             }
-            Self::TransferRead => vk::AccessFlags2::TRANSFER_READ,
-            Self::TransferWrite => vk::AccessFlags2::TRANSFER_WRITE,
+            Self::TransferRead | Self::TransferOrBlitRead => vk::AccessFlags2::TRANSFER_READ,
+            Self::TransferWrite | Self::TransferOrBlitWrite => vk::AccessFlags2::TRANSFER_WRITE,
             Self::AllCommandsSampledRead => vk::AccessFlags2::SHADER_SAMPLED_READ,
             Self::DepthStencilAttachmentReadWrite => {
                 vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
