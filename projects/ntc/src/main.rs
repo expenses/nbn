@@ -12,6 +12,7 @@ enum Mode {
         path: std::path::PathBuf,
     },
     Train {
+        #[arg(num_args = 1..)]
         images: Vec<std::path::PathBuf>,
         #[arg(short, long, default_value_t = 10_000)]
         iterations: u32,
@@ -19,10 +20,10 @@ enum Mode {
         size: Option<u32>,
         #[arg(long, default_value_t = 1000)]
         loss_eval_freq: u32,
-        #[arg(long, default_value_t = 0.001)]
-        learning_rate: f32,
-        #[arg(long, default_value_t = 64)]
-        batch_size: u32
+        #[arg(long, default_value = "0.01", num_args=1..)]
+        learning_rate: Vec<f32>,
+        #[arg(long, default_value = "64", num_args = 1..)]
+        batch_size: Vec<u32>,
     },
 }
 
@@ -463,6 +464,10 @@ fn main() {
             let start = std::time::Instant::now();
 
             for i in 0..iterations {
+                let batch_size = batch_size[(i as usize * batch_size.len()) / iterations as usize];
+                let learning_rate =
+                    learning_rate[(i as usize * learning_rate.len()) / iterations as usize];
+
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
                 if i % 100 == 0 {
@@ -565,7 +570,10 @@ fn main() {
                     let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
                     let mae = loss / network.size as f32 / network.size as f32 / 16.0;
                     let psnr = 20.0 * (1.0 / mae).log10();
-                    println!("Loss: {:.8} PSNR: {:.4} dB", mae, psnr);
+                    println!(
+                        "Loss: {:.8} PSNR: {:.4} dB, Batch Size: {}",
+                        mae, psnr, batch_size
+                    );
                 }
             }
 
