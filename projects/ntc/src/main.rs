@@ -1,10 +1,7 @@
 slang_struct::slang_include!("shaders/ntc/structs.slang");
 
 use nbn::vk;
-use ndarray_npy as npy;
 use rand::{Rng, RngExt};
-
-use ndarray::{Array0, Array1};
 
 #[derive(clap::Subcommand)]
 enum Mode {
@@ -33,18 +30,6 @@ use clap::Parser;
 struct Arguments {
     #[command(subcommand)]
     mode: Mode,
-}
-
-fn upload_array(
-    device: &nbn::Device,
-    staging_buffer: &mut nbn::StagingBuffer,
-    reader: &mut npy::NpzReader<std::fs::File>,
-    name: &str,
-) -> nbn::Buffer {
-    let array: Array1<f32> = reader.by_name(name).unwrap();
-    let slice = array.as_slice().unwrap();
-
-    staging_buffer.create_buffer_from_slice(device, name, slice)
 }
 
 fn network_data<R: Rng>(rng: &mut R) -> Vec<f32> {
@@ -198,71 +183,6 @@ struct NetworkData {
 }
 
 impl NetworkData {
-    fn from_npz(
-        device: &nbn::Device,
-        staging_buffer: &mut nbn::StagingBuffer,
-        npz: &mut npy::NpzReader<std::fs::File>,
-    ) -> Self {
-        let size: Array0<i64> = npz.by_name("size").unwrap();
-        let size = size.into_scalar() as u32;
-
-        // Self {
-        //     weights_and_biases: Tensor::eval_only(upload_array(
-        //         device,
-        //         staging_buffer,
-        //         npz,
-        //         "weights_and_biases",
-        //     )),
-        //     latent_texture_1: TextureData {
-        //         endpoints: Tensor::eval_only(upload_array(
-        //             device,
-        //             staging_buffer,
-        //             npz,
-        //             "lt1_endpoints",
-        //         )),
-        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt1_alpha")),
-        //         size,
-        //         num_mip_levels: 1,
-        //     },
-        //     latent_texture_2: TextureData {
-        //         endpoints: Tensor::eval_only(upload_array(
-        //             device,
-        //             staging_buffer,
-        //             npz,
-        //             "lt2_endpoints",
-        //         )),
-        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt2_alpha")),
-        //         size,
-        //         num_mip_levels: 1,
-        //     },
-        //     latent_texture_3: TextureData {
-        //         endpoints: Tensor::eval_only(upload_array(
-        //             device,
-        //             staging_buffer,
-        //             npz,
-        //             "lt3_endpoints",
-        //         )),
-
-        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt3_alpha")),
-        //         size: size / 2,
-        //         num_mip_levels: 1,
-        //     },
-        //     latent_texture_4: TextureData {
-        //         endpoints: Tensor::eval_only(upload_array(
-        //             device,
-        //             staging_buffer,
-        //             npz,
-        //             "lt4_endpoints",
-        //         )),
-        //         alpha: Tensor::eval_only(upload_array(device, staging_buffer, npz, "lt4_alpha")),
-        //         size: size / 2,
-        //         num_mip_levels: 1,
-        //     },
-        //     size: size as _,
-        // }
-        panic!()
-    }
-
     fn train<R: Rng>(
         device: &nbn::Device,
         staging_buffer: &mut nbn::StagingBuffer,
@@ -307,33 +227,42 @@ fn eval(device: &nbn::Device, shader: &nbn::ShaderModule, network: &nbn::Buffer,
         })
         .unwrap();
 
-    let pc = RenderComputePushConstants {
-        output: *output,
-        network: **network,
-        resolution: size as _,
-    };
+    for i in 0..3 {
+        let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
-    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+        unsafe {
+            device
+                .begin_command_buffer(*command_buffer, &Default::default())
+                .unwrap();
 
-    unsafe {
-        device
-            .begin_command_buffer(*command_buffer, &Default::default())
-            .unwrap();
+            device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::COMPUTE, *render);
+            device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+            device.push_constants::<RenderComputePushConstants>(
+                &command_buffer,
+                RenderComputePushConstants {
+                    output: *output,
+                    network: **network,
+                    resolution: size as _,
+                    channel_offset: i * 3,
+                    mip_level: 1.0,
+                },
+            );
+            device.cmd_dispatch(*command_buffer, (size as u32).div_ceil(64), size as u32, 1);
+            device.end_command_buffer(*command_buffer).unwrap();
+            device.submit_and_wait_on_command_buffer(&command_buffer);
+        }
 
-        device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::COMPUTE, *render);
-        device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
-        device.push_constants::<RenderComputePushConstants>(&command_buffer, pc);
-        device.cmd_dispatch(*command_buffer, (size as u32).div_ceil(64), size as u32, 1);
-        device.end_command_buffer(*command_buffer).unwrap();
-        device.submit_and_wait_on_command_buffer(&command_buffer);
-    }
+        let slice = output.try_as_slice::<f32>().unwrap();
 
-    let slice = output.try_as_slice::<f32>().unwrap();
-
-    image::ImageBuffer::<image::Rgb<f32>, Vec<f32>>::from_raw(size as _, size as _, slice.to_vec())
+        image::ImageBuffer::<image::Rgb<f32>, Vec<f32>>::from_raw(
+            size as _,
+            size as _,
+            slice.to_vec(),
+        )
         .unwrap()
-        .save("out.exr")
+        .save(&format!("{}.exr", i))
         .unwrap();
+    }
 }
 
 fn optimize(
@@ -404,19 +333,7 @@ fn main() {
 
     match args.mode {
         Mode::Eval { path } => {
-            let file = std::fs::File::open(path).unwrap();
-            let mut npz = npy::NpzReader::new(file).unwrap();
 
-            println!("Keys: {:?}", npz.names());
-
-            let network = NetworkData::from_npz(&device, &mut staging_buffer, &mut npz);
-
-            let network_buffer =
-                staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
-
-            staging_buffer.finish(&device);
-
-            eval(&device, &shader, &network_buffer, network.size);
         }
         Mode::Train {
             images,

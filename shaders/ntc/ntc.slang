@@ -337,9 +337,9 @@ void render_compute(
     let loc = thread.y * pc.resolution + thread.x;
 
     float2 uv = (float2(thread) + 0.5f) / float2(pc.resolution);
-    let values = eval_network(*pc.network, uv, 0, Address(pc.network.weights_and_biases));
+    let values = eval_network(*pc.network, uv, pc.mip_level, Address(pc.network.weights_and_biases));
 
-    pc.output[loc * 3] = float(values[0]);
-    pc.output[loc * 3 + 1] = float(values[1]);
-    pc.output[loc * 3 + 2] = float(values[2]);
+    pc.output[loc * 3] = float(values[pc.channel_offset]);
+    pc.output[loc * 3 + 1] = float(values[pc.channel_offset + 1]);
+    pc.output[loc * 3 + 2] = float(values[pc.channel_offset + 2]);
 }

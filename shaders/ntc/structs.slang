@@ -3,6 +3,8 @@ struct RenderComputePushConstants {
     float* output;
     Network* network;
     int resolution;
+    float mip_level;
+    uint channel_offset;
 }
 
 struct CalculateGradsPushConstants {
