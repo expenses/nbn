@@ -94,18 +94,6 @@ half relu(half x) {
     return max(x, half(0.0));
 }
 
-[Differentiable]
-float L2(float value, float reference) {
-    let diff = value - reference;
-    return diff * diff;
-}
-
-[Differentiable]
-float L1(float value, float reference) {
-    let diff = value - reference;
-    return abs(diff);
-}
-
 float[16] sample_references(
     float2 uv,
     float mip_level,
@@ -117,13 +105,24 @@ float[16] sample_references(
         values[i] = 0.0;
     }
     for (int i = 0; i < num_images; i++) {
-        Sampler2D texture = sampled_images[textures[i]];
+        Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
         let sample = texture.SampleLevel(uv, mip_level).rgb;
         values[i * 3] = sample.r;
         values[i * 3 + 1] = sample.g;
         values[i * 3 + 2] = sample.b;
     }
     return values;
+}
+
+[Differentiable]
+float calc_loss(float value, float reference, const bool l2) {
+    let diff = value - reference;
+
+    if (l2) {
+        return diff * diff;
+    } else {
+        return abs(diff);
+    }
 }
 
 [Differentiable]
@@ -144,7 +143,7 @@ float[16] loss(
     float[16] error;
     [ForceUnroll]
     for (int i = 0; i < 16; ++i) {
-        error[i] = L1(color[i], reference_values[i]);
+        error[i] = calc_loss(color[i], reference_values[i], true);
         // Let the network focus on channels we care about.
         if (i >= num_channels) {
             error[i] = 0.0;

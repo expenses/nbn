@@ -608,11 +608,12 @@ fn main() {
 
                 if i % loss_eval_freq == 0 {
                     let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
-                    let mae = loss / network.size as f32 / network.size as f32 / 16.0;
-                    let psnr = 20.0 * (1.0 / mae).log10();
+                    let loss = loss / network.size as f32 / network.size as f32 / 16.0;
                     println!(
                         "Loss: {:.8} PSNR: {:.4} dB, Batch Size: {}",
-                        mae, psnr, batch_size
+                        loss,
+                        l2_psnr(loss),
+                        batch_size
                     );
                 }
             }
@@ -623,4 +624,12 @@ fn main() {
             eval(&device, &shader, &network_buffer, network.size);
         }
     };
+}
+
+fn l1_psnr(loss: f32) -> f32 {
+    20.0 * (1.0 / loss).log10()
+}
+
+fn l2_psnr(loss: f32) -> f32 {
+    10.0 * (1.0 / loss).log10()
 }
