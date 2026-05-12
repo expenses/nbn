@@ -396,7 +396,7 @@ fn main() {
     let device = nbn::Device::new(None);
 
     let mut staging_buffer =
-        nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Transfer);
+        nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
 
     let shader = device.load_shader("shaders/compiled/ntc.spv");
 
@@ -433,6 +433,16 @@ fn main() {
                         .expect(&format!("{}", filepath.display()))
                         .to_rgba8();
                     size = size.or(Some(image.width()));
+
+                    let mut mip_size = image.width().max(image.height());
+                    let mut num_mips = 0;
+                    while mip_size > 0 {
+                        num_mips += 1;
+                        mip_size >>= 1;
+                    }
+
+                    dbg!(num_mips);
+
                     let image = device.register_owned_image(
                         staging_buffer.create_sampled_image(
                             &device,
@@ -446,7 +456,7 @@ fn main() {
                             },
                             &image,
                             nbn::QueueType::Compute,
-                            &[0],
+                            nbn::ImageLods::Generate(num_mips),
                         ),
                         false,
                     );
