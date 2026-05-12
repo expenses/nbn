@@ -176,9 +176,9 @@ void optimizer_step(
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
-void optimizer_step_half(
-     uint thread: SV_DispatchThreadID,
-    uniform OptimizerHalfPushConstants pc
+void optimize_latent_textures(
+    uint thread: SV_DispatchThreadID,
+    uniform OptimizeLatentTexturesConstants pc,
 ) {
     if ((thread >= pc.num_values)) {
         return;

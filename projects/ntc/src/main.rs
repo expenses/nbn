@@ -451,8 +451,8 @@ fn main() {
 
             let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
             let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
-            let optimizer_step_half =
-                device.create_compute_pipeline(&shader, c"optimizer_step_half");
+            let optimize_latent_textures =
+                device.create_compute_pipeline(&shader, c"optimize_latent_textures");
             let sum_loss = device.create_compute_pipeline(&shader, c"sum_loss");
 
             let mut rng = rand::rng();

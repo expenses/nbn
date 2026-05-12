@@ -23,7 +23,7 @@ struct OptimizerPushConstants {
     int num_values;
 }
 
-struct OptimizerHalfPushConstants {
+struct OptimizeLatentTexturesConstants {
     half* primal;
     float* grad;
     float* mean;
