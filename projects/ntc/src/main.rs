@@ -11,8 +11,12 @@ enum Mode {
         path: std::path::PathBuf,
     },
     Train {
-        #[arg(num_args = 1..)]
-        images: Vec<std::path::PathBuf>,
+        #[arg(long, num_args = 1..)]
+        srgb: Vec<std::path::PathBuf>,
+        #[arg(long, num_args = 1..)]
+        non_srgb: Vec<std::path::PathBuf>,
+        #[arg(long, num_args = 1..)]
+        scalar: Vec<std::path::PathBuf>,
         #[arg(short, long, default_value_t = 10_000)]
         iterations: u32,
         #[arg(short, long)]
@@ -338,7 +342,9 @@ fn main() {
     match args.mode {
         Mode::Eval { path } => {}
         Mode::Train {
-            images,
+            srgb,
+            non_srgb,
+            scalar,
             iterations,
             mut size,
             loss_eval_freq,
@@ -346,9 +352,20 @@ fn main() {
             batch_size,
             mlp_learning_rate,
         } => {
-            let (images, indices) = images
-                .into_iter()
-                .map(|filepath| {
+            let (images, indices, channel_counts) = srgb
+                .iter()
+                .map(|image| (image, vk::Format::R8G8B8A8_SRGB, 3))
+                .chain(
+                    non_srgb
+                        .iter()
+                        .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 3)),
+                )
+                .chain(
+                    scalar
+                        .iter()
+                        .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 1)),
+                )
+                .map(|(filepath, format, channel_count)| {
                     let image = image::open(&filepath)
                         .expect(&format!("{}", filepath.display()))
                         .to_rgba8();
@@ -368,7 +385,7 @@ fn main() {
                             &device,
                             nbn::SampledImageDescriptor {
                                 name: &filepath.display().to_string(),
-                                format: vk::Format::R8G8B8A8_SRGB,
+                                format,
                                 extent: nbn::ImageExtent::D2 {
                                     width: image.width(),
                                     height: image.height(),
@@ -382,9 +399,9 @@ fn main() {
                     );
 
                     let index = *image;
-                    (image, index)
+                    (image, index, channel_count)
                 })
-                .collect::<(Vec<_>, Vec<u32>)>();
+                .collect::<(Vec<_>, Vec<u32>, Vec<u32>)>();
             let size = size.unwrap();
             dbg!(size);
 
@@ -402,6 +419,9 @@ fn main() {
 
             let network_buffer =
                 staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
+
+            let channel_counts =
+                staging_buffer.create_buffer_from_slice(&device, "channel_counts", &channel_counts);
 
             staging_buffer.finish(&device);
 
@@ -455,6 +475,7 @@ fn main() {
                             num_textures: images.len() as _,
                             iteration: i as _,
                             grid_size: batch_size,
+                            channel_counts: *channel_counts,
                         },
                     );
                     device.cmd_dispatch(
@@ -529,6 +550,7 @@ fn main() {
                                 textures: *image_indices,
                                 resolution: network.size as _,
                                 num_textures: images.len() as _,
+                                channel_counts: *channel_counts,
                                 total: *loss_total,
                             },
                         );

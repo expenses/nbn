@@ -98,18 +98,23 @@ float[16] sample_references(
     float2 uv,
     float mip_level,
     uint* textures,
-    int num_images
+    int num_images,
+    uint* channel_counts,
+    inout uint num_channels
 ) {
     float[16] values;
     for (int i = 0; i < 16; i++) {
         values[i] = 0.0;
     }
+    var offset = 0;
     for (int i = 0; i < num_images; i++) {
         Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
-        let sample = texture.SampleLevel(uv, mip_level).rgb;
-        values[i * 3] = sample.r;
-        values[i * 3 + 1] = sample.g;
-        values[i * 3 + 2] = sample.b;
+        let sample = texture.SampleLevel(uv, mip_level);
+
+        for (int j = 0; j < channel_counts[i]; ++j) {
+            values[num_channels+j] = sample[j];
+        }
+        num_channels += channel_counts[i];
     }
     return values;
 }
@@ -132,18 +137,25 @@ float[16] loss(
     uint* textures,
     Network network,
     Address address,
-    int num_images
+    int num_images,
+    uint* channel_counts,
+    bool l2
 ) {
     let color = eval_network(network, uv, mip_level, address);
-    let reference_values = (no_diff sample_references(uv, mip_level, textures, num_images));
-
-    // todo: system where input images can have variable number of used channels
-    let num_channels = num_images * 3;
+    uint num_channels = 0;
+    let reference_values = (no_diff sample_references(
+        uv,
+        mip_level,
+        textures,
+        num_images,
+        channel_counts,
+        num_channels
+    ));
 
     float[16] error;
     [ForceUnroll]
     for (int i = 0; i < 16; ++i) {
-        error[i] = calc_loss(color[i], reference_values[i], true);
+        error[i] = calc_loss(color[i], reference_values[i], l2);
         // Let the network focus on channels we care about.
         if (i >= num_channels) {
             error[i] = 0.0;
@@ -224,7 +236,9 @@ void sum_loss(
         pc.textures,
         *pc.network,
         Address(pc.network.weights_and_biases),
-        pc.num_textures
+        pc.num_textures,
+        pc.channel_counts,
+        true
     );
     float local_sum = 0.0;
     for (int i = 0; i < 16; ++i) {
@@ -263,7 +277,17 @@ void calculate_grads(
     for (int i = 0; i < 16; ++i)
         gradient_seed[i] = 1.0f;
     let address = DifferentialPtrPair<Address>(Address(pc.network.weights_and_biases), Address(pc.network.weights_and_biases_grad));
-    bwd_diff(loss)(uv, mip, pc.textures, *pc.network, address, pc.num_textures, gradient_seed);
+    bwd_diff(loss)(
+        uv,
+        mip,
+        pc.textures,
+        *pc.network,
+        address,
+        pc.num_textures,
+        pc.channel_counts,
+        false,
+        gradient_seed
+    );
 }
 
 uint16_t4 compress_latent_texture(LatentTexture texture, int block) {

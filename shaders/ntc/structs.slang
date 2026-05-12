@@ -11,6 +11,7 @@ struct CalculateGradsPushConstants {
     Network* network;
     uint* textures;
     int num_textures;
+    uint* channel_counts;
     uint iteration;
     uint grid_size;
 }
@@ -39,6 +40,7 @@ struct OptimizeLatentTexturesConstants {
 struct SumLossPushConstants {
     Network* network;
     uint* textures;
+    uint* channel_counts;
     int num_textures;
     int resolution;
     float* total;
