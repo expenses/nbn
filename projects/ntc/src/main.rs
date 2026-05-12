@@ -2,6 +2,8 @@ slang_struct::slang_include!("shaders/ntc/structs.slang");
 
 use nbn::vk;
 use rand::{Rng, RngExt};
+use std::fmt::Write;
+use tensorboard_rs::summary_writer::SummaryWriter;
 
 #[derive(clap::Subcommand)]
 enum Mode {
@@ -17,10 +19,12 @@ enum Mode {
         size: Option<u32>,
         #[arg(long, default_value_t = 1000)]
         loss_eval_freq: u32,
-        #[arg(long, default_value = "0.01", num_args=1..)]
-        learning_rate: Vec<f32>,
-        #[arg(long, default_value = "64", num_args = 1..)]
-        batch_size: Vec<u32>,
+        #[arg(long, default_value = "0.01")]
+        learning_rate: f32,
+        #[arg(long, default_value = "0.001")]
+        mlp_learning_rate: f32,
+        #[arg(long, default_value = "64")]
+        batch_size: u32,
     },
 }
 
@@ -332,9 +336,7 @@ fn main() {
     let args = Arguments::parse();
 
     match args.mode {
-        Mode::Eval { path } => {
-
-        }
+        Mode::Eval { path } => {}
         Mode::Train {
             images,
             iterations,
@@ -342,6 +344,7 @@ fn main() {
             loss_eval_freq,
             learning_rate,
             batch_size,
+            mlp_learning_rate,
         } => {
             let (images, indices) = images
                 .into_iter()
@@ -402,6 +405,18 @@ fn main() {
 
             staging_buffer.finish(&device);
 
+            let run_name = {
+                let mut name = String::from("lr");
+                write!(name, "{}", learning_rate).unwrap();
+                name.push_str("_mlr");
+                write!(name, "{}", mlp_learning_rate).unwrap();
+                name.push_str("_bs");
+                write!(name, "{}", batch_size).unwrap();
+                name
+            };
+            let log_dir = format!("logs/{}", run_name);
+            let mut writer = SummaryWriter::new(&log_dir);
+
             let start = std::time::Instant::now();
 
             let loss_total = device
@@ -413,10 +428,6 @@ fn main() {
                 .unwrap();
 
             for i in 0..iterations {
-                let batch_size = batch_size[(i as usize * batch_size.len()) / iterations as usize];
-                let learning_rate =
-                    learning_rate[(i as usize * learning_rate.len()) / iterations as usize];
-
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
                 if i % 100 == 0 {
@@ -462,7 +473,7 @@ fn main() {
                         &command_buffer,
                         &network.weights_and_biases,
                         i + 1,
-                        learning_rate,
+                        mlp_learning_rate,
                     );
                     device.cmd_bind_pipeline(
                         *command_buffer,
@@ -542,6 +553,9 @@ fn main() {
                         l2_psnr(loss),
                         batch_size
                     );
+                    writer.add_scalar("loss", loss, i as usize);
+                    writer.add_scalar("psnr", l2_psnr(loss), i as usize);
+                    writer.flush();
                 }
             }
 
