@@ -343,8 +343,8 @@ fn optimize(
     iteration: u32,
     learning_rate: f32,
 ) {
+    let training = tensor.training.as_ref().unwrap();
     unsafe {
-        let training = tensor.training.as_ref().unwrap();
         device.push_constants::<OptimizerPushConstants>(
             command_buffer,
             OptimizerPushConstants {
@@ -368,8 +368,8 @@ fn optimize_half(
     iteration: u32,
     learning_rate: f32,
 ) {
+    let training = texture.data.training.as_ref().unwrap();
     unsafe {
-        let training = texture.data.training.as_ref().unwrap();
         device.push_constants::<OptimizeLatentTexturesConstants>(
             command_buffer,
             OptimizeLatentTexturesConstants {
@@ -380,10 +380,15 @@ fn optimize_half(
                 learning_rate,
                 num_values: texture.data.size as _,
                 iteration: iteration as _,
-                bitmask: *texture.bitmasks
+                bitmask: *texture.bitmasks,
             },
         );
-        device.cmd_dispatch(**command_buffer, (texture.data.size as u32).div_ceil(64), 1, 1);
+        device.cmd_dispatch(
+            **command_buffer,
+            (texture.data.size as u32).div_ceil(64),
+            1,
+            1,
+        );
     }
 }
 
@@ -472,6 +477,14 @@ fn main() {
 
             let start = std::time::Instant::now();
 
+            let loss_total = device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "loss_total",
+                    size: 4,
+                    ty: nbn::MemoryLocation::GpuToCpu,
+                })
+                .unwrap();
+
             for i in 0..iterations {
                 let batch_size = batch_size[(i as usize * batch_size.len()) / iterations as usize];
                 let learning_rate =
@@ -490,17 +503,7 @@ fn main() {
                         &command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                     );
-                }
 
-                let loss_total = device
-                    .create_buffer(nbn::BufferDescriptor {
-                        name: "loss_total",
-                        size: 4,
-                        ty: nbn::MemoryLocation::GpuToCpu,
-                    })
-                    .unwrap();
-
-                unsafe {
                     device.cmd_bind_pipeline(
                         *command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
@@ -598,9 +601,7 @@ fn main() {
                             1,
                         );
                     }
-                }
 
-                unsafe {
                     device.end_command_buffer(*command_buffer).unwrap();
                     device.submit_and_wait_on_command_buffer(&command_buffer);
                 }
