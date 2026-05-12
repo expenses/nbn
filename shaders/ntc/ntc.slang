@@ -184,6 +184,10 @@ void optimize_latent_textures(
         return;
     }
 
+    if (pc.grad[thread] == 0.0) {
+        return;
+    }
+
     // Take an adam step
     pc.primal[thread] += half(adam_step(
         pc.grad[thread],
