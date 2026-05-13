@@ -664,28 +664,33 @@ fn text_writer() {
 
     assert_eq!(&output[..4], b"ANTC");
 
-    let words: &[u32] = nbn::cast_slice(&output[4..12]);
+    let values: &[u32] = nbn::cast_slice(&output[4..]);
 
-    let version = words[0];
+    let version = values[0];
     assert_eq!(version, 0);
 
-    let weight_offset = words[1] as usize;
+    let weight_offset = values[1] as usize;
 
     assert_eq!(&output[weight_offset..weight_offset + 5], &[1, 3, 5, 7, 9]);
 
-    let texture_info: &[[u32; 2]] = nbn::cast_slice(&output[12..12 + 4 * (4 + 4)]);
+    let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
 
     assert_eq!(texture_info, &[[2; 2], [2; 2], [1; 2], [1; 2]]);
 
-    let mip_offsets: &[u32] =
-        nbn::cast_slice(&output[12 + 4 * (4 + 4) + (2 * 4)..12 + 4 * (4 + 4) + (2 * 4) + (2 * 4)]);
+    let mip_offsets_for_texture_2 = &values[2 + 4 * 2 + 2..2 + 4 * 2 + 2 + 2];
 
     assert_eq!(
-        &nbn::cast_slice::<_, u16>(&output[mip_offsets[0] as usize..mip_offsets[0] as usize + 8]),
+        &nbn::cast_slice::<_, u16>(
+            &output
+                [mip_offsets_for_texture_2[0] as usize..mip_offsets_for_texture_2[0] as usize + 8]
+        ),
         &[6, 7, 8, 9]
     );
     assert_eq!(
-        &nbn::cast_slice::<_, u16>(&output[mip_offsets[1] as usize..mip_offsets[1] as usize + 2]),
+        &nbn::cast_slice::<_, u16>(
+            &output
+                [mip_offsets_for_texture_2[1] as usize..mip_offsets_for_texture_2[1] as usize + 2]
+        ),
         &[77]
     );
 }
