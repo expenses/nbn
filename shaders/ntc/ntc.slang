@@ -168,7 +168,7 @@ float[16] loss(
 [NumThreads(64, 1, 1)]
 void optimizer_step(
     uint thread: SV_DispatchThreadID,
-    uniform OptimizerPushConstants pc
+    uniform OptimizePushConstants pc
 ) {
     if ((thread >= pc.num_values)) {
         return;
@@ -189,7 +189,7 @@ void optimizer_step(
 [NumThreads(64, 1, 1)]
 void optimize_latent_textures(
     uint thread: SV_DispatchThreadID,
-    uniform OptimizeLatentTexturesConstants pc,
+    uniform OptimizePushConstants pc,
 ) {
     if ((thread >= pc.num_values)) {
         return;
@@ -206,7 +206,7 @@ void optimize_latent_textures(
     }
 
     // Take an adam step
-    pc.primal[thread] += half(adam_step(
+    ((half*) pc.primal)[thread] += half(adam_step(
         pc.grad[thread],
         pc.mean[thread],
         pc.variance[thread],

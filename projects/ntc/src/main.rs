@@ -282,9 +282,9 @@ fn optimize(
 ) {
     let training = tensor.training.as_ref().unwrap();
     unsafe {
-        device.push_constants::<OptimizerPushConstants>(
+        device.push_constants::<OptimizePushConstants>(
             command_buffer,
-            OptimizerPushConstants {
+            OptimizePushConstants {
                 primal: *tensor.data,
                 grad: *training.grad,
                 mean: *training.m,
@@ -292,6 +292,8 @@ fn optimize(
                 learning_rate,
                 num_values: tensor.size as _,
                 iteration: iteration as _,
+                // unused
+                bitmask: 0,
             },
         );
         device.cmd_dispatch(**command_buffer, (tensor.size as u32).div_ceil(64), 1, 1);
@@ -307,9 +309,9 @@ fn optimize_half(
 ) {
     let training = texture.data.training.as_ref().unwrap();
     unsafe {
-        device.push_constants::<OptimizeLatentTexturesConstants>(
+        device.push_constants::<OptimizePushConstants>(
             command_buffer,
-            OptimizeLatentTexturesConstants {
+            OptimizePushConstants {
                 primal: *texture.data.data,
                 grad: *training.grad,
                 mean: *training.m,

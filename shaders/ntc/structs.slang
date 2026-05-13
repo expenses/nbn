@@ -16,18 +16,9 @@ struct CalculateGradsPushConstants {
     uint grid_size;
 }
 
-struct OptimizerPushConstants {
+struct OptimizePushConstants {
+    // For latent textures, this is actually half* but that can't be used due to missing StoragePushConstant16
     float* primal;
-    float* grad;
-    float* mean;
-    float* variance;
-    float learning_rate;
-    int iteration;
-    int num_values;
-}
-
-struct OptimizeLatentTexturesConstants {
-    half* primal;
     float* grad;
     float* mean;
     float* variance;
@@ -91,13 +82,14 @@ float3 sigmoid(float3 x) {
 }
 
 struct LatentTexture {
-    half* data;
+    // Actually half* but that can't be used due to missing StoragePushConstant16
+    float* data;
     float* grads;
     uint* bitmasks;
     uint num_blocks;
 
     half load_value(int index) {
-        return data[index];
+        return ((half*) data)[index];
     }
 
     [BackwardDerivativeOf(load_value)]
