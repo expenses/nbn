@@ -183,10 +183,7 @@ impl Tensor {
 
 struct NetworkData {
     weights_and_biases: Tensor,
-    latent_texture_1: TextureData,
-    latent_texture_2: TextureData,
-    latent_texture_3: TextureData,
-    latent_texture_4: TextureData,
+    textures: [TextureData; 4],
     size: u32,
 }
 
@@ -199,10 +196,12 @@ impl NetworkData {
     ) -> Self {
         Self {
             weights_and_biases: Tensor::from_data(device, staging_buffer, &network_data(rng)),
-            latent_texture_1: TextureData::train(device, staging_buffer, size, rng),
-            latent_texture_2: TextureData::train(device, staging_buffer, size, rng),
-            latent_texture_3: TextureData::train(device, staging_buffer, size / 2, rng),
-            latent_texture_4: TextureData::train(device, staging_buffer, size / 2, rng),
+            textures: [
+                TextureData::train(device, staging_buffer, size, rng),
+                TextureData::train(device, staging_buffer, size, rng),
+                TextureData::train(device, staging_buffer, size / 2, rng),
+                TextureData::train(device, staging_buffer, size / 2, rng),
+            ],
             size,
         }
     }
@@ -216,10 +215,12 @@ impl NetworkData {
                 .as_ref()
                 .map(|t| *t.grad)
                 .unwrap_or(0),
-            latent_texture_1: self.latent_texture_1.as_struct(),
-            latent_texture_2: self.latent_texture_2.as_struct(),
-            latent_texture_3: self.latent_texture_3.as_struct(),
-            latent_texture_4: self.latent_texture_4.as_struct(),
+            textures: [
+                self.textures[0].as_struct(),
+                self.textures[1].as_struct(),
+                self.textures[2].as_struct(),
+                self.textures[3].as_struct(),
+            ],
         }
     }
 }
@@ -503,34 +504,9 @@ fn main() {
                         vk::PipelineBindPoint::COMPUTE,
                         *optimize_latent_textures,
                     );
-                    optimize_half(
-                        &device,
-                        &command_buffer,
-                        &network.latent_texture_1,
-                        i + 1,
-                        learning_rate,
-                    );
-                    optimize_half(
-                        &device,
-                        &command_buffer,
-                        &network.latent_texture_2,
-                        i + 1,
-                        learning_rate,
-                    );
-                    optimize_half(
-                        &device,
-                        &command_buffer,
-                        &network.latent_texture_3,
-                        i + 1,
-                        learning_rate,
-                    );
-                    optimize_half(
-                        &device,
-                        &command_buffer,
-                        &network.latent_texture_4,
-                        i + 1,
-                        learning_rate,
-                    );
+                    for texture in &network.textures {
+                        optimize_half(&device, &command_buffer, texture, i + 1, learning_rate);
+                    }
 
                     if i % loss_eval_freq == 0 {
                         device.cmd_fill_buffer(

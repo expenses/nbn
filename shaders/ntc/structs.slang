@@ -196,10 +196,7 @@ struct LatentTexture {
 }
 
 struct Network {
-    LatentTexture latent_texture_1;
-    LatentTexture latent_texture_2;
-    LatentTexture latent_texture_3;
-    LatentTexture latent_texture_4;
+    LatentTexture textures[4];
     float* weights_and_biases;
     float* weights_and_biases_grad;
 }
