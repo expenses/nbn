@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-nbn = {path = ".."}
+nbn = {path = "../.."}
 goth-gltf = { git = "https://github.com/expenses/goth-gltf", features = [
     "names",
 ] }

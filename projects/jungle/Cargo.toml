@@ -1,9 +1,10 @@
 [package]
-name = "particles"
+name = "jungle"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-env_logger = "0.11.10"
-nbn = { version = "0.1.0", path = ".." }
+nbn = {path = "../..", features = ["freecam"]}
+goth-gltf = "0.3.0"
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
+ddsfile = "0.6.0"
