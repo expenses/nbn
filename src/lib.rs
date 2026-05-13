@@ -351,8 +351,10 @@ impl Device {
         assert!(enabled_features.features.shader_int16 > 0);
         assert!(enabled_features.features.shader_int64 > 0);
         assert!(enabled_features.features.geometry_shader > 0);
-        assert!(enabled_features.features.multi_draw_indirect > 0);
         assert!(enabled_features.features.sampler_anisotropy > 0);
+        assert!(enabled_features.features.multi_draw_indirect > 0);
+        assert!(enabled_features.features.fragment_stores_and_atomics > 0);
+        assert!(enabled_features.features.vertex_pipeline_stores_and_atomics > 0);
         assert!(enabled_vulkan_1_1_features.shader_draw_parameters > 0);
         assert!(enabled_vulkan_1_1_features.storage_push_constant16 > 0);
         assert!(enabled_vulkan_1_2_features.buffer_device_address > 0);
@@ -363,6 +365,7 @@ impl Device {
         assert!(enabled_vulkan_1_2_features.timeline_semaphore > 0);
         assert!(enabled_vulkan_1_2_features.shader_buffer_int64_atomics > 0);
         assert!(enabled_vulkan_1_2_features.shader_float16 > 0);
+        assert!(enabled_vulkan_1_2_features.vulkan_memory_model > 0);
         assert!(enabled_vulkan_1_2_features.vulkan_memory_model_device_scope > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
