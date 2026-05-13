@@ -3,12 +3,19 @@ slang_struct::slang_include!("shaders/ntc/structs.slang");
 use nbn::vk;
 use rand::{Rng, RngExt};
 use std::fmt::Write;
+use std::path::PathBuf;
 use tensorboard_rs::summary_writer::SummaryWriter;
 
 #[derive(clap::Subcommand)]
 enum Mode {
     Eval {
         path: std::path::PathBuf,
+        #[arg(long, num_args = 1..)]
+        srgb: Vec<std::path::PathBuf>,
+        #[arg(long, num_args = 1..)]
+        non_srgb: Vec<std::path::PathBuf>,
+        #[arg(long, num_args = 1..)]
+        scalar: Vec<std::path::PathBuf>,
     },
     Train {
         #[arg(long, num_args = 1..)]
@@ -63,6 +70,14 @@ fn network_data<R: Rng>(rng: &mut R) -> Vec<f32> {
     data
 }
 
+const NUM_PARAMS: usize = 6288;
+
+#[test]
+fn check_num_values() {
+    let mut rng = rand::rng();
+    assert_eq!(network_data(&mut rng).len(), NUM_PARAMS);
+}
+
 struct TextureData {
     data: Tensor,
     size: u32,
@@ -88,7 +103,7 @@ impl TextureData {
         while size_in_blocks > 1 {
             num_mip_levels += 1;
             size_in_blocks >>= 1;
-            block_offsets.push(num_blocks);
+            block_offsets.push(num_blocks * 8);
             num_blocks += size_in_blocks * size_in_blocks;
         }
 
@@ -141,14 +156,6 @@ struct Tensor {
 }
 
 impl Tensor {
-    fn eval_only(data: nbn::Buffer) -> Self {
-        Self {
-            data,
-            training: None,
-            size: 0,
-        }
-    }
-
     fn from_halfs(
         device: &nbn::Device,
         staging_buffer: &mut nbn::StagingBuffer,
@@ -220,12 +227,7 @@ impl NetworkData {
                 .as_ref()
                 .map(|t| *t.grad)
                 .unwrap_or(0),
-            textures: [
-                self.textures[0].as_struct(),
-                self.textures[1].as_struct(),
-                self.textures[2].as_struct(),
-                self.textures[3].as_struct(),
-            ],
+            textures: std::array::from_fn(|i| self.textures[i].as_struct()),
         }
     }
 }
@@ -338,98 +340,175 @@ fn optimize_half(
 }
 
 fn main() {
-    let device = nbn::Device::new(None);
-
-    let mut staging_buffer =
-        nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
-
-    let shader = device.load_shader("shaders/compiled/ntc.spv");
-
     let args = Arguments::parse();
 
+    let device = nbn::Device::new(None);
+    let shader = device.load_shader("shaders/compiled/ntc.spv");
+
     match args.mode {
-        Mode::Eval { path } => {}
+        Mode::Eval {
+            path,
+            srgb,
+            non_srgb,
+            scalar,
+        } => {
+            let sum_textures_loss = device.create_compute_pipeline(&shader, c"sum_textures_loss");
+
+            let mut staging_buffer =
+                nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
+
+            let (images, image_indices, channel_counts, size) =
+                load_images(&device, &mut staging_buffer, &srgb, &non_srgb, &scalar);
+
+            let (latent_textures, params) = {
+                let bytes = std::fs::read(path).unwrap();
+
+                let values: &[u32] = nbn::cast_slice(&bytes[4..]);
+
+                let version = values[0];
+                assert_eq!(version, 0);
+
+                let weight_offset = values[1] as usize;
+
+                dbg!(weight_offset);
+
+                let params = staging_buffer.create_buffer_from_slice(
+                    &device,
+                    "params",
+                    &bytes[weight_offset..weight_offset + NUM_PARAMS * 4],
+                );
+
+                let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
+
+                let mut offset = (2 + 4 * 2) as usize;
+
+                let latent_textures: [_; 4] = std::array::from_fn(|i| {
+                    let num_mips = texture_info[i][1] as usize;
+                    dbg!(offset..offset + num_mips);
+
+                    let first_offset = values[offset];
+
+                    let img = device.register_owned_image(
+                        staging_buffer.create_sampled_image(
+                            &device,
+                            nbn::SampledImageDescriptor {
+                                name: "tex",
+                                format: vk::Format::BC1_RGB_UNORM_BLOCK,
+                                extent: nbn::ImageExtent::D2 {
+                                    width: texture_info[i][0],
+                                    height: texture_info[i][0],
+                                },
+                            },
+                            &bytes[first_offset as usize..],
+                            nbn::QueueType::Compute,
+                            nbn::ImageLods::Offsets(
+                                &values[offset..offset + num_mips]
+                                    .iter()
+                                    .map(|&offset| offset as u64 - first_offset as u64)
+                                    .collect::<Vec<_>>(),
+                            ),
+                        ),
+                        false,
+                    );
+
+                    offset += num_mips;
+                    img
+                });
+
+                (latent_textures, params)
+            };
+
+            let latent_texture_indices: [u32; 4] = std::array::from_fn(|i| *latent_textures[i]);
+            let latent_texture_indices = staging_buffer.create_buffer_from_slice(
+                &device,
+                "latent_texture_indices",
+                &latent_texture_indices,
+            );
+
+            staging_buffer.finish(&device);
+
+            let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+            let loss_total = device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "loss_total",
+                    size: 4,
+                    ty: nbn::MemoryLocation::GpuToCpu,
+                })
+                .unwrap();
+
+            unsafe {
+                device
+                    .begin_command_buffer(*command_buffer, &Default::default())
+                    .unwrap();
+                device
+                    .bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+
+                device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
+                device.cmd_bind_pipeline(
+                    *command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *sum_textures_loss,
+                );
+                device.push_constants::<SumTexturesLossPushConstants>(
+                    &command_buffer,
+                    SumTexturesLossPushConstants {
+                        params: *params,
+                        textures: *image_indices,
+                        resolution: size as _,
+                        num_textures: images.len() as _,
+                        channel_counts: *channel_counts,
+                        total: *loss_total,
+                        latent_textures: *latent_texture_indices,
+                    },
+                );
+                device.cmd_dispatch(*command_buffer, (size * size).div_ceil(64), 1, 1);
+
+                device.end_command_buffer(*command_buffer).unwrap();
+                device.submit_and_wait_on_command_buffer(&command_buffer);
+            }
+
+            let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+            let loss = loss / size as f32 / size as f32 / 16.0;
+            println!(
+                "Loss: {:.8} PSNR: {:.4} dB",
+                loss,
+                l2_psnr(loss),
+            );
+        }
         Mode::Train {
             srgb,
             non_srgb,
             scalar,
             iterations,
-            mut size,
+            size,
             loss_eval_freq,
             learning_rate,
             batch_size,
             mlp_learning_rate,
         } => {
-            let (images, indices, channel_counts) = srgb
-                .iter()
-                .map(|image| (image, vk::Format::R8G8B8A8_SRGB, 3))
-                .chain(
-                    non_srgb
-                        .iter()
-                        .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 3)),
-                )
-                .chain(
-                    scalar
-                        .iter()
-                        .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 1)),
-                )
-                .map(|(filepath, format, channel_count)| {
-                    let image = image::open(&filepath)
-                        .expect(&format!("{}", filepath.display()))
-                        .to_rgba8();
-                    size = size.or(Some(image.width()));
+            let mut staging_buffer =
+                nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
 
-                    let mut mip_size = image.width().max(image.height());
-                    let mut num_mips = 0;
-                    while mip_size > 0 {
-                        num_mips += 1;
-                        mip_size >>= 1;
-                    }
-
-                    dbg!(num_mips);
-
-                    let image = device.register_owned_image(
-                        staging_buffer.create_sampled_image(
-                            &device,
-                            nbn::SampledImageDescriptor {
-                                name: &filepath.display().to_string(),
-                                format,
-                                extent: nbn::ImageExtent::D2 {
-                                    width: image.width(),
-                                    height: image.height(),
-                                },
-                            },
-                            &image,
-                            nbn::QueueType::Compute,
-                            nbn::ImageLods::Generate(num_mips),
-                        ),
-                        false,
-                    );
-
-                    let index = *image;
-                    (image, index, channel_count)
-                })
-                .collect::<(Vec<_>, Vec<u32>, Vec<u32>)>();
-            let size = size.unwrap();
+            let (images, image_indices, channel_counts, image_size) =
+                load_images(&device, &mut staging_buffer, &srgb, &non_srgb, &scalar);
+            let size = size.unwrap_or(image_size);
             dbg!(size);
-
-            let image_indices =
-                staging_buffer.create_buffer_from_slice(&device, "image_indices", &indices);
 
             let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
             let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
             let optimize_latent_textures =
                 device.create_compute_pipeline(&shader, c"optimize_latent_textures");
             let sum_loss = device.create_compute_pipeline(&shader, c"sum_loss");
+            let compress_blocks = device.create_compute_pipeline(&shader, c"compress_blocks");
+            let copy_network_params =
+                device.create_compute_pipeline(&shader, c"copy_network_params");
 
             let mut rng = rand::rng();
             let network = NetworkData::train(&device, &mut staging_buffer, size, &mut rng);
 
             let network_buffer =
                 staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
-
-            let channel_counts =
-                staging_buffer.create_buffer_from_slice(&device, "channel_counts", &channel_counts);
 
             staging_buffer.finish(&device);
 
@@ -457,6 +536,8 @@ fn main() {
 
             for i in 0..iterations {
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+                let record_loss = i % loss_eval_freq == 0 || i == iterations - 1;
 
                 if i % 100 == 0 {
                     println!("{}", i);
@@ -513,7 +594,7 @@ fn main() {
                         optimize_half(&device, &command_buffer, texture, i + 1, learning_rate);
                     }
 
-                    if i % loss_eval_freq == 0 {
+                    if record_loss {
                         device.cmd_fill_buffer(
                             *command_buffer,
                             *loss_total.buffer,
@@ -549,7 +630,7 @@ fn main() {
                     device.submit_and_wait_on_command_buffer(&command_buffer);
                 }
 
-                if i % loss_eval_freq == 0 {
+                if record_loss {
                     let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
                     let loss = loss / network.size as f32 / network.size as f32 / 16.0;
                     println!(
@@ -567,9 +648,159 @@ fn main() {
             let duration = std::time::Instant::now() - start;
             dbg!(duration);
 
+            let network_params = device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "weights",
+                    size: NUM_PARAMS as u64 * 4,
+                    ty: nbn::MemoryLocation::GpuToCpu,
+                })
+                .unwrap();
+
+            let buffers: [_; 4] = std::array::from_fn(|i| {
+                device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: "block_buffer",
+                        size: network.textures[i].num_blocks as u64 * 8,
+                        ty: nbn::MemoryLocation::GpuToCpu,
+                    })
+                    .unwrap()
+            });
+
+            let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+            unsafe {
+                device
+                    .begin_command_buffer(*command_buffer, &Default::default())
+                    .unwrap();
+                device
+                    .bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+
+                device.cmd_bind_pipeline(
+                    *command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *copy_network_params,
+                );
+                device.push_constants::<CopyNetworkParamsPushConstants>(
+                    &command_buffer,
+                    CopyNetworkParamsPushConstants {
+                        network: *network_buffer,
+                        output: *network_params,
+                        write_halfs: 0,
+                    },
+                );
+                device.cmd_dispatch(*command_buffer, (NUM_PARAMS as u32).div_ceil(64), 1, 1);
+
+                device.cmd_bind_pipeline(
+                    *command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *compress_blocks,
+                );
+
+                for i in 0..4 {
+                    device.push_constants::<CompressBlocksPushConstants>(
+                        &command_buffer,
+                        CompressBlocksPushConstants {
+                            network: *network_buffer,
+                            blocks: *buffers[i],
+                            texture_index: i as _,
+                        },
+                    );
+                    device.cmd_dispatch(
+                        *command_buffer,
+                        network.textures[i].num_blocks.div_ceil(64),
+                        1,
+                        1,
+                    );
+                }
+
+                device.end_command_buffer(*command_buffer).unwrap();
+                device.submit_and_wait_on_command_buffer(&command_buffer);
+            }
+
+            let writer = AntcWriter {
+                weights: network_params.try_as_slice::<u8>().unwrap(),
+                textures: std::array::from_fn(|i| AntcTexture {
+                    size: network.textures[i].size,
+                    block_offsets: &network.textures[i].block_offsets,
+                    bytes: buffers[i].try_as_slice::<u8>().unwrap(),
+                }),
+            };
+            writer
+                .write(&mut std::fs::File::create("out.bin").unwrap())
+                .unwrap();
+
             eval(&device, &shader, &network_buffer, network.size);
         }
     };
+}
+
+fn load_images(
+    device: &nbn::Device,
+    staging_buffer: &mut nbn::StagingBuffer,
+    srgb: &[PathBuf],
+    non_srgb: &[PathBuf],
+    scalar: &[PathBuf],
+) -> (Vec<nbn::IndexedImage>, nbn::Buffer, nbn::Buffer, u32) {
+    let mut size = None;
+    let (images, indices, channel_counts) = srgb
+        .iter()
+        .map(|image| (image, vk::Format::R8G8B8A8_SRGB, 3))
+        .chain(
+            non_srgb
+                .iter()
+                .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 3)),
+        )
+        .chain(
+            scalar
+                .iter()
+                .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 1)),
+        )
+        .map(|(filepath, format, channel_count)| {
+            let image = image::open(&filepath)
+                .expect(&format!("{}", filepath.display()))
+                .to_rgba8();
+            size = size.or(Some(image.width()));
+
+            let mut mip_size = image.width().max(image.height());
+            let mut num_mips = 0;
+            while mip_size > 0 {
+                num_mips += 1;
+                mip_size >>= 1;
+            }
+
+            dbg!(num_mips);
+
+            let image = device.register_owned_image(
+                staging_buffer.create_sampled_image(
+                    &device,
+                    nbn::SampledImageDescriptor {
+                        name: &filepath.display().to_string(),
+                        format,
+                        extent: nbn::ImageExtent::D2 {
+                            width: image.width(),
+                            height: image.height(),
+                        },
+                    },
+                    &image,
+                    nbn::QueueType::Compute,
+                    nbn::ImageLods::Generate(num_mips),
+                ),
+                false,
+            );
+
+            let index = *image;
+            (image, index, channel_count)
+        })
+        .collect::<(Vec<_>, Vec<u32>, Vec<u32>)>();
+
+    let size = size.unwrap();
+
+    let image_indices = staging_buffer.create_buffer_from_slice(&device, "image_indices", &indices);
+
+    let channel_counts =
+        staging_buffer.create_buffer_from_slice(&device, "channel_counts", &channel_counts);
+
+    (images, image_indices, channel_counts, size)
 }
 
 fn l1_psnr(loss: f32) -> f32 {

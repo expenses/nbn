@@ -62,6 +62,26 @@ half[16] eval_from_inputs(half[16] inputs, Address address) {
     return outputs;
 }
 
+half[16] eval_textures(
+    uint* textures,
+    float2 uv,
+    float mip_level,
+    Address address
+) {
+    half inputs[16];
+    for (int i = 0; i < 4; ++i) {
+        Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
+        let sample = half3(texture.SampleLevel(uv, mip_level).rgb);
+        inputs[i*3] = sample.r;
+        inputs[i*3+1] = sample.g;
+        inputs[i*3+2] = sample.b;
+    }
+    for (int i = 12; i < 16; ++i) {
+        inputs[i] = 0.0h;
+    }
+    return eval_from_inputs(inputs, address);
+}
+
 [Differentiable]
 half[16] eval_network(Network network, no_diff float2 uv, no_diff float mip_level, Address address) {
     let s_1 = network.textures[0].sample(uv, mip_level);
@@ -130,18 +150,17 @@ float calc_loss(float value, float reference, const bool l2) {
     }
 }
 
+
 [Differentiable]
 float[16] loss(
+    half[16] evaluated,
     no_diff float2 uv,
     no_diff float mip_level,
     uint* textures,
-    Network network,
-    Address address,
     int num_images,
     uint* channel_counts,
     bool l2
 ) {
-    let color = eval_network(network, uv, mip_level, address);
     uint num_channels = 0;
     let reference_values = (no_diff sample_references(
         uv,
@@ -155,13 +174,36 @@ float[16] loss(
     float[16] error;
     [ForceUnroll]
     for (int i = 0; i < 16; ++i) {
-        error[i] = calc_loss(color[i], reference_values[i], l2);
+        error[i] = calc_loss(evaluated[i], reference_values[i], l2);
         // Let the network focus on channels we care about.
         if (i >= num_channels) {
             error[i] = 0.0;
         }
     }
     return error;
+}
+
+
+[Differentiable]
+float[16] loss_from_coord(
+    no_diff float2 uv,
+    no_diff float mip_level,
+    uint* textures,
+    Network network,
+    Address address,
+    int num_images,
+    uint* channel_counts,
+    bool l2
+) {
+    return loss(
+        eval_network(network, uv, mip_level, address),
+        uv,
+        mip_level,
+        textures,
+        num_images,
+        channel_counts,
+        l2
+    );
 }
 
 [shader("compute")]
@@ -230,12 +272,51 @@ void sum_loss(
 
     let coord = uint2(thread % pc.resolution, thread/pc.resolution);
 
-    let loss = loss(
+    let loss = loss_from_coord(
         (float2(coord) + 0.5f) / float2(pc.resolution),
         0.0f,
         pc.textures,
         *pc.network,
         Address(pc.network.weights_and_biases),
+        pc.num_textures,
+        pc.channel_counts,
+        true
+    );
+    float local_sum = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        local_sum += loss[i];
+    }
+    let wave_sum = WaveActiveSum(local_sum);
+    if (WaveIsFirstLane()) {
+        InterlockedAdd<float>(*pc.total, wave_sum);
+    }
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void sum_textures_loss(
+    uint thread: SV_DispatchThreadID,
+    uniform SumTexturesLossPushConstants pc
+) {
+    if (thread >= (pc.resolution*pc.resolution)) {
+        return;
+    }
+
+    let coord = uint2(thread % pc.resolution, thread/pc.resolution);
+
+    let uv = (float2(coord) + 0.5f) / float2(pc.resolution);
+    let mip_level = 0.0;
+
+    let loss = loss(
+        eval_textures(
+            pc.latent_textures,
+            uv,
+            mip_level,
+            Address(pc.params)
+        ),
+        uv,
+        mip_level,
+        pc.textures,
         pc.num_textures,
         pc.channel_counts,
         true
@@ -277,7 +358,7 @@ void calculate_grads(
     for (int i = 0; i < 16; ++i)
         gradient_seed[i] = 1.0f;
     let address = DifferentialPtrPair<Address>(Address(pc.network.weights_and_biases), Address(pc.network.weights_and_biases_grad));
-    bwd_diff(loss)(
+    bwd_diff(loss_from_coord)(
         uv,
         mip,
         pc.textures,
@@ -288,6 +369,45 @@ void calculate_grads(
         false,
         gradient_seed
     );
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void compress_blocks(
+    uint thread: SV_DispatchThreadID,
+    uniform CompressBlocksPushConstants pc
+) {
+    let texture = pc.network.textures[pc.texture_index];
+
+    if (thread >= texture.num_blocks) {
+        return;
+    }
+
+    let blocks = (uint16_t4*) pc.blocks;
+
+    blocks[thread] = compress_latent_texture(texture, thread);
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void copy_network_params(
+    uint thread: SV_DispatchThreadID,
+    uniform CopyNetworkParamsPushConstants pc
+) {
+    let num_values = 6288;
+
+    if (thread >= num_values) {
+        return;
+    }
+
+    let param = pc.network.weights_and_biases[thread];
+
+    if (bool(pc.write_halfs)) {
+        let output = (half*) pc.output;
+        output[thread] = half(param);
+    } else {
+        pc.output[thread] = param;
+    }
 }
 
 uint16_t4 compress_latent_texture(LatentTexture texture, int block) {

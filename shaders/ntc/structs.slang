@@ -37,6 +37,29 @@ struct SumLossPushConstants {
     float* total;
 }
 
+struct SumTexturesLossPushConstants {
+    float* params;
+    uint* latent_textures;
+    uint* textures;
+    uint* channel_counts;
+    int num_textures;
+    int resolution;
+    float* total;
+}
+
+
+struct CompressBlocksPushConstants {
+    Network* network;
+    uint2* blocks;
+    int texture_index;
+}
+
+struct CopyNetworkParamsPushConstants {
+    Network* network;
+    float* output;
+    int write_halfs;
+}
+
 uint16_t quantize(float value, uint16_t bits) {
     let size = (1 << bits) - 1;
     return uint16_t(round(value * size));
