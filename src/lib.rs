@@ -356,7 +356,6 @@ impl Device {
         assert!(enabled_features.features.fragment_stores_and_atomics > 0);
         assert!(enabled_features.features.vertex_pipeline_stores_and_atomics > 0);
         assert!(enabled_vulkan_1_1_features.shader_draw_parameters > 0);
-        assert!(enabled_vulkan_1_1_features.storage_push_constant16 > 0);
         assert!(enabled_vulkan_1_2_features.buffer_device_address > 0);
         assert!(enabled_vulkan_1_2_features.shader_int8 > 0);
         assert!(enabled_vulkan_1_2_features.descriptor_binding_sampled_image_update_after_bind > 0);
@@ -391,8 +390,7 @@ impl Device {
         let mut vulkan_1_1_features = vk::PhysicalDeviceVulkan11Features::default()
             // not strictly required, but means SV_InstanceID doesn't seem to do what we want
             // so we use SV_StartInstanceLocation.
-            .shader_draw_parameters(true)
-            .storage_push_constant16(true);
+            .shader_draw_parameters(true);
 
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
@@ -403,7 +401,6 @@ impl Device {
             .timeline_semaphore(true)
             .shader_buffer_int64_atomics(true)
             .shader_float16(true)
-            .storage_push_constant8(true)
             .vulkan_memory_model(true)
             .vulkan_memory_model_device_scope(true);
 
