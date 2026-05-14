@@ -60,6 +60,15 @@ struct CopyNetworkParamsPushConstants {
     int write_halfs;
 }
 
+struct RenderToTexturePushConstants {
+    uint* latent_textures;
+    float* params;
+    uint2 extent;
+    uint texture_size;
+    uint image;
+    float scale;
+}
+
 uint16_t quantize(float value, uint16_t bits) {
     let size = (1 << bits) - 1;
     return uint16_t(round(value * size));

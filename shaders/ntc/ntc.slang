@@ -4,6 +4,7 @@ import ntc.adam;
 import shared.noise;
 import fallback_bindings;
 import shared.util;
+import shared.colour;
 
 static const int SubgroupSize = 64;
 static const int SubgroupCount = 1;
@@ -66,7 +67,7 @@ half[16] eval_from_inputs(half[16] inputs, Address address) {
 half[16] eval_half_from_inputs(half[16] inputs, half* params) {
     var address = PointerAddress<half>(params);
 
-    typealias ShMemSize = SharedMemorySize<half, TargetEnum.SPIR_V, ExecutionMode.Training, SubgroupSize, SubgroupCount>;
+    typealias ShMemSize = SharedMemorySize<half, TargetEnum.SPIR_V, ExecutionMode.Inference, SubgroupSize, SubgroupCount>;
     typealias ShMemSizeForNetwork = ShMemSize.OfLayer3<16, 64, 64, 16>;
 
     typealias InputVec = WaveTangledVector<half, ShMemSizeForNetwork, 16, SubgroupSize>;
@@ -299,6 +300,39 @@ void optimizer_step(
     );
     // Clear gradients
     pc.grad[thread] = 0.0;
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void optimize_latent_textures_dense(
+    uint thread: SV_DispatchThreadID,
+    uniform OptimizePushConstants pc,
+) {
+    if ((thread >= pc.num_values)) {
+        return;
+    }
+
+    uint64_t* mask = &pc.bitmask[thread>>6];
+
+    if (!bool(*mask & (uint64_t(1) << (thread&63)))) {
+        return;
+    }
+
+    if (pc.grad[thread] == 0.0) {
+        return;
+    }
+
+    // Take an adam step
+    ((half*) pc.primal)[thread] += half(adam_step(
+        pc.grad[thread],
+        pc.mean[thread],
+        pc.variance[thread],
+        pc.learning_rate,
+        pc.iteration
+    ));
+    // Clear gradients
+    pc.grad[thread] = 0.0;
+    *mask = 0;
 }
 
 [shader("compute")]
@@ -548,4 +582,30 @@ void render_compute(
     pc.output[thread * 3] = float(values[pc.channel_offset]);
     pc.output[thread * 3 + 1] = float(values[pc.channel_offset + 1]);
     pc.output[thread * 3 + 2] = float(values[pc.channel_offset + 2]);
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void render_to_texture(
+    uint2 thread : SV_DispatchThreadID,
+    uniform RenderToTexturePushConstants pc
+) {
+    float2 uv_grad = 1 / float2(pc.extent) * pc.scale;
+    float2 uv = (float2(thread) + 0.5f) * uv_grad;
+    let values = eval_half_from_inputs(
+        inputs_from_textures(pc.latent_textures, uv, float4(uv_grad.x, 0, 0, uv_grad.y), pc.texture_size),
+        (half*)pc.params
+    );
+
+    if (any(thread >= pc.extent)) {
+        return;
+    }
+
+    float3 value;
+    value[0] = float(values[0]);
+    value[1] = float(values[1]);
+    value[2] = float(values[2]);
+
+    WTexture2D<float4> output = storage_images[pc.image];
+    output.Store(thread, float4(srgb_lin2encoded(value), 1));
 }

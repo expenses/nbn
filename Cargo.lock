@@ -2533,6 +2533,7 @@ name = "ntc"
 version = "0.1.0"
 dependencies = [
  "clap 4.6.1",
+ "egui-winit 0.31.1",
  "half",
  "image 0.25.10",
  "nbn",

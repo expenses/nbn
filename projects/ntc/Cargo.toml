@@ -11,3 +11,4 @@ slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "
 clap = { version = "4.6.1", features = ["derive"] }
 half = "2.7.1"
 tensorboard-rs = "0.5.9"
+egui-winit = "0.31.1"

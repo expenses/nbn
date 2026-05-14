@@ -1,6 +1,12 @@
 slang_struct::slang_include!("shaders/ntc/structs.slang");
 
-use nbn::vk;
+mod viewer;
+mod writer;
+
+use viewer::App;
+use writer::{AntcTexture, AntcWriter};
+
+use nbn::{vk, winit};
 use rand::{Rng, RngExt};
 use std::fmt::Write;
 use std::path::PathBuf;
@@ -10,12 +16,6 @@ use tensorboard_rs::summary_writer::SummaryWriter;
 enum Mode {
     Eval {
         path: std::path::PathBuf,
-        #[arg(long, num_args = 1..)]
-        srgb: Vec<std::path::PathBuf>,
-        #[arg(long, num_args = 1..)]
-        non_srgb: Vec<std::path::PathBuf>,
-        #[arg(long, num_args = 1..)]
-        scalar: Vec<std::path::PathBuf>,
     },
     Train {
         #[arg(long, num_args = 1..)]
@@ -293,33 +293,10 @@ fn optimize_half(
 fn main() {
     let args = Arguments::parse();
 
-    let device = nbn::Device::new(None);
-    let shader = device.load_shader("shaders/compiled/ntc.spv");
-
     match args.mode {
-        Mode::Eval {
-            path,
-            srgb,
-            non_srgb,
-            scalar,
-        } => {
-            let mut staging_buffer =
-                nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
-
-            let (images, image_indices, channel_counts, size) =
-                load_images(&device, &mut staging_buffer, &srgb, &non_srgb, &scalar);
-
-            eval_textures(
-                &device,
-                staging_buffer,
-                &image_indices,
-                &channel_counts,
-                size,
-                images.len() as _,
-                &std::fs::read(path).unwrap(),
-                &shader,
-                true,
-            );
+        Mode::Eval { path } => {
+            let event_loop = winit::event_loop::EventLoop::new().unwrap();
+            event_loop.run_app(&mut App::new(path)).unwrap();
         }
         Mode::Train {
             srgb,
@@ -332,6 +309,9 @@ fn main() {
             batch_size,
             mlp_learning_rate,
         } => {
+            let device = nbn::Device::new(None);
+            let shader = device.load_shader("shaders/compiled/ntc.spv");
+
             let mut staging_buffer =
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
 
@@ -704,127 +684,12 @@ fn l2_psnr(loss: f32) -> f32 {
     10.0 * (1.0 / loss).log10()
 }
 
-struct AntcTexture<'a> {
-    size: u32,
-    block_offsets: &'a [u32],
-    bytes: &'a [u8],
-}
-
-struct AntcWriter<'a> {
-    weights: &'a [u8],
-    textures: &'a [AntcTexture<'a>; 4],
-}
-
-impl<'a> AntcWriter<'a> {
-    fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        writer.write_all(b"ANTC")?;
-        writer.write_all(&0_u32.to_le_bytes())?;
-
-        let mut offset = 4
-            + 4
-            + 4
-            + self
-                .textures
-                .iter()
-                .map(|tex| 4 + 4 + tex.block_offsets.len() as u32 * 4)
-                .sum::<u32>();
-
-        writer.write_all(&offset.to_le_bytes())?;
-
-        offset += self.weights.len() as u32;
-
-        for texture in self.textures {
-            writer.write_all(&texture.size.to_le_bytes())?;
-            writer.write_all(&(texture.block_offsets.len() as u32).to_le_bytes())?;
-        }
-
-        for texture in self.textures {
-            for block_offset in texture.block_offsets {
-                writer.write_all(&(offset + block_offset).to_le_bytes())?;
-            }
-            offset += texture.bytes.len() as u32;
-        }
-
-        writer.write_all(&self.weights)?;
-        for texture in self.textures {
-            writer.write_all(&texture.bytes)?;
-        }
-
-        Ok(())
-    }
-}
-
-#[test]
-fn text_writer() {
-    let writer = AntcWriter {
-        weights: &[1, 3, 5, 7, 9],
-        textures: [
-            AntcTexture {
-                size: 2,
-                block_offsets: &[0, 4],
-                bytes: &[0, 1, 2, 3, 5],
-            },
-            AntcTexture {
-                size: 2,
-                block_offsets: &[0, 8],
-                bytes: nbn::cast_slice(&[6, 7, 8, 9, 77_u16]),
-            },
-            AntcTexture {
-                size: 1,
-                block_offsets: &[0],
-                bytes: &[33],
-            },
-            AntcTexture {
-                size: 1,
-                block_offsets: &[0],
-                bytes: &[44],
-            },
-        ],
-    };
-
-    let mut output = Vec::new();
-
-    writer.write(&mut output).unwrap();
-
-    assert_eq!(&output[..4], b"ANTC");
-
-    let values: &[u32] = nbn::cast_slice(&output[4..]);
-
-    let version = values[0];
-    assert_eq!(version, 0);
-
-    let weight_offset = values[1] as usize;
-
-    assert_eq!(&output[weight_offset..weight_offset + 5], &[1, 3, 5, 7, 9]);
-
-    let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
-
-    assert_eq!(texture_info, &[[2; 2], [2; 2], [1; 2], [1; 2]]);
-
-    let mip_offsets_for_texture_2 = &values[2 + 4 * 2 + 2..2 + 4 * 2 + 2 + 2];
-
-    assert_eq!(
-        &nbn::cast_slice::<_, u16>(
-            &output
-                [mip_offsets_for_texture_2[0] as usize..mip_offsets_for_texture_2[0] as usize + 8]
-        ),
-        &[6, 7, 8, 9]
-    );
-    assert_eq!(
-        &nbn::cast_slice::<_, u16>(
-            &output
-                [mip_offsets_for_texture_2[1] as usize..mip_offsets_for_texture_2[1] as usize + 2]
-        ),
-        &[77]
-    );
-}
-
 fn load_ntc_texture(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
     bytes: &[u8],
     use_halfs: bool,
-) -> ([nbn::IndexedImage; 4], nbn::Buffer) {
+) -> ([nbn::IndexedImage; 4], nbn::Buffer, u32) {
     let values: &[u32] = nbn::cast_slice(&bytes[4..]);
 
     let version = values[0];
@@ -873,7 +738,7 @@ fn load_ntc_texture(
         img
     });
 
-    (latent_textures, params)
+    (latent_textures, params, texture_info[0][0])
 }
 
 fn eval_textures(
@@ -890,7 +755,8 @@ fn eval_textures(
     let sum_textures_loss = device.create_compute_pipeline(shader, c"sum_textures_loss");
     let render = device.create_compute_pipeline(&shader, c"render_compute");
 
-    let (latent_textures, params) = load_ntc_texture(device, &mut staging_buffer, bytes, use_halfs);
+    let (latent_textures, params, _) =
+        load_ntc_texture(device, &mut staging_buffer, bytes, use_halfs);
     let latent_texture_indices: [u32; 4] = std::array::from_fn(|i| *latent_textures[i]);
     let latent_texture_indices = staging_buffer.create_buffer_from_slice(
         &device,
