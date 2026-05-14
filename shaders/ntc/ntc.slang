@@ -199,7 +199,6 @@ float calc_loss(float value, float reference, const bool l2) {
     }
 }
 
-
 [Differentiable]
 float[16] loss(
     half[16] evaluated,
@@ -365,7 +364,6 @@ void sum_loss(
         InterlockedAdd<float>(*pc.total, wave_sum);
     }
 }
-
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]

@@ -48,7 +48,6 @@ struct SumTexturesLossPushConstants {
     uint use_halfs;
 }
 
-
 struct CompressBlocksPushConstants {
     Network* network;
     uint2* blocks;

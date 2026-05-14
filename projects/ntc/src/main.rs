@@ -819,6 +819,63 @@ fn text_writer() {
     );
 }
 
+fn load_ntc_texture(
+    device: &nbn::Device,
+    staging_buffer: &mut nbn::StagingBuffer,
+    bytes: &[u8],
+    use_halfs: bool,
+) -> ([nbn::IndexedImage; 4], nbn::Buffer) {
+    let values: &[u32] = nbn::cast_slice(&bytes[4..]);
+
+    let version = values[0];
+    assert_eq!(version, 0);
+
+    let weight_offset = values[1] as usize;
+
+    let params = staging_buffer.create_buffer_from_slice(
+        device,
+        "params",
+        &bytes[weight_offset..weight_offset + NUM_PARAMS * if use_halfs { 2 } else { 4 }],
+    );
+
+    let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
+
+    let mut offset = (2 + 4 * 2) as usize;
+
+    let latent_textures: [_; 4] = std::array::from_fn(|i| {
+        let num_mips = texture_info[i][1] as usize;
+        let first_offset = values[offset];
+
+        let img = device.register_owned_image(
+            staging_buffer.create_sampled_image(
+                device,
+                nbn::SampledImageDescriptor {
+                    name: "tex",
+                    format: vk::Format::BC1_RGB_UNORM_BLOCK,
+                    extent: nbn::ImageExtent::D2 {
+                        width: texture_info[i][0],
+                        height: texture_info[i][0],
+                    },
+                },
+                &bytes[first_offset as usize..],
+                nbn::QueueType::Compute,
+                nbn::ImageLods::Offsets(
+                    &values[offset..offset + num_mips]
+                        .iter()
+                        .map(|&offset| offset as u64 - first_offset as u64)
+                        .collect::<Vec<_>>(),
+                ),
+            ),
+            false,
+        );
+
+        offset += num_mips;
+        img
+    });
+
+    (latent_textures, params)
+}
+
 fn eval_textures(
     device: &nbn::Device,
     mut staging_buffer: nbn::StagingBuffer,
@@ -833,58 +890,7 @@ fn eval_textures(
     let sum_textures_loss = device.create_compute_pipeline(shader, c"sum_textures_loss");
     let render = device.create_compute_pipeline(&shader, c"render_compute");
 
-    let (latent_textures, params) = {
-        let values: &[u32] = nbn::cast_slice(&bytes[4..]);
-
-        let version = values[0];
-        assert_eq!(version, 0);
-
-        let weight_offset = values[1] as usize;
-
-        let params = staging_buffer.create_buffer_from_slice(
-            &device,
-            "params",
-            &bytes[weight_offset..weight_offset + NUM_PARAMS * if use_halfs { 2 } else { 4 }],
-        );
-
-        let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
-
-        let mut offset = (2 + 4 * 2) as usize;
-
-        let latent_textures: [_; 4] = std::array::from_fn(|i| {
-            let num_mips = texture_info[i][1] as usize;
-            let first_offset = values[offset];
-
-            let img = device.register_owned_image(
-                staging_buffer.create_sampled_image(
-                    &device,
-                    nbn::SampledImageDescriptor {
-                        name: "tex",
-                        format: vk::Format::BC1_RGB_UNORM_BLOCK,
-                        extent: nbn::ImageExtent::D2 {
-                            width: texture_info[i][0],
-                            height: texture_info[i][0],
-                        },
-                    },
-                    &bytes[first_offset as usize..],
-                    nbn::QueueType::Compute,
-                    nbn::ImageLods::Offsets(
-                        &values[offset..offset + num_mips]
-                            .iter()
-                            .map(|&offset| offset as u64 - first_offset as u64)
-                            .collect::<Vec<_>>(),
-                    ),
-                ),
-                false,
-            );
-
-            offset += num_mips;
-            img
-        });
-
-        (latent_textures, params)
-    };
-
+    let (latent_textures, params) = load_ntc_texture(device, &mut staging_buffer, bytes, use_halfs);
     let latent_texture_indices: [u32; 4] = std::array::from_fn(|i| *latent_textures[i]);
     let latent_texture_indices = staging_buffer.create_buffer_from_slice(
         &device,
@@ -926,7 +932,7 @@ fn eval_textures(
                 channel_counts: **channel_counts,
                 total: *loss_total,
                 latent_textures: *latent_texture_indices,
-                use_halfs: use_halfs as u32
+                use_halfs: use_halfs as u32,
             },
         );
         device.cmd_dispatch(*command_buffer, (size * size).div_ceil(64), 1, 1);
