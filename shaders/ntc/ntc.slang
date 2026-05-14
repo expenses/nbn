@@ -96,18 +96,36 @@ half[16] inputs_from_textures(
     uint* textures,
     float2 uv,
     float mip_level,
+    int size
 ) {
-    half inputs[16];
-    for (int i = 0; i < 4; ++i) {
-        Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
-        let sample = half3(texture.SampleLevel(uv, mip_level).rgb);
-        inputs[i*3] = sample.r;
-        inputs[i*3+1] = sample.g;
-        inputs[i*3+2] = sample.b;
-    }
-    for (int i = 12; i < 16; ++i) {
-        inputs[i] = 0.0h;
-    }
+    Sampler2D t_1 = sampled_images[NonUniformResourceIndex(textures[0])];
+    Sampler2D t_2 = sampled_images[NonUniformResourceIndex(textures[1])];
+    Sampler2D t_3 = sampled_images[NonUniformResourceIndex(textures[2])];
+    Sampler2D t_4 = sampled_images[NonUniformResourceIndex(textures[3])];
+
+    let s_1 = half4(t_1.SampleLevel(uv, mip_level));
+    let s_2 = half4(t_2.SampleLevel(uv+(0.5/float(size)), mip_level));
+    let s_3 = half4(t_3.SampleLevel(uv, mip_level-1));
+    let s_4 = half4(t_4.SampleLevel(uv+(0.5/float(size/2)), mip_level-1));
+
+    half inputs[16] = {
+        s_1[0],
+        s_1[1],
+        s_1[2],
+        s_2[0],
+        s_2[1],
+        s_2[2],
+        s_3[0],
+        s_3[1],
+        s_3[2],
+        s_4[0],
+        s_4[1],
+        s_4[2],
+        0.0h,
+        0.0h,
+        0.0h,
+        0.0h
+    };
     return inputs;
 }
 
@@ -339,7 +357,7 @@ void sum_float_textures_loss(
 
     let loss = loss(
         eval_from_inputs(
-            inputs_from_textures(pc.latent_textures, uv, mip_level),
+            inputs_from_textures(pc.latent_textures, uv, mip_level, pc.resolution),
             PointerAddress<float>(pc.params)
         ),
         uv,
@@ -376,7 +394,7 @@ void sum_half_textures_loss(
 
     let loss = loss(
         eval_half_from_inputs(
-            inputs_from_textures(pc.latent_textures, uv, mip_level),
+            inputs_from_textures(pc.latent_textures, uv, mip_level, pc.resolution),
             PointerAddress<half>((half*)pc.params)
         ),
         uv,
