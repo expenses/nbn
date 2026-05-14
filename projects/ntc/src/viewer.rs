@@ -18,6 +18,8 @@ struct State {
     scale: f32,
     egui_winit: egui_winit::State,
     egui_render: nbn::egui::Renderer,
+    channel_offset: u32,
+    exposure: f32,
 }
 
 pub struct App {
@@ -103,6 +105,8 @@ impl winit::application::ApplicationHandler for App {
             _latent_textures: latent_textures,
             size,
             scale: 1.0,
+            channel_offset: 0,
+            exposure: 0.0,
         });
     }
 
@@ -146,6 +150,8 @@ impl winit::application::ApplicationHandler for App {
 
                     egui::Window::new("Xyz").show(egui_ctx, |ui| {
                         ui.add(egui::Slider::new(&mut state.scale, 0.0001..=10.0));
+                        ui.add(egui::Slider::new(&mut state.channel_offset, 0..=16 - 3));
+                        ui.add(egui::Slider::new(&mut state.exposure, -3.0..=3.0));
                     });
 
                     let output = egui_ctx.end_pass();
@@ -213,6 +219,8 @@ impl winit::application::ApplicationHandler for App {
                             image: *state.swapchain_image_heap_indices[next_image as usize],
                             texture_size: state.size,
                             scale: state.scale,
+                            channel_offset: state.channel_offset,
+                            exposure: state.exposure,
                         },
                     );
                     device.cmd_dispatch(

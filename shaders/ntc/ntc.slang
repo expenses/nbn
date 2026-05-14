@@ -602,10 +602,10 @@ void render_to_texture(
     }
 
     float3 value;
-    value[0] = float(values[0]);
-    value[1] = float(values[1]);
-    value[2] = float(values[2]);
+    value[0] = float(values[pc.channel_offset + 0]);
+    value[1] = float(values[pc.channel_offset + 1]);
+    value[2] = float(values[pc.channel_offset + 2]);
 
     WTexture2D<float4> output = storage_images[pc.image];
-    output.Store(thread, float4(srgb_lin2encoded(value), 1));
+    output.Store(thread, float4(srgb_lin2encoded(value * pow(2, pc.exposure)), 1));
 }

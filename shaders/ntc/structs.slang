@@ -67,6 +67,8 @@ struct RenderToTexturePushConstants {
     uint texture_size;
     uint image;
     float scale;
+    uint channel_offset;
+    float exposure;
 }
 
 uint16_t quantize(float value, uint16_t bits) {
