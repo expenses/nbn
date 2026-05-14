@@ -62,7 +62,9 @@ half[16] eval_from_inputs(half[16] inputs, Address address) {
     return outputs;
 }
 
-half[16] eval_half_from_inputs(half[16] inputs, PointerAddress<half> address) {
+half[16] eval_half_from_inputs(half[16] inputs, half* params) {
+    var address = PointerAddress<half>(params);
+
     typealias ShMemSize = SharedMemorySize<half, TargetEnum.SPIR_V, ExecutionMode.Training, SubgroupSize, SubgroupCount>;
     typealias ShMemSizeForNetwork = ShMemSize.OfLayer3<16, 64, 64, 16>;
 
@@ -95,7 +97,7 @@ half[16] eval_half_from_inputs(half[16] inputs, PointerAddress<half> address) {
 half[16] inputs_from_textures(
     uint* textures,
     float2 uv,
-    float mip_level,
+    float4 uv_grad,
     int size
 ) {
     Sampler2D t_1 = sampled_images[NonUniformResourceIndex(textures[0])];
@@ -103,10 +105,10 @@ half[16] inputs_from_textures(
     Sampler2D t_3 = sampled_images[NonUniformResourceIndex(textures[2])];
     Sampler2D t_4 = sampled_images[NonUniformResourceIndex(textures[3])];
 
-    let s_1 = half4(t_1.SampleLevel(uv, mip_level));
-    let s_2 = half4(t_2.SampleLevel(uv+(0.5/float(size)), mip_level));
-    let s_3 = half4(t_3.SampleLevel(uv, mip_level-1));
-    let s_4 = half4(t_4.SampleLevel(uv+(0.5/float(size/2)), mip_level-1));
+    let s_1 = half4(t_1.SampleGrad(uv, uv_grad.xy, uv_grad.zw));
+    let s_2 = half4(t_2.SampleGrad(uv+(0.5/float(size)), uv_grad.xy, uv_grad.zw));
+    let s_3 = half4(t_3.SampleGrad(uv, uv_grad.xy, uv_grad.zw));
+    let s_4 = half4(t_4.SampleGrad(uv+(0.5/float(size/2)), uv_grad.xy, uv_grad.zw));
 
     half inputs[16] = {
         s_1[0],
@@ -230,6 +232,31 @@ float[16] loss(
     return error;
 }
 
+float[16] loss_grad(
+    half[16] evaluated,
+    float2 uv,
+    float4 uv_grad,
+    uint* textures,
+    int num_images,
+    uint* channel_counts,
+    bool l2
+) {
+    float[16] error;
+    for (int i = 0; i < 16; ++i) {
+        error[i] = 0.0;
+    }
+    var num_channels = 0;
+    for (int i = 0; i < num_images; i++) {
+        Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
+        let sample = texture.SampleGrad(uv, uv_grad.xy, uv_grad.zw);
+
+        for (int j = 0; j < channel_counts[i]; ++j) {
+            error[num_channels+j] = calc_loss(evaluated[num_channels+j], sample[j], l2);
+        }
+        num_channels += channel_counts[i];
+    }
+    return error;
+}
 
 [Differentiable]
 float[16] loss_from_coord(
@@ -390,15 +417,15 @@ void sum_half_textures_loss(
     let coord = uint2(thread % pc.resolution, thread/pc.resolution);
 
     let uv = (float2(coord) + 0.5f) / float2(pc.resolution);
-    let mip_level = 0.0;
+    let uv_grad = float4(0.05, 0, 0, 0.05);
 
-    let loss = loss(
+    let loss = loss_grad(
         eval_half_from_inputs(
-            inputs_from_textures(pc.latent_textures, uv, mip_level, pc.resolution),
-            PointerAddress<half>((half*)pc.params)
+            inputs_from_textures(pc.latent_textures, uv, uv_grad, pc.resolution),
+            (half*)pc.params
         ),
         uv,
-        mip_level,
+        uv_grad,
         pc.textures,
         pc.num_textures,
         pc.channel_counts,
@@ -546,8 +573,8 @@ void render_compute(
 
     float2 uv = (float2(coord) + 0.5f) / float2(pc.resolution);
     let values = eval_half_from_inputs(
-        inputs_from_textures(pc.latent_textures, uv, 0, pc.resolution),
-        PointerAddress<half>((half*)pc.params)
+        inputs_from_textures(pc.latent_textures, uv, float4(0.01, 0, 0, 0.01), pc.resolution),
+        (half*)pc.params
     );
 
     pc.output[thread * 3] = float(values[pc.channel_offset]);
