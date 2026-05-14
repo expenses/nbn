@@ -232,55 +232,6 @@ impl NetworkData {
     }
 }
 
-fn eval(device: &nbn::Device, shader: &nbn::ShaderModule, network: &nbn::Buffer, size: u32) {
-    let render = device.create_compute_pipeline(&shader, c"render_compute");
-
-    let output = device
-        .create_buffer(nbn::BufferDescriptor {
-            size: size as u64 * size as u64 * 3 * 4,
-            name: "output floats",
-            ty: nbn::MemoryLocation::GpuToCpu,
-        })
-        .unwrap();
-
-    for i in 0..3 {
-        let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
-
-        unsafe {
-            device
-                .begin_command_buffer(*command_buffer, &Default::default())
-                .unwrap();
-
-            device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::COMPUTE, *render);
-            device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
-            device.push_constants::<RenderComputePushConstants>(
-                &command_buffer,
-                RenderComputePushConstants {
-                    output: *output,
-                    network: **network,
-                    resolution: size as _,
-                    channel_offset: i * 3,
-                    mip_level: 1.0,
-                },
-            );
-            device.cmd_dispatch(*command_buffer, (size as u32).div_ceil(64), size as u32, 1);
-            device.end_command_buffer(*command_buffer).unwrap();
-            device.submit_and_wait_on_command_buffer(&command_buffer);
-        }
-
-        let slice = output.try_as_slice::<f32>().unwrap();
-
-        image::ImageBuffer::<image::Rgb<f32>, Vec<f32>>::from_raw(
-            size as _,
-            size as _,
-            slice.to_vec(),
-        )
-        .unwrap()
-        .save(&format!("{}.exr", i))
-        .unwrap();
-    }
-}
-
 fn optimize(
     device: &nbn::Device,
     command_buffer: &nbn::CommandBuffer,
@@ -674,8 +625,6 @@ fn main() {
                 &shader,
                 true,
             );
-
-            eval(&device, &shader, &network_buffer, network.size);
         }
     };
 }
@@ -713,8 +662,6 @@ fn load_images(
                 num_mips += 1;
                 mip_size >>= 1;
             }
-
-            dbg!(num_mips);
 
             let image = device.register_owned_image(
                 staging_buffer.create_sampled_image(
@@ -886,6 +833,7 @@ fn eval_textures(
     let sum_half_textures_loss = device.create_compute_pipeline(shader, c"sum_half_textures_loss");
     let sum_float_textures_loss =
         device.create_compute_pipeline(shader, c"sum_float_textures_loss");
+    let render = device.create_compute_pipeline(&shader, c"render_compute");
 
     let (latent_textures, params) = {
         let values: &[u32] = nbn::cast_slice(&bytes[4..]);
@@ -995,4 +943,53 @@ fn eval_textures(
     let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
     let loss = loss / size as f32 / size as f32 / 16.0;
     println!("Loss: {:.8} PSNR: {:.4} dB", loss, l2_psnr(loss),);
+
+    if !use_halfs {
+        return;
+    }
+
+    let output = device
+        .create_buffer(nbn::BufferDescriptor {
+            size: size as u64 * size as u64 * 3 * 4,
+            name: "output floats",
+            ty: nbn::MemoryLocation::GpuToCpu,
+        })
+        .unwrap();
+
+    for i in 0..3 {
+        let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+        unsafe {
+            device
+                .begin_command_buffer(*command_buffer, &Default::default())
+                .unwrap();
+
+            device.cmd_bind_pipeline(*command_buffer, vk::PipelineBindPoint::COMPUTE, *render);
+            device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+            device.push_constants::<RenderComputePushConstants>(
+                &command_buffer,
+                RenderComputePushConstants {
+                    output: *output,
+                    params: *params,
+                    latent_textures: *latent_texture_indices,
+                    resolution: size as _,
+                    channel_offset: i * 3,
+                },
+            );
+            device.cmd_dispatch(*command_buffer, (size * size).div_ceil(64), 1, 1);
+            device.end_command_buffer(*command_buffer).unwrap();
+            device.submit_and_wait_on_command_buffer(&command_buffer);
+        }
+
+        let slice = output.try_as_slice::<f32>().unwrap();
+
+        image::ImageBuffer::<image::Rgb<f32>, Vec<f32>>::from_raw(
+            size as _,
+            size as _,
+            slice.to_vec(),
+        )
+        .unwrap()
+        .save(&format!("{}.exr", i))
+        .unwrap();
+    }
 }

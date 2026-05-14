@@ -1,9 +1,9 @@
 
 struct RenderComputePushConstants {
     float* output;
-    Network* network;
+    uint* latent_textures;
+    float* params;
     int resolution;
-    float mip_level;
     uint channel_offset;
 }
 

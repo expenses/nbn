@@ -532,44 +532,25 @@ uint16_t4 compress_latent_texture(LatentTexture texture, int block) {
     );
 }
 
-float4 render_tensors(
-    LatentTexture texture,
-    int2 pixel,
-    int2 resolution,
-) {
-    let uv = (float2(pixel) + 0.5f) / float2(resolution);
-    return float4(texture.sample(uv, 0), 1);
-}
-
-float4 render_texture(
-    Texture2D<float4> texture,
-    SamplerState samp,
-    int2 pixel,
-    int2 resolution,
-) {
-    let uv = (float2(pixel) + 0.5f) / float2(resolution);
-    return texture.SampleLevel(samp, uv, 0);
-}
-
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void render_compute(
-    uint2 thread : SV_DispatchThreadID,
+    uint thread : SV_DispatchThreadID,
     uniform RenderComputePushConstants pc
 ) {
-    if (any(thread >= uint2(pc.resolution))) {
+    if (any(thread >= pc.resolution*pc.resolution)) {
         return;
     }
 
-    let loc = thread.y * pc.resolution + thread.x;
+    let coord = uint2(thread % pc.resolution, thread/pc.resolution);
 
-    float2 uv = (float2(thread) + 0.5f) / float2(pc.resolution);
-    let values = eval_from_inputs(
-        inputs_from_network(*pc.network, uv, pc.mip_level),
-        Address(pc.network.weights_and_biases)
+    float2 uv = (float2(coord) + 0.5f) / float2(pc.resolution);
+    let values = eval_half_from_inputs(
+        inputs_from_textures(pc.latent_textures, uv, 0, pc.resolution),
+        PointerAddress<half>((half*)pc.params)
     );
 
-    pc.output[loc * 3] = float(values[pc.channel_offset]);
-    pc.output[loc * 3 + 1] = float(values[pc.channel_offset + 1]);
-    pc.output[loc * 3 + 2] = float(values[pc.channel_offset + 2]);
+    pc.output[thread * 3] = float(values[pc.channel_offset]);
+    pc.output[thread * 3 + 1] = float(values[pc.channel_offset + 1]);
+    pc.output[thread * 3 + 2] = float(values[pc.channel_offset + 2]);
 }
