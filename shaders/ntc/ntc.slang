@@ -337,9 +337,9 @@ void sum_textures_loss(
     let mip_level = 0.0;
 
     let loss = loss(
-        eval_from_inputs(
+        eval_half_from_inputs(
             inputs_from_textures(pc.latent_textures, uv, mip_level),
-            Address(pc.params)
+            PointerAddress<half>((half*)pc.params)
         ),
         uv,
         mip_level,

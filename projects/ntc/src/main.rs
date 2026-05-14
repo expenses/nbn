@@ -375,7 +375,7 @@ fn main() {
                 let params = staging_buffer.create_buffer_from_slice(
                     &device,
                     "params",
-                    &bytes[weight_offset..weight_offset + NUM_PARAMS * 4],
+                    &bytes[weight_offset..weight_offset + NUM_PARAMS * 2],
                 );
 
                 let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
@@ -651,7 +651,7 @@ fn main() {
             let network_params = device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "weights",
-                    size: NUM_PARAMS as u64 * 4,
+                    size: NUM_PARAMS as u64 * 2,
                     ty: nbn::MemoryLocation::GpuToCpu,
                 })
                 .unwrap();
@@ -685,7 +685,7 @@ fn main() {
                     CopyNetworkParamsPushConstants {
                         network: *network_buffer,
                         output: *network_params,
-                        write_halfs: 0,
+                        write_halfs: 1,
                     },
                 );
                 device.cmd_dispatch(*command_buffer, (NUM_PARAMS as u32).div_ceil(64), 1, 1);
