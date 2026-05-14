@@ -3,6 +3,7 @@ import ntc.structs;
 import ntc.adam;
 import shared.noise;
 import fallback_bindings;
+import shared.util;
 
 static const int SubgroupSize = 64;
 static const int SubgroupCount = 1;
@@ -306,31 +307,38 @@ void optimize_latent_textures(
     uint thread: SV_DispatchThreadID,
     uniform OptimizePushConstants pc,
 ) {
-    if ((thread >= pc.num_values)) {
+    if ((thread >= div_ceil(pc.num_values, 64))) {
         return;
     }
 
-    uint* mask = &pc.bitmask[thread>>5];
+    let bitmask = pc.bitmask[thread];
 
-    if (!bool(*mask & (1 << (thread&31)))) {
+    if (bitmask == 0) {
         return;
     }
 
-    if (pc.grad[thread] == 0.0) {
-        return;
+    for (int i = thread*64; i < min((thread+1)*64, pc.num_values); i++) {
+        if (!(bool(bitmask & (1 << (i&63))))) {
+            continue;
+        }
+
+        if (pc.grad[i] == 0.0) {
+            continue;
+        }
+
+        // Take an adam step
+        ((half*) pc.primal)[i] += half(adam_step(
+            pc.grad[i],
+            pc.mean[i],
+            pc.variance[i],
+            pc.learning_rate,
+            pc.iteration
+        ));
+        // Clear gradients
+        pc.grad[i] = 0.0;
     }
 
-    // Take an adam step
-    ((half*) pc.primal)[thread] += half(adam_step(
-        pc.grad[thread],
-        pc.mean[thread],
-        pc.variance[thread],
-        pc.learning_rate,
-        pc.iteration
-    ));
-    // Clear gradients
-    pc.grad[thread] = 0.0;
-    *mask = 0;
+    pc.bitmask[thread] = 0;
 }
 
 [shader("compute")]

@@ -23,7 +23,7 @@ struct OptimizePushConstants {
     float* mean;
     float* variance;
     float learning_rate;
-    uint* bitmask;
+    uint64_t* bitmask;
     int iteration;
     int num_values;
 }
@@ -108,7 +108,7 @@ struct LatentTexture {
     // Actually half* but that can't be used due to missing StoragePushConstant16
     float* data;
     float* grads;
-    uint* bitmasks;
+    uint64_t* bitmasks;
     uint num_blocks;
 
     half load_value(int index) {
@@ -117,7 +117,7 @@ struct LatentTexture {
 
     [BackwardDerivativeOf(load_value)]
     void load_value_bwd(int index, half grad) {
-        InterlockedOr(bitmasks[index>>5], 1 << (index&31));
+        InterlockedOr(bitmasks[index>>6], 1 << (index&63));
         InterlockedAdd(grads[index], grad);
     }
 
