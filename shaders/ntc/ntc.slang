@@ -321,9 +321,47 @@ void sum_loss(
     }
 }
 
+
 [shader("compute")]
 [NumThreads(64, 1, 1)]
-void sum_textures_loss(
+void sum_float_textures_loss(
+    uint thread: SV_DispatchThreadID,
+    uniform SumTexturesLossPushConstants pc
+) {
+    if (thread >= (pc.resolution*pc.resolution)) {
+        return;
+    }
+
+    let coord = uint2(thread % pc.resolution, thread/pc.resolution);
+
+    let uv = (float2(coord) + 0.5f) / float2(pc.resolution);
+    let mip_level = 0.0;
+
+    let loss = loss(
+        eval_from_inputs(
+            inputs_from_textures(pc.latent_textures, uv, mip_level),
+            PointerAddress<float>(pc.params)
+        ),
+        uv,
+        mip_level,
+        pc.textures,
+        pc.num_textures,
+        pc.channel_counts,
+        true
+    );
+    float local_sum = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        local_sum += loss[i];
+    }
+    let wave_sum = WaveActiveSum(local_sum);
+    if (WaveIsFirstLane()) {
+        InterlockedAdd<float>(*pc.total, wave_sum);
+    }
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void sum_half_textures_loss(
     uint thread: SV_DispatchThreadID,
     uniform SumTexturesLossPushConstants pc
 ) {

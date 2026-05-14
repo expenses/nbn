@@ -352,128 +352,22 @@ fn main() {
             non_srgb,
             scalar,
         } => {
-            let sum_textures_loss = device.create_compute_pipeline(&shader, c"sum_textures_loss");
-
             let mut staging_buffer =
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
 
             let (images, image_indices, channel_counts, size) =
                 load_images(&device, &mut staging_buffer, &srgb, &non_srgb, &scalar);
 
-            let (latent_textures, params) = {
-                let bytes = std::fs::read(path).unwrap();
-
-                let values: &[u32] = nbn::cast_slice(&bytes[4..]);
-
-                let version = values[0];
-                assert_eq!(version, 0);
-
-                let weight_offset = values[1] as usize;
-
-                dbg!(weight_offset);
-
-                let params = staging_buffer.create_buffer_from_slice(
-                    &device,
-                    "params",
-                    &bytes[weight_offset..weight_offset + NUM_PARAMS * 2],
-                );
-
-                let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
-
-                let mut offset = (2 + 4 * 2) as usize;
-
-                let latent_textures: [_; 4] = std::array::from_fn(|i| {
-                    let num_mips = texture_info[i][1] as usize;
-                    dbg!(offset..offset + num_mips);
-
-                    let first_offset = values[offset];
-
-                    let img = device.register_owned_image(
-                        staging_buffer.create_sampled_image(
-                            &device,
-                            nbn::SampledImageDescriptor {
-                                name: "tex",
-                                format: vk::Format::BC1_RGB_UNORM_BLOCK,
-                                extent: nbn::ImageExtent::D2 {
-                                    width: texture_info[i][0],
-                                    height: texture_info[i][0],
-                                },
-                            },
-                            &bytes[first_offset as usize..],
-                            nbn::QueueType::Compute,
-                            nbn::ImageLods::Offsets(
-                                &values[offset..offset + num_mips]
-                                    .iter()
-                                    .map(|&offset| offset as u64 - first_offset as u64)
-                                    .collect::<Vec<_>>(),
-                            ),
-                        ),
-                        false,
-                    );
-
-                    offset += num_mips;
-                    img
-                });
-
-                (latent_textures, params)
-            };
-
-            let latent_texture_indices: [u32; 4] = std::array::from_fn(|i| *latent_textures[i]);
-            let latent_texture_indices = staging_buffer.create_buffer_from_slice(
+            eval_textures(
                 &device,
-                "latent_texture_indices",
-                &latent_texture_indices,
-            );
-
-            staging_buffer.finish(&device);
-
-            let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
-
-            let loss_total = device
-                .create_buffer(nbn::BufferDescriptor {
-                    name: "loss_total",
-                    size: 4,
-                    ty: nbn::MemoryLocation::GpuToCpu,
-                })
-                .unwrap();
-
-            unsafe {
-                device
-                    .begin_command_buffer(*command_buffer, &Default::default())
-                    .unwrap();
-                device
-                    .bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
-
-                device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
-                device.cmd_bind_pipeline(
-                    *command_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    *sum_textures_loss,
-                );
-                device.push_constants::<SumTexturesLossPushConstants>(
-                    &command_buffer,
-                    SumTexturesLossPushConstants {
-                        params: *params,
-                        textures: *image_indices,
-                        resolution: size as _,
-                        num_textures: images.len() as _,
-                        channel_counts: *channel_counts,
-                        total: *loss_total,
-                        latent_textures: *latent_texture_indices,
-                    },
-                );
-                device.cmd_dispatch(*command_buffer, (size * size).div_ceil(64), 1, 1);
-
-                device.end_command_buffer(*command_buffer).unwrap();
-                device.submit_and_wait_on_command_buffer(&command_buffer);
-            }
-
-            let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
-            let loss = loss / size as f32 / size as f32 / 16.0;
-            println!(
-                "Loss: {:.8} PSNR: {:.4} dB",
-                loss,
-                l2_psnr(loss),
+                staging_buffer,
+                &image_indices,
+                &channel_counts,
+                size,
+                images.len() as _,
+                &std::fs::read(path).unwrap(),
+                &shader,
+                true,
             );
         }
         Mode::Train {
@@ -648,9 +542,17 @@ fn main() {
             let duration = std::time::Instant::now() - start;
             dbg!(duration);
 
-            let network_params = device
+            let float_network_params = device
                 .create_buffer(nbn::BufferDescriptor {
-                    name: "weights",
+                    name: "float_network_params",
+                    size: NUM_PARAMS as u64 * 4,
+                    ty: nbn::MemoryLocation::GpuToCpu,
+                })
+                .unwrap();
+
+            let half_network_params = device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "half_network_params",
                     size: NUM_PARAMS as u64 * 2,
                     ty: nbn::MemoryLocation::GpuToCpu,
                 })
@@ -684,8 +586,17 @@ fn main() {
                     &command_buffer,
                     CopyNetworkParamsPushConstants {
                         network: *network_buffer,
-                        output: *network_params,
+                        output: *half_network_params,
                         write_halfs: 1,
+                    },
+                );
+                device.cmd_dispatch(*command_buffer, (NUM_PARAMS as u32).div_ceil(64), 1, 1);
+                device.push_constants::<CopyNetworkParamsPushConstants>(
+                    &command_buffer,
+                    CopyNetworkParamsPushConstants {
+                        network: *network_buffer,
+                        output: *float_network_params,
+                        write_halfs: 0,
                     },
                 );
                 device.cmd_dispatch(*command_buffer, (NUM_PARAMS as u32).div_ceil(64), 1, 1);
@@ -717,17 +628,52 @@ fn main() {
                 device.submit_and_wait_on_command_buffer(&command_buffer);
             }
 
-            let writer = AntcWriter {
-                weights: network_params.try_as_slice::<u8>().unwrap(),
-                textures: std::array::from_fn(|i| AntcTexture {
-                    size: network.textures[i].size,
-                    block_offsets: &network.textures[i].block_offsets,
-                    bytes: buffers[i].try_as_slice::<u8>().unwrap(),
-                }),
+            let textures = std::array::from_fn(|i| AntcTexture {
+                size: network.textures[i].size,
+                block_offsets: &network.textures[i].block_offsets,
+                bytes: buffers[i].try_as_slice::<u8>().unwrap(),
+            });
+
+            let float_writer = AntcWriter {
+                weights: float_network_params.try_as_slice::<u8>().unwrap(),
+                textures: &textures,
             };
-            writer
-                .write(&mut std::fs::File::create("out.bin").unwrap())
+            let mut float_output = Vec::new();
+            float_writer.write(&mut float_output).unwrap();
+
+            let half_writer = AntcWriter {
+                weights: half_network_params.try_as_slice::<u8>().unwrap(),
+                textures: &textures,
+            };
+            half_writer
+                .write(&mut std::fs::File::create("texture.antc").unwrap())
                 .unwrap();
+            let mut half_output = Vec::new();
+            half_writer.write(&mut half_output).unwrap();
+
+            eval_textures(
+                &device,
+                nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Compute),
+                &image_indices,
+                &channel_counts,
+                size,
+                images.len() as _,
+                &float_output,
+                &shader,
+                false,
+            );
+
+            eval_textures(
+                &device,
+                nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Compute),
+                &image_indices,
+                &channel_counts,
+                size,
+                images.len() as _,
+                &half_output,
+                &shader,
+                true,
+            );
 
             eval(&device, &shader, &network_buffer, network.size);
         }
@@ -817,6 +763,11 @@ struct AntcTexture<'a> {
     bytes: &'a [u8],
 }
 
+struct AntcWriter<'a> {
+    weights: &'a [u8],
+    textures: &'a [AntcTexture<'a>; 4],
+}
+
 impl<'a> AntcWriter<'a> {
     fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         writer.write_all(b"ANTC")?;
@@ -835,12 +786,12 @@ impl<'a> AntcWriter<'a> {
 
         offset += self.weights.len() as u32;
 
-        for texture in &self.textures {
+        for texture in self.textures {
             writer.write_all(&texture.size.to_le_bytes())?;
             writer.write_all(&(texture.block_offsets.len() as u32).to_le_bytes())?;
         }
 
-        for texture in &self.textures {
+        for texture in self.textures {
             for block_offset in texture.block_offsets {
                 writer.write_all(&(offset + block_offset).to_le_bytes())?;
             }
@@ -848,17 +799,12 @@ impl<'a> AntcWriter<'a> {
         }
 
         writer.write_all(&self.weights)?;
-        for texture in &self.textures {
+        for texture in self.textures {
             writer.write_all(&texture.bytes)?;
         }
 
         Ok(())
     }
-}
-
-struct AntcWriter<'a> {
-    weights: &'a [u8],
-    textures: [AntcTexture<'a>; 4],
 }
 
 #[test]
@@ -924,4 +870,129 @@ fn text_writer() {
         ),
         &[77]
     );
+}
+
+fn eval_textures(
+    device: &nbn::Device,
+    mut staging_buffer: nbn::StagingBuffer,
+    image_indices: &nbn::Buffer,
+    channel_counts: &nbn::Buffer,
+    size: u32,
+    num_textures: i32,
+    bytes: &[u8],
+    shader: &nbn::ShaderModule,
+    use_halfs: bool,
+) {
+    let sum_half_textures_loss = device.create_compute_pipeline(shader, c"sum_half_textures_loss");
+    let sum_float_textures_loss =
+        device.create_compute_pipeline(shader, c"sum_float_textures_loss");
+
+    let (latent_textures, params) = {
+        let values: &[u32] = nbn::cast_slice(&bytes[4..]);
+
+        let version = values[0];
+        assert_eq!(version, 0);
+
+        let weight_offset = values[1] as usize;
+
+        let params = staging_buffer.create_buffer_from_slice(
+            &device,
+            "params",
+            &bytes[weight_offset..weight_offset + NUM_PARAMS * if use_halfs { 2 } else { 4 }],
+        );
+
+        let texture_info: &[[u32; 2]] = nbn::cast_slice(&values[2..2 + 4 * 2]);
+
+        let mut offset = (2 + 4 * 2) as usize;
+
+        let latent_textures: [_; 4] = std::array::from_fn(|i| {
+            let num_mips = texture_info[i][1] as usize;
+            let first_offset = values[offset];
+
+            let img = device.register_owned_image(
+                staging_buffer.create_sampled_image(
+                    &device,
+                    nbn::SampledImageDescriptor {
+                        name: "tex",
+                        format: vk::Format::BC1_RGB_UNORM_BLOCK,
+                        extent: nbn::ImageExtent::D2 {
+                            width: texture_info[i][0],
+                            height: texture_info[i][0],
+                        },
+                    },
+                    &bytes[first_offset as usize..],
+                    nbn::QueueType::Compute,
+                    nbn::ImageLods::Offsets(
+                        &values[offset..offset + num_mips]
+                            .iter()
+                            .map(|&offset| offset as u64 - first_offset as u64)
+                            .collect::<Vec<_>>(),
+                    ),
+                ),
+                false,
+            );
+
+            offset += num_mips;
+            img
+        });
+
+        (latent_textures, params)
+    };
+
+    let latent_texture_indices: [u32; 4] = std::array::from_fn(|i| *latent_textures[i]);
+    let latent_texture_indices = staging_buffer.create_buffer_from_slice(
+        &device,
+        "latent_texture_indices",
+        &latent_texture_indices,
+    );
+
+    staging_buffer.finish(&device);
+
+    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+    let loss_total = device
+        .create_buffer(nbn::BufferDescriptor {
+            name: "loss_total",
+            size: 4,
+            ty: nbn::MemoryLocation::GpuToCpu,
+        })
+        .unwrap();
+
+    unsafe {
+        device
+            .begin_command_buffer(*command_buffer, &Default::default())
+            .unwrap();
+        device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+
+        device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            if use_halfs {
+                *sum_half_textures_loss
+            } else {
+                *sum_float_textures_loss
+            },
+        );
+        device.push_constants::<SumTexturesLossPushConstants>(
+            &command_buffer,
+            SumTexturesLossPushConstants {
+                params: *params,
+                textures: **image_indices,
+                resolution: size as _,
+                num_textures,
+                channel_counts: **channel_counts,
+                total: *loss_total,
+                latent_textures: *latent_texture_indices,
+            },
+        );
+        device.cmd_dispatch(*command_buffer, (size * size).div_ceil(64), 1, 1);
+
+        device.end_command_buffer(*command_buffer).unwrap();
+        device.submit_and_wait_on_command_buffer(&command_buffer);
+    }
+
+    let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+    let loss = loss / size as f32 / size as f32 / 16.0;
+    println!("Loss: {:.8} PSNR: {:.4} dB", loss, l2_psnr(loss),);
 }
