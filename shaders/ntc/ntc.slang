@@ -311,16 +311,12 @@ void optimize_latent_textures(
         return;
     }
 
-    let bitmask = pc.bitmask[thread];
+    var bitmask = pc.bitmask[thread];
 
-    if (bitmask == 0) {
-        return;
-    }
-
-    for (int i = thread*64; i < min((thread+1)*64, pc.num_values); i++) {
-        if (!(bool(bitmask & (1 << (i&63))))) {
-            continue;
-        }
+    while (bool(bitmask)) {
+        let bit = firstbitlow(bitmask);
+        bitmask &= ~(uint64_t(1) << bit);
+        let i = thread*64 + bit;
 
         if (pc.grad[i] == 0.0) {
             continue;
