@@ -45,6 +45,7 @@ struct SumTexturesLossPushConstants {
     int num_textures;
     int resolution;
     float* total;
+    uint use_halfs;
 }
 
 

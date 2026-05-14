@@ -830,9 +830,7 @@ fn eval_textures(
     shader: &nbn::ShaderModule,
     use_halfs: bool,
 ) {
-    let sum_half_textures_loss = device.create_compute_pipeline(shader, c"sum_half_textures_loss");
-    let sum_float_textures_loss =
-        device.create_compute_pipeline(shader, c"sum_float_textures_loss");
+    let sum_textures_loss = device.create_compute_pipeline(shader, c"sum_textures_loss");
     let render = device.create_compute_pipeline(&shader, c"render_compute");
 
     let (latent_textures, params) = {
@@ -916,11 +914,7 @@ fn eval_textures(
         device.cmd_bind_pipeline(
             *command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            if use_halfs {
-                *sum_half_textures_loss
-            } else {
-                *sum_float_textures_loss
-            },
+            *sum_textures_loss,
         );
         device.push_constants::<SumTexturesLossPushConstants>(
             &command_buffer,
@@ -932,6 +926,7 @@ fn eval_textures(
                 channel_counts: **channel_counts,
                 total: *loss_total,
                 latent_textures: *latent_texture_indices,
+                use_halfs: use_halfs as u32
             },
         );
         device.cmd_dispatch(*command_buffer, (size * size).div_ceil(64), 1, 1);

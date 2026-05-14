@@ -369,7 +369,7 @@ void sum_loss(
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
-void sum_float_textures_loss(
+void sum_textures_loss(
     uint thread: SV_DispatchThreadID,
     uniform SumTexturesLossPushConstants pc
 ) {
@@ -382,50 +382,16 @@ void sum_float_textures_loss(
     let uv = (float2(coord) + 0.5f) / float2(pc.resolution);
     let mip_level = 0.0;
 
+    let inputs = inputs_from_textures(pc.latent_textures, uv, mip_level, pc.resolution);
+
+    let evaluated = bool(pc.use_halfs)
+        ? eval_half_from_inputs(inputs, (half*)pc.params)
+        : eval_from_inputs(inputs, PointerAddress<float>(pc.params));
+
     let loss = loss(
-        eval_from_inputs(
-            inputs_from_textures(pc.latent_textures, uv, mip_level, pc.resolution),
-            PointerAddress<float>(pc.params)
-        ),
+        evaluated,
         uv,
         mip_level,
-        pc.textures,
-        pc.num_textures,
-        pc.channel_counts,
-        true
-    );
-    float local_sum = 0.0;
-    for (int i = 0; i < 16; ++i) {
-        local_sum += loss[i];
-    }
-    let wave_sum = WaveActiveSum(local_sum);
-    if (WaveIsFirstLane()) {
-        InterlockedAdd<float>(*pc.total, wave_sum);
-    }
-}
-
-[shader("compute")]
-[NumThreads(64, 1, 1)]
-void sum_half_textures_loss(
-    uint thread: SV_DispatchThreadID,
-    uniform SumTexturesLossPushConstants pc
-) {
-    if (thread >= (pc.resolution*pc.resolution)) {
-        return;
-    }
-
-    let coord = uint2(thread % pc.resolution, thread/pc.resolution);
-
-    let uv = (float2(coord) + 0.5f) / float2(pc.resolution);
-    let uv_grad = float4(0.05, 0, 0, 0.05);
-
-    let loss = loss_grad(
-        eval_half_from_inputs(
-            inputs_from_textures(pc.latent_textures, uv, uv_grad, pc.resolution),
-            (half*)pc.params
-        ),
-        uv,
-        uv_grad,
         pc.textures,
         pc.num_textures,
         pc.channel_counts,
@@ -573,7 +539,7 @@ void render_compute(
 
     float2 uv = (float2(coord) + 0.5f) / float2(pc.resolution);
     let values = eval_half_from_inputs(
-        inputs_from_textures(pc.latent_textures, uv, float4(0.01, 0, 0, 0.01), pc.resolution),
+        inputs_from_textures(pc.latent_textures, uv, float4(0), pc.resolution),
         (half*)pc.params
     );
 
