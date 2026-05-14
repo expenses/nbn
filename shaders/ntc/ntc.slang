@@ -62,11 +62,40 @@ half[16] eval_from_inputs(half[16] inputs, Address address) {
     return outputs;
 }
 
-half[16] eval_textures(
+half[16] eval_half_from_inputs(half[16] inputs, PointerAddress<half> address) {
+    typealias ShMemSize = SharedMemorySize<half, TargetEnum.SPIR_V, ExecutionMode.Training, SubgroupSize, SubgroupCount>;
+    typealias ShMemSizeForNetwork = ShMemSize.OfLayer3<16, 64, 64, 16>;
+
+    typealias InputVec = WaveTangledVector<half, ShMemSizeForNetwork, 16, SubgroupSize>;
+    typealias HiddenVec = WaveTangledVector<half, ShMemSizeForNetwork, 64, SubgroupSize>;
+    typealias OutputVec = WaveTangledVector<half, ShMemSizeForNetwork, 16, SubgroupSize>;
+
+    typealias Layer0 = FFLayer<half, InputVec, HiddenVec, LinearLayout, ReLU<half>>;
+    typealias Layer1 = FFLayer<half, HiddenVec, HiddenVec, LinearLayout, ReLU<half>>;
+    typealias Layer2 = FFLayer<half, HiddenVec, OutputVec, LinearLayout, IdentityActivation<half>>;
+
+    InputVec input;
+    for (int i = 0; i < 16; ++i) {
+        input[i] = inputs[i];
+    }
+
+    let h0 = Layer0(ReLU<half>()).eval<PointerAddress<half>>(input, address);
+    address = address.getOffset(Layer0.ParameterCount);
+    let h1 = Layer1(ReLU<half>()).eval<PointerAddress<half>>(h0, address);
+    address = address.getOffset(Layer1.ParameterCount);
+    let output = Layer2(IdentityActivation<half>()).eval<PointerAddress<half>>(h1, address);
+
+    half[16] outputs;
+    for (int i = 0; i < 16; i++) {
+        outputs[i] = half(output[i]);
+    }
+    return outputs;
+}
+
+half[16] inputs_from_textures(
     uint* textures,
     float2 uv,
     float mip_level,
-    Address address
 ) {
     half inputs[16];
     for (int i = 0; i < 4; ++i) {
@@ -79,11 +108,11 @@ half[16] eval_textures(
     for (int i = 12; i < 16; ++i) {
         inputs[i] = 0.0h;
     }
-    return eval_from_inputs(inputs, address);
+    return inputs;
 }
 
 [Differentiable]
-half[16] eval_network(Network network, no_diff float2 uv, no_diff float mip_level, Address address) {
+half[16] inputs_from_network(Network network, no_diff float2 uv, no_diff float mip_level) {
     let s_1 = network.textures[0].sample(uv, mip_level);
     let s_2 = network.textures[1].sample(uv+(0.5/network.textures[1].size), mip_level);
     let s_3 = network.textures[2].sample(uv, mip_level-1);
@@ -106,7 +135,7 @@ half[16] eval_network(Network network, no_diff float2 uv, no_diff float mip_leve
         0.0h,
         0.0h
     };
-    return eval_from_inputs(inputs, address);
+    return inputs;
 }
 
 [Differentiable]
@@ -196,7 +225,7 @@ float[16] loss_from_coord(
     bool l2
 ) {
     return loss(
-        eval_network(network, uv, mip_level, address),
+        eval_from_inputs(inputs_from_network(network, uv, mip_level), address),
         uv,
         mip_level,
         textures,
@@ -308,10 +337,8 @@ void sum_textures_loss(
     let mip_level = 0.0;
 
     let loss = loss(
-        eval_textures(
-            pc.latent_textures,
-            uv,
-            mip_level,
+        eval_from_inputs(
+            inputs_from_textures(pc.latent_textures, uv, mip_level),
             Address(pc.params)
         ),
         uv,
@@ -481,7 +508,10 @@ void render_compute(
     let loc = thread.y * pc.resolution + thread.x;
 
     float2 uv = (float2(thread) + 0.5f) / float2(pc.resolution);
-    let values = eval_network(*pc.network, uv, pc.mip_level, Address(pc.network.weights_and_biases));
+    let values = eval_from_inputs(
+        inputs_from_network(*pc.network, uv, pc.mip_level),
+        Address(pc.network.weights_and_biases)
+    );
 
     pc.output[loc * 3] = float(values[pc.channel_offset]);
     pc.output[loc * 3 + 1] = float(values[pc.channel_offset + 1]);
