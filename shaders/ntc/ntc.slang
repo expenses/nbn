@@ -565,17 +565,19 @@ void render_compute(
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void render_to_texture(
-    uint2 thread : SV_DispatchThreadID,
+    uint thread : SV_DispatchThreadID,
     uniform RenderToTexturePushConstants pc
 ) {
+    let coord = uint2(thread % pc.extent.x, thread/pc.extent.x);
+
     float2 uv_grad = 1 / float2(pc.extent) * pc.scale;
-    float2 uv = (float2(thread) + 0.5f) * uv_grad;
+    float2 uv = (float2(coord) + 0.5f) * uv_grad;
     let values = eval_half_from_inputs(
         inputs_from_textures(pc.latent_textures, uv, float4(uv_grad.x, 0, 0, uv_grad.y), pc.texture_size),
         (half*)pc.params
     );
 
-    if (any(thread >= pc.extent)) {
+    if (any(thread >= pc.extent.x * pc.extent.y)) {
         return;
     }
 
@@ -585,5 +587,5 @@ void render_to_texture(
     value[2] = float(values[pc.channel_offset + 2]);
 
     WTexture2D<float4> output = storage_images[pc.image];
-    output.Store(thread, float4(srgb_lin2encoded(value * pow(2, pc.exposure)), 1));
+    output.Store(coord, float4(srgb_lin2encoded(value * pow(2, pc.exposure)), 1));
 }
