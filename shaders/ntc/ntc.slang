@@ -210,10 +210,11 @@ float[16] loss(
     half[16] evaluated,
     no_diff float2 uv,
     no_diff float mip_level,
-    uint* textures,
-    int num_images,
-    uint8_t* channel_bitmasks,
-    bool l2
+    no_diff uint* textures,
+    no_diff int num_images,
+    no_diff uint8_t* channel_bitmasks,
+    no_diff float* total,
+    no_diff bool l2,
 ) {
     uint num_channels = 0;
     let reference_values = (no_diff sample_references(
@@ -234,19 +235,34 @@ float[16] loss(
             error[i] = 0.0;
         }
     }
+    if (total) {
+        (no_diff increment_loss(total, error));
+    }
     return error;
+}
+
+void increment_loss(float* total, float[16] loss) {
+    float local_sum = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        local_sum += loss[i];
+    }
+    let wave_sum = WaveActiveSum(local_sum);
+    if (WaveIsFirstLane()) {
+        InterlockedAdd<float>(*total, wave_sum);
+    }
 }
 
 [Differentiable]
 float[16] loss_from_coord(
     no_diff float2 uv,
     no_diff float mip_level,
-    uint* textures,
+    no_diff uint* textures,
     Network network,
     Address address,
-    int num_images,
-    uint8_t* channel_bitmasks,
-    bool l2
+    no_diff int num_images,
+    no_diff uint8_t* channel_bitmasks,
+    no_diff float* total,
+    no_diff bool l2
 ) {
     return loss(
         eval_from_inputs(inputs_from_network(network, uv, mip_level), address),
@@ -255,6 +271,7 @@ float[16] loss_from_coord(
         textures,
         num_images,
         channel_bitmasks,
+        total,
         l2
     );
 }
@@ -351,38 +368,6 @@ void optimize_latent_textures(
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
-void sum_loss(
-    uint thread: SV_DispatchThreadID,
-    uniform SumLossPushConstants pc
-) {
-    if (thread >= (pc.resolution*pc.resolution)) {
-        return;
-    }
-
-    let coord = uint2(thread % pc.resolution, thread/pc.resolution);
-
-    let loss = loss_from_coord(
-        (float2(coord) + 0.5f) / float2(pc.resolution),
-        0.0f,
-        pc.textures,
-        *pc.network,
-        Address(pc.network.weights_and_biases),
-        pc.num_textures,
-        (uint8_t*)pc.channel_bitmasks,
-        true
-    );
-    float local_sum = 0.0;
-    for (int i = 0; i < 16; ++i) {
-        local_sum += loss[i];
-    }
-    let wave_sum = WaveActiveSum(local_sum);
-    if (WaveIsFirstLane()) {
-        InterlockedAdd<float>(*pc.total, wave_sum);
-    }
-}
-
-[shader("compute")]
-[NumThreads(64, 1, 1)]
 void sum_textures_loss(
     uint thread: SV_DispatchThreadID,
     uniform SumTexturesLossPushConstants pc
@@ -402,23 +387,16 @@ void sum_textures_loss(
         ? eval_half_from_inputs(inputs, (half*)pc.params)
         : eval_from_inputs(inputs, PointerAddress<float>(pc.params));
 
-    let loss = loss(
+    loss(
         evaluated,
         uv,
         mip_level,
         pc.textures,
         pc.num_textures,
         (uint8_t*)pc.channel_bitmasks,
+        pc.total,
         true
     );
-    float local_sum = 0.0;
-    for (int i = 0; i < 16; ++i) {
-        local_sum += loss[i];
-    }
-    let wave_sum = WaveActiveSum(local_sum);
-    if (WaveIsFirstLane()) {
-        InterlockedAdd<float>(*pc.total, wave_sum);
-    }
 }
 
 [shader("compute")]
@@ -456,6 +434,7 @@ void calculate_grads(
         address,
         pc.num_textures,
         (uint8_t*) pc.channel_bitmasks,
+        pc.total,
         false,
         gradient_seed
     );

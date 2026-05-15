@@ -14,6 +14,7 @@ struct CalculateGradsPushConstants {
     uint* channel_bitmasks;
     uint iteration;
     uint grid_size;
+    float* total;
 }
 
 struct OptimizePushConstants {

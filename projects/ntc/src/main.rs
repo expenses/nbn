@@ -33,13 +33,9 @@ enum Channels {
 impl Channels {
     fn is_srgb(&self) -> bool {
         match self {
-            Self::Srgba
-            | Self::Srgb
-            | Self::Srg
-            | Self::Sgb
-            | Self::Sr
-            | Self::Sg
-            | Self::Sb => true,
+            Self::Srgba | Self::Srgb | Self::Srg | Self::Sgb | Self::Sr | Self::Sg | Self::Sb => {
+                true
+            }
             _ => false,
         }
     }
@@ -77,8 +73,6 @@ enum Mode {
         iterations: u32,
         #[arg(short, long)]
         size: Option<u32>,
-        #[arg(long, default_value_t = 1000)]
-        loss_eval_freq: u32,
         #[arg(long, default_value_t = 0.02)]
         learning_rate: f32,
         #[arg(long, default_value_t = 0.002)]
@@ -351,7 +345,6 @@ fn main() {
             paths,
             iterations,
             size,
-            loss_eval_freq,
             learning_rate,
             batch_size,
             mlp_learning_rate,
@@ -371,7 +364,6 @@ fn main() {
             let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
             let optimize_latent_textures =
                 device.create_compute_pipeline(&shader, c"optimize_latent_textures");
-            let sum_loss = device.create_compute_pipeline(&shader, c"sum_loss");
             let compress_blocks = device.create_compute_pipeline(&shader, c"compress_blocks");
             let copy_network_params =
                 device.create_compute_pipeline(&shader, c"copy_network_params");
@@ -409,15 +401,17 @@ fn main() {
             for i in 0..iterations {
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
-                let record_loss = i % loss_eval_freq == 0 || i == iterations - 1;
-
-                if i % 100 == 0 {
-                    println!("{}", i);
-                }
                 unsafe {
                     device
                         .begin_command_buffer(*command_buffer, &Default::default())
                         .unwrap();
+                    device.cmd_fill_buffer(
+                        *command_buffer,
+                        *loss_total.buffer,
+                        0,
+                        vk::WHOLE_SIZE,
+                        0,
+                    );
                     device.bind_internal_descriptor_sets(
                         &command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
@@ -437,6 +431,7 @@ fn main() {
                             iteration: i as _,
                             grid_size: batch_size,
                             channel_bitmasks: *channel_bitmasks,
+                            total: *loss_total,
                         },
                     );
                     device.cmd_dispatch(
@@ -466,54 +461,18 @@ fn main() {
                         optimize_half(&device, &command_buffer, texture, i + 1, learning_rate);
                     }
 
-                    if record_loss {
-                        device.cmd_fill_buffer(
-                            *command_buffer,
-                            *loss_total.buffer,
-                            0,
-                            vk::WHOLE_SIZE,
-                            0,
-                        );
-                        device.cmd_bind_pipeline(
-                            *command_buffer,
-                            vk::PipelineBindPoint::COMPUTE,
-                            *sum_loss,
-                        );
-                        device.push_constants::<SumLossPushConstants>(
-                            &command_buffer,
-                            SumLossPushConstants {
-                                network: *network_buffer,
-                                textures: *image_indices,
-                                resolution: network.size as _,
-                                num_textures: images.len() as _,
-                                channel_bitmasks: *channel_bitmasks,
-                                total: *loss_total,
-                            },
-                        );
-                        device.cmd_dispatch(
-                            *command_buffer,
-                            (network.size * network.size).div_ceil(64),
-                            1,
-                            1,
-                        );
-                    }
-
                     device.end_command_buffer(*command_buffer).unwrap();
                     device.submit_and_wait_on_command_buffer(&command_buffer);
                 }
 
-                if record_loss {
-                    let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
-                    let loss = loss / network.size as f32 / network.size as f32 / 16.0;
-                    println!(
-                        "Loss: {:.8} PSNR: {:.4} dB, Batch Size: {}",
-                        loss,
-                        l2_psnr(loss),
-                        batch_size
-                    );
-                    writer.add_scalar("loss", loss, i as usize);
-                    writer.add_scalar("psnr", l2_psnr(loss), i as usize);
-                    writer.flush();
+                let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+                let loss = loss / batch_size as f32 / batch_size as f32 / 16.0;
+                writer.add_scalar("loss", loss, i as usize);
+                writer.add_scalar("psnr", l1_psnr(loss), i as usize);
+                writer.flush();
+
+                if true {
+                    println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
                 }
             }
 
