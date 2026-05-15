@@ -41,8 +41,8 @@ freecam = ["dep:dolly"]
 members = [
     ".",
     "alias-table",
-    "gltf-compress",
-    "gltf-meshlets",
+    "tools/gltf-compress",
+    "tools/gltf-meshlets",
     "projects/jungle",
     "projects/lightmapper",
     "projects/meshlet-renderer",

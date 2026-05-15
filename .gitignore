@@ -1,6 +1,5 @@
 /target
 *.tree64
-*.png
 *.gltf
 *.bin
 *.dds
@@ -28,3 +27,7 @@ Falcor
 JungleRuins
 compressonatorcli*
 logs
+noise
+*.antc
+*.blend1
+*.jpg

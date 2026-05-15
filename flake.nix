@@ -21,41 +21,7 @@
       system: let
         pkgs = nixpkgs.legacyPackages.${system};
         slang-gen-ninja-bin = slang-gen-ninja.packages.${system}.default;
-
-        render-pipeline-shaders = with pkgs;
-          stdenv.mkDerivation {
-            name = "rps";
-            src =
-              (fetchGit {
-                url = "https://github.com/GPUOpen-LibrariesAndSDKs/RenderPipelineShaders";
-                rev = "f3330f5306d15af8529a310f6255225c864b0961";
-                submodules = true;
-              })
-              + "/tools/rps_hlslc/linux-x64";
-            doBuild = false;
-            installPhase = "cp -r $src $out";
-            nativeBuildInputs = [autoPatchelfHook makeWrapper];
-            buildInputs = [stdenv.cc.cc libtinfo];
-            postFixup = "wrapProgram $out/bin/rps-hlslc --prefix LD_LIBRARY_PATH : $out/lib";
-          };
-        vcc = with pkgs;
-          stdenv.mkDerivation {
-            name = "vcc";
-            src = fetchGit {
-              url = "https://github.com/shady-gang/shady";
-              rev = "9bf761f5a7df3d9a63ee99cdf686e2f559fd8638";
-              submodules = true;
-            };
-            patches = [
-              ./nix/shady.patch
-            ];
-            nativeBuildInputs = [cmake makeWrapper];
-            buildInputs = [json_c vulkan-headers vulkan-loader llvmPackages_17.libllvm];
-            cmakeFlags = ["-DSHADY_USE_FETCHCONTENT=0" "-DPython_EXECUTABLE=${python3}/bin/python3" "-DBUILD_TESING=0"];
-            postInstall = "wrapProgram $out/bin/vcc --prefix PATH : ${lib.makeBinPath [llvmPackages_17.clang-unwrapped]}";
-          };
       in {
-        packages = {inherit render-pipeline-shaders vcc;};
         devShells.default = with pkgs;
           mkShell {
             nativeBuildInputs = [
