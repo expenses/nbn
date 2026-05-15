@@ -2361,7 +2361,6 @@ impl StagingBuffer {
             format: desc.format,
             extent: desc.extent,
             usage,
-
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_levels,
         });
