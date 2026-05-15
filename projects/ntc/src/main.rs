@@ -14,25 +14,45 @@ use tensorboard_rs::summary_writer::SummaryWriter;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 enum Channels {
-    Rgba,
-    Rgb,
-    Rg,
-    Gb,
-    R,
-    G,
-    B,
+    Srgba,
+    Urgba,
+    Srgb,
+    Urgb,
+    Srg,
+    Urg,
+    Sgb,
+    Ugb,
+    Sr,
+    Ur,
+    Sg,
+    Ug,
+    Sb,
+    Ub,
 }
 
 impl Channels {
+    fn is_srgb(&self) -> bool {
+        match self {
+            Self::Srgba
+            | Self::Srgb
+            | Self::Srg
+            | Self::Sgb
+            | Self::Sr
+            | Self::Sg
+            | Self::Sb => true,
+            _ => false,
+        }
+    }
+
     fn as_bitmask(&self) -> u8 {
         match self {
-            Self::Rgba => 0b1111,
-            Self::Rgb => 0b0111,
-            Self::Rg => 0b0011,
-            Self::Gb => 0b0110,
-            Self::R => 0b0001,
-            Self::G => 0b0010,
-            Self::B => 0b0100,
+            Self::Srgba | Self::Urgba => 0b1111,
+            Self::Srgb | Self::Urgb => 0b0111,
+            Self::Srg | Self::Urg => 0b0011,
+            Self::Sgb | Self::Ugb => 0b0110,
+            Self::Sr | Self::Ur => 0b0001,
+            Self::Sg | Self::Ug => 0b0010,
+            Self::Sb | Self::Ub => 0b0100,
         }
     }
 }
@@ -40,9 +60,7 @@ impl Channels {
 #[derive(clap::Args)]
 struct ImagePaths {
     #[arg(long, num_args = 1..)]
-    srgb: Vec<PathBuf>,
-    #[arg(long, num_args = 1..)]
-    non_srgb: Vec<PathBuf>,
+    paths: Vec<PathBuf>,
     #[arg(long, num_args = 1..)]
     channels: Vec<Channels>,
 }
@@ -55,17 +73,17 @@ enum Mode {
     Train {
         #[command(flatten)]
         paths: ImagePaths,
-        #[arg(short, long, default_value_t = 10_000)]
+        #[arg(short, long, default_value_t = 100_000)]
         iterations: u32,
         #[arg(short, long)]
         size: Option<u32>,
         #[arg(long, default_value_t = 1000)]
         loss_eval_freq: u32,
-        #[arg(long, default_value = "0.01")]
+        #[arg(long, default_value_t = 0.02)]
         learning_rate: f32,
-        #[arg(long, default_value = "0.001")]
+        #[arg(long, default_value_t = 0.002)]
         mlp_learning_rate: f32,
-        #[arg(long, default_value = "64")]
+        #[arg(long, default_value_t = 64)]
         batch_size: u32,
     },
 }
@@ -643,18 +661,14 @@ fn load_images(
     staging_buffer: &mut nbn::StagingBuffer,
     paths: &ImagePaths,
 ) -> (Vec<nbn::IndexedImage>, nbn::Buffer, nbn::Buffer, u32) {
+    assert_eq!(paths.paths.len(), paths.channels.len());
+
     let mut size = None;
     let (images, indices) = paths
-        .srgb
+        .paths
         .iter()
-        .map(|image| (image, vk::Format::R8G8B8A8_SRGB))
-        .chain(
-            paths
-                .non_srgb
-                .iter()
-                .map(|image| (image, vk::Format::R8G8B8A8_UNORM)),
-        )
-        .map(|(filepath, format)| {
+        .zip(&paths.channels)
+        .map(|(filepath, channels)| {
             let image = image::open(&filepath)
                 .expect(&format!("{}", filepath.display()))
                 .to_rgba8();
@@ -672,7 +686,11 @@ fn load_images(
                     &device,
                     nbn::SampledImageDescriptor {
                         name: &filepath.display().to_string(),
-                        format,
+                        format: if channels.is_srgb() {
+                            vk::Format::R8G8B8A8_SRGB
+                        } else {
+                            vk::Format::R8G8B8A8_UNORM
+                        },
                         extent: nbn::ImageExtent::D2 {
                             width: image.width(),
                             height: image.height(),
@@ -695,10 +713,6 @@ fn load_images(
         .iter()
         .map(|channels| channels.as_bitmask())
         .collect();
-
-    while channel_bitmasks.len() < images.len() {
-        channel_bitmasks.push(Channels::Rgb.as_bitmask());
-    }
 
     let size = size.unwrap();
 

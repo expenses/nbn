@@ -225,7 +225,7 @@ impl winit::application::ApplicationHandler for App {
                     );
                     device.cmd_dispatch(
                         **command_buffer,
-                        (extent.width*extent.height).div_ceil(64),
+                        (extent.width * extent.height).div_ceil(64),
                         1,
                         1,
                     );
