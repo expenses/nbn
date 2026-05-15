@@ -108,9 +108,9 @@ half[16] inputs_from_textures(
     Sampler2D t_4 = sampled_images[NonUniformResourceIndex(textures[3])];
 
     let s_1 = half4(t_1.SampleGrad(uv, uv_grad.xy, uv_grad.zw));
-    let s_2 = half4(t_2.SampleGrad(uv+(0.5/float(size)), uv_grad.xy, uv_grad.zw));
+    let s_2 = half4(t_2.SampleGrad(uv+(0.5/size), uv_grad.xy, uv_grad.zw));
     let s_3 = half4(t_3.SampleGrad(uv, uv_grad.xy, uv_grad.zw));
-    let s_4 = half4(t_4.SampleGrad(uv+(0.5/float(size/2)), uv_grad.xy, uv_grad.zw));
+    let s_4 = half4(t_4.SampleGrad(uv+(0.5/(size/2)), uv_grad.xy, uv_grad.zw));
 
     half inputs[16] = {
         s_1[0],
@@ -132,6 +132,45 @@ half[16] inputs_from_textures(
     };
     return inputs;
 }
+
+
+half[16] inputs_from_textures_mip(
+    uint* textures,
+    float2 uv,
+    float mip,
+    int size
+) {
+    Sampler2D t_1 = sampled_images[NonUniformResourceIndex(textures[0])];
+    Sampler2D t_2 = sampled_images[NonUniformResourceIndex(textures[1])];
+    Sampler2D t_3 = sampled_images[NonUniformResourceIndex(textures[2])];
+    Sampler2D t_4 = sampled_images[NonUniformResourceIndex(textures[3])];
+
+    let s_1 = half4(t_1.SampleLevel(uv, mip));
+    let s_2 = half4(t_2.SampleLevel(uv+(0.5/size), mip));
+    let s_3 = half4(t_3.SampleLevel(uv, mip));
+    let s_4 = half4(t_4.SampleLevel(uv+(0.5/(size/2)), mip));
+
+    half inputs[16] = {
+        s_1[0],
+        s_1[1],
+        s_1[2],
+        s_2[0],
+        s_2[1],
+        s_2[2],
+        s_3[0],
+        s_3[1],
+        s_3[2],
+        s_4[0],
+        s_4[1],
+        s_4[2],
+        0.0h,
+        0.0h,
+        0.0h,
+        0.0h
+    };
+    return inputs;
+}
+
 
 [Differentiable]
 half[16] inputs_from_network(Network network, no_diff float2 uv, no_diff float mip_level) {
@@ -290,7 +329,7 @@ float[16] loss_from_coord_texture(
     no_diff float* total,
     no_diff bool l2
 ) {
-    let inputs = (no_diff inputs_from_textures(latent_textures, uv, mip_level, resolution));
+    let inputs = (no_diff inputs_from_textures_mip(latent_textures, uv, mip_level, resolution));
     return loss(
         eval_from_inputs(inputs, address),
         uv,
@@ -472,7 +511,7 @@ void calculate_grads(
 [NumThreads(64, 1, 1)]
 void calculate_mlp_grads_only(
     uint thread: SV_DispatchThreadID,
-    uniform CalculateMlpGradsOnlyPushConstants pc
+    uniform CalculateGradsPushConstants pc
 ) {
     if (thread >= (pc.grid_size*pc.grid_size)) {
         return;
@@ -481,12 +520,13 @@ void calculate_mlp_grads_only(
     let coord = uint2(thread % pc.grid_size, thread/pc.grid_size);
     var rng = SobolRng(coord, pc.iteration);
     let uv = (coord + rng.rand2()) / float2(pc.grid_size);
+    let num_mip_levels = pc.network.textures[0].num_mip_levels;
     float mip;
     if (rng.rand() < 0.1f) {
-        mip = (rng.rand() * (pc.num_mip_levels+1))-1; // uniform
+        mip = (rng.rand() * (num_mip_levels+1))-1; // uniform
     } else {
         float u = max(rng.rand(), 1e-6f);
-        mip = clamp(-log(u) / log(4.0f), 0.0f, float(pc.num_mip_levels - 1));
+        mip = clamp(-log(u) / log(4.0f), 0.0f, float(num_mip_levels - 1));
     }
 
     // Backpropagate through the loss
@@ -499,7 +539,7 @@ void calculate_mlp_grads_only(
         mip,
         pc.textures,
         pc.latent_textures,
-        pc.resolution,
+        pc.network.textures[0].size,
         address,
         pc.num_textures,
         (uint8_t*) pc.channel_bitmasks,
