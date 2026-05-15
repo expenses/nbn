@@ -147,8 +147,8 @@ half[16] inputs_from_textures_mip(
 
     let s_1 = half4(t_1.SampleLevel(uv, mip));
     let s_2 = half4(t_2.SampleLevel(uv+(0.5/size), mip));
-    let s_3 = half4(t_3.SampleLevel(uv, mip));
-    let s_4 = half4(t_4.SampleLevel(uv+(0.5/(size/2)), mip));
+    let s_3 = half4(t_3.SampleLevel(uv, mip-1));
+    let s_4 = half4(t_4.SampleLevel(uv+(0.5/(size/2)), mip-1));
 
     half inputs[16] = {
         s_1[0],
@@ -315,21 +315,18 @@ float[16] loss_from_coord(
     );
 }
 
-
 [Differentiable]
-float[16] loss_from_coord_texture(
+float[16] loss_from_inputs(
     no_diff float2 uv,
     no_diff float mip_level,
     no_diff uint* textures,
-    no_diff uint* latent_textures,
-    no_diff int resolution,
+    no_diff half[16] inputs,
     Address address,
     no_diff int num_images,
     no_diff uint8_t* channel_bitmasks,
     no_diff float* total,
     no_diff bool l2
 ) {
-    let inputs = (no_diff inputs_from_textures_mip(latent_textures, uv, mip_level, resolution));
     return loss(
         eval_from_inputs(inputs, address),
         uv,
@@ -341,7 +338,6 @@ float[16] loss_from_coord_texture(
         l2
     );
 }
-
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
@@ -469,36 +465,48 @@ void sum_textures_loss(
     );
 }
 
+float3 get_uv_and_mip(
+    uint thread,
+    CalculateGradsPushConstants pc
+) {
+    let coord = uint2(thread % pc.batch_size, thread/pc.batch_size);
+    var rng = SobolRng(coord, pc.iteration);
+    var uv = float3((coord + rng.rand2()) / float2(pc.batch_size), 0);
+    let num_mip_levels = pc.network.textures[0].num_mip_levels;
+    if (rng.rand() < 0.1f) {
+        uv.z = (rng.rand() * (num_mip_levels+1))-1; // uniform
+    } else {
+        float u = max(rng.rand(), 1e-6f);
+        uv.z = clamp(-log(u) / log(4.0f), 0.0f, float(num_mip_levels - 1));
+    }
+    return uv;
+}
+
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void calculate_grads(
     uint thread: SV_DispatchThreadID,
     uniform CalculateGradsPushConstants pc
 ) {
-    if (thread >= (pc.grid_size*pc.grid_size)) {
+    if (thread >= (pc.batch_size * pc.batch_size)) {
         return;
     }
 
-    let coord = uint2(thread % pc.grid_size, thread/pc.grid_size);
-    var rng = SobolRng(coord, pc.iteration);
-    let uv = (coord + rng.rand2()) / float2(pc.grid_size);
-    let num_mip_levels = pc.network.textures[0].num_mip_levels;
-    float mip;
-    if (rng.rand() < 0.1f) {
-        mip = (rng.rand() * (num_mip_levels+1))-1; // uniform
-    } else {
-        float u = max(rng.rand(), 1e-6f);
-        mip = clamp(-log(u) / log(4.0f), 0.0f, float(num_mip_levels - 1));
-    }
+    let uv_mip = get_uv_and_mip(thread, pc);
+
+    let address = DifferentialPtrPair<Address>(
+        Address(pc.network.weights_and_biases),
+        Address(pc.network.weights_and_biases_grad)
+    );
 
     // Backpropagate through the loss
     float[16] gradient_seed;
-    for (int i = 0; i < 16; ++i)
+    for (int i = 0; i < 16; ++i) {
         gradient_seed[i] = 1.0f;
-    let address = DifferentialPtrPair<Address>(Address(pc.network.weights_and_biases), Address(pc.network.weights_and_biases_grad));
+    }
     bwd_diff(loss_from_coord)(
-        uv,
-        mip,
+        uv_mip.xy,
+        uv_mip.z,
         pc.textures,
         *pc.network,
         address,
@@ -516,33 +524,30 @@ void calculate_mlp_grads_only(
     uint thread: SV_DispatchThreadID,
     uniform CalculateGradsPushConstants pc
 ) {
-    if (thread >= (pc.grid_size*pc.grid_size)) {
+    if (thread >= (pc.batch_size*pc.batch_size)) {
         return;
     }
 
-    let coord = uint2(thread % pc.grid_size, thread/pc.grid_size);
-    var rng = SobolRng(coord, pc.iteration);
-    let uv = (coord + rng.rand2()) / float2(pc.grid_size);
-    let num_mip_levels = pc.network.textures[0].num_mip_levels;
-    float mip;
-    if (rng.rand() < 0.1f) {
-        mip = (rng.rand() * (num_mip_levels+1))-1; // uniform
-    } else {
-        float u = max(rng.rand(), 1e-6f);
-        mip = clamp(-log(u) / log(4.0f), 0.0f, float(num_mip_levels - 1));
-    }
+    let uv_mip = get_uv_and_mip(thread, pc);
+
+    let address = DifferentialPtrPair<Address>(
+        Address(pc.network.weights_and_biases),
+        Address(pc.network.weights_and_biases_grad)
+    );
 
     // Backpropagate through the loss
     float[16] gradient_seed;
-    for (int i = 0; i < 16; ++i)
+    for (int i = 0; i < 16; ++i) {
         gradient_seed[i] = 1.0f;
-    let address = DifferentialPtrPair<Address>(Address(pc.network.weights_and_biases), Address(pc.network.weights_and_biases_grad));
-    bwd_diff(loss_from_coord_texture)(
-        uv,
-        mip,
+    }
+
+    let inputs = inputs_from_textures_mip(pc.latent_textures, uv_mip.xy, uv_mip.z, pc.network.textures[0].size);
+
+    bwd_diff(loss_from_inputs)(
+        uv_mip.xy,
+        uv_mip.z,
         pc.textures,
-        pc.latent_textures,
-        pc.network.textures[0].size,
+        inputs,
         address,
         pc.num_textures,
         (uint8_t*) pc.channel_bitmasks,

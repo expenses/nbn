@@ -14,7 +14,7 @@ struct CalculateGradsPushConstants {
     int num_textures;
     uint* channel_bitmasks;
     uint iteration;
-    uint grid_size;
+    uint batch_size;
     float* total;
 }
 
