@@ -40,9 +40,9 @@ impl Channels {
 #[derive(clap::Args)]
 struct ImagePaths {
     #[arg(long, num_args = 1..)]
-    srgb: Vec<std::path::PathBuf>,
+    srgb: Vec<PathBuf>,
     #[arg(long, num_args = 1..)]
-    non_srgb: Vec<std::path::PathBuf>,
+    non_srgb: Vec<PathBuf>,
     #[arg(long, num_args = 1..)]
     channels: Vec<Channels>,
 }
@@ -50,7 +50,7 @@ struct ImagePaths {
 #[derive(clap::Subcommand)]
 enum Mode {
     Eval {
-        path: std::path::PathBuf,
+        path: PathBuf,
     },
     Train {
         #[command(flatten)]
