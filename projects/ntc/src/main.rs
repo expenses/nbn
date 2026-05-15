@@ -338,6 +338,136 @@ fn optimize_half(
     }
 }
 
+struct Pipelines {
+    calculate_grads: nbn::Pipeline,
+    optimizer_step: nbn::Pipeline,
+    optimize_latent_textures: nbn::Pipeline,
+    calculate_mlp_grads_only: nbn::Pipeline,
+}
+
+fn optimization_iter(
+    device: &nbn::Device,
+    i: u32,
+    batch_size: u32,
+    push_constants: CalculateGradsPushConstants,
+    pipelines: &Pipelines,
+    loss_total: &nbn::Buffer,
+    network: &NetworkData,
+    mlp_learning_rate: f32,
+    learning_rate: f32,
+    writer: &mut SummaryWriter,
+) {
+    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+    unsafe {
+        device
+            .begin_command_buffer(*command_buffer, &Default::default())
+            .unwrap();
+        device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
+        device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *pipelines.calculate_grads,
+        );
+        device.push_constants::<CalculateGradsPushConstants>(&command_buffer, push_constants);
+        device.cmd_dispatch(
+            *command_buffer,
+            (batch_size * batch_size).div_ceil(64),
+            1,
+            1,
+        );
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *pipelines.optimizer_step,
+        );
+        optimize(
+            &device,
+            &command_buffer,
+            &network.weights_and_biases,
+            i + 1,
+            mlp_learning_rate,
+        );
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *pipelines.optimize_latent_textures,
+        );
+        for texture in &network.textures {
+            optimize_half(&device, &command_buffer, texture, i + 1, learning_rate);
+        }
+
+        device.end_command_buffer(*command_buffer).unwrap();
+        device.submit_and_wait_on_command_buffer(&command_buffer);
+    }
+
+    let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+    let loss = loss / batch_size as f32 / batch_size as f32 / 16.0;
+    writer.add_scalar("loss", loss, i as usize);
+    writer.add_scalar("psnr", l1_psnr(loss), i as usize);
+    writer.flush();
+    println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
+}
+
+fn mlp_optimization_iter(
+    device: &nbn::Device,
+    i: u32,
+    batch_size: u32,
+    push_constants: CalculateGradsPushConstants,
+    pipelines: &Pipelines,
+    loss_total: &nbn::Buffer,
+    network: &NetworkData,
+    mlp_learning_rate: f32,
+    writer: &mut SummaryWriter,
+) {
+    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+    unsafe {
+        device
+            .begin_command_buffer(*command_buffer, &Default::default())
+            .unwrap();
+        device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
+        device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *pipelines.calculate_mlp_grads_only,
+        );
+        device.push_constants::<CalculateGradsPushConstants>(&command_buffer, push_constants);
+        device.cmd_dispatch(
+            *command_buffer,
+            (batch_size * batch_size).div_ceil(64),
+            1,
+            1,
+        );
+        device.cmd_bind_pipeline(
+            *command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *pipelines.optimizer_step,
+        );
+        optimize(
+            &device,
+            &command_buffer,
+            &network.weights_and_biases,
+            i + 1,
+            mlp_learning_rate,
+        );
+        device.end_command_buffer(*command_buffer).unwrap();
+        device.submit_and_wait_on_command_buffer(&command_buffer);
+    }
+
+    let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+    let loss = loss / batch_size as f32 / batch_size as f32 / 16.0;
+    writer.add_scalar("loss", loss, i as usize);
+    writer.add_scalar("psnr", l1_psnr(loss), i as usize);
+    writer.flush();
+
+    if i % 100 == 0 {
+        println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
+    }
+}
+
 fn main() {
     let args = Arguments::parse();
 
@@ -365,15 +495,18 @@ fn main() {
             let size = size.unwrap_or(image_size);
             dbg!(size);
 
-            let calculate_grads = device.create_compute_pipeline(&shader, c"calculate_grads");
-            let optimizer_step = device.create_compute_pipeline(&shader, c"optimizer_step");
-            let optimize_latent_textures =
-                device.create_compute_pipeline(&shader, c"optimize_latent_textures");
+            let pipelines = Pipelines {
+                calculate_grads: device.create_compute_pipeline(&shader, c"calculate_grads"),
+                optimizer_step: device.create_compute_pipeline(&shader, c"optimizer_step"),
+                optimize_latent_textures: device
+                    .create_compute_pipeline(&shader, c"optimize_latent_textures"),
+                calculate_mlp_grads_only: device
+                    .create_compute_pipeline(&shader, c"calculate_mlp_grads_only"),
+            };
+
             let compress_blocks = device.create_compute_pipeline(&shader, c"compress_blocks");
             let copy_network_params =
                 device.create_compute_pipeline(&shader, c"copy_network_params");
-            let calculate_mlp_grads_only =
-                device.create_compute_pipeline(&shader, c"calculate_mlp_grads_only");
 
             let mut rng = rand::rng();
             let network = NetworkData::train(&device, &mut staging_buffer, size, &mut rng);
@@ -430,86 +563,139 @@ fn main() {
                 .unwrap();
 
             for i in 0..iterations {
-                let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
-
-                unsafe {
-                    device
-                        .begin_command_buffer(*command_buffer, &Default::default())
-                        .unwrap();
-                    device.cmd_fill_buffer(
-                        *command_buffer,
-                        *loss_total.buffer,
-                        0,
-                        vk::WHOLE_SIZE,
-                        0,
-                    );
-                    device.bind_internal_descriptor_sets(
-                        &command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                    );
-
-                    device.cmd_bind_pipeline(
-                        *command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        *calculate_grads,
-                    );
-                    device.push_constants::<CalculateGradsPushConstants>(
-                        &command_buffer,
-                        CalculateGradsPushConstants {
-                            network: *network_buffer,
-                            textures: *image_indices,
-                            num_textures: images.len() as _,
-                            iteration: i as _,
-                            grid_size: batch_size,
-                            channel_bitmasks: *channel_bitmasks,
-                            total: *loss_total,
-                            latent_textures: *latent_texture_indices,
-                        },
-                    );
-                    device.cmd_dispatch(
-                        *command_buffer,
-                        (batch_size * batch_size).div_ceil(64),
-                        1,
-                        1,
-                    );
-                    device.cmd_bind_pipeline(
-                        *command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        *optimizer_step,
-                    );
-                    optimize(
-                        &device,
-                        &command_buffer,
-                        &network.weights_and_biases,
-                        i + 1,
-                        mlp_learning_rate,
-                    );
-                    device.cmd_bind_pipeline(
-                        *command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        *optimize_latent_textures,
-                    );
-                    for texture in &network.textures {
-                        optimize_half(&device, &command_buffer, texture, i + 1, learning_rate);
-                    }
-
-                    device.end_command_buffer(*command_buffer).unwrap();
-                    device.submit_and_wait_on_command_buffer(&command_buffer);
-                }
-
-                let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
-                let loss = loss / batch_size as f32 / batch_size as f32 / 16.0;
-                writer.add_scalar("loss", loss, i as usize);
-                writer.add_scalar("psnr", l1_psnr(loss), i as usize);
-                writer.flush();
-
-                if true {
-                    println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
-                }
+                optimization_iter(
+                    &device,
+                    i,
+                    batch_size,
+                    CalculateGradsPushConstants {
+                        network: *network_buffer,
+                        textures: *image_indices,
+                        num_textures: images.len() as _,
+                        iteration: i as _,
+                        batch_size,
+                        channel_bitmasks: *channel_bitmasks,
+                        total: *loss_total,
+                        latent_textures: *latent_texture_indices,
+                    },
+                    &pipelines,
+                    &loss_total,
+                    &network,
+                    mlp_learning_rate,
+                    learning_rate,
+                    &mut writer,
+                );
             }
 
             let duration = std::time::Instant::now() - start;
             dbg!(duration);
+
+            let block_buffers: [_; 4] = std::array::from_fn(|i| {
+                device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: "block_buffer",
+                        size: network.textures[i].num_blocks as u64 * 8,
+                        ty: nbn::MemoryLocation::GpuToCpu,
+                    })
+                    .unwrap()
+            });
+
+            let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+            unsafe {
+                device
+                    .begin_command_buffer(*command_buffer, &Default::default())
+                    .unwrap();
+                device
+                    .bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+
+                device.cmd_bind_pipeline(
+                    *command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *compress_blocks,
+                );
+
+                for i in 0..4 {
+                    device.push_constants::<CompressBlocksPushConstants>(
+                        &command_buffer,
+                        CompressBlocksPushConstants {
+                            network: *network_buffer,
+                            blocks: *block_buffers[i],
+                            texture_index: i as _,
+                        },
+                    );
+                    device.cmd_dispatch(
+                        *command_buffer,
+                        network.textures[i].num_blocks.div_ceil(64),
+                        1,
+                        1,
+                    );
+
+                    device.insert_image_pipeline_barrier(
+                        &command_buffer,
+                        &latent_textures[i].image,
+                        None,
+                        nbn::BarrierOp::TransferWrite,
+                    );
+
+                    let copies: Vec<_> = network.textures[i]
+                        .block_offsets
+                        .iter()
+                        .enumerate()
+                        .map(|(mip, &offset)| {
+                            vk::BufferImageCopy::default()
+                                .buffer_offset(offset as u64)
+                                .image_extent(vk::Extent3D {
+                                    width: network.textures[i].size >> mip,
+                                    height: network.textures[i].size >> mip,
+                                    depth: 1,
+                                })
+                                .image_subresource(
+                                    latent_textures[i]
+                                        .image
+                                        .subresource_layer()
+                                        .mip_level(mip as _)
+                                        .layer_count(1),
+                                )
+                        })
+                        .collect();
+
+                    device.cmd_copy_buffer_to_image(
+                        *command_buffer,
+                        *block_buffers[i].buffer,
+                        **latent_textures[i].image,
+                        vk::ImageLayout::GENERAL,
+                        &copies,
+                    );
+                }
+
+                device.end_command_buffer(*command_buffer).unwrap();
+                device.submit_and_wait_on_command_buffer(&command_buffer);
+            }
+
+            /*
+            for i in iterations..iterations+100_000 {
+                mlp_optimization_iter(
+                    &device,
+                    i,
+                    batch_size,
+                    CalculateGradsPushConstants {
+                        network: *network_buffer,
+                        textures: *image_indices,
+                        num_textures: images.len() as _,
+                        iteration: i as _,
+                        batch_size,
+                        channel_bitmasks: *channel_bitmasks,
+                        total: *loss_total,
+                        latent_textures: *latent_texture_indices,
+                    },
+                    &pipelines,
+                    &loss_total,
+                    &network,
+                    mlp_learning_rate,
+                    &mut writer,
+                );
+            }
+            */
 
             let float_network_params = device
                 .create_buffer(nbn::BufferDescriptor {
@@ -526,16 +712,6 @@ fn main() {
                     ty: nbn::MemoryLocation::GpuToCpu,
                 })
                 .unwrap();
-
-            let buffers: [_; 4] = std::array::from_fn(|i| {
-                device
-                    .create_buffer(nbn::BufferDescriptor {
-                        name: "block_buffer",
-                        size: network.textures[i].num_blocks as u64 * 8,
-                        ty: nbn::MemoryLocation::GpuToCpu,
-                    })
-                    .unwrap()
-            });
 
             let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
@@ -570,29 +746,6 @@ fn main() {
                 );
                 device.cmd_dispatch(*command_buffer, (NUM_PARAMS as u32).div_ceil(64), 1, 1);
 
-                device.cmd_bind_pipeline(
-                    *command_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    *compress_blocks,
-                );
-
-                for i in 0..4 {
-                    device.push_constants::<CompressBlocksPushConstants>(
-                        &command_buffer,
-                        CompressBlocksPushConstants {
-                            network: *network_buffer,
-                            blocks: *buffers[i],
-                            texture_index: i as _,
-                        },
-                    );
-                    device.cmd_dispatch(
-                        *command_buffer,
-                        network.textures[i].num_blocks.div_ceil(64),
-                        1,
-                        1,
-                    );
-                }
-
                 device.end_command_buffer(*command_buffer).unwrap();
                 device.submit_and_wait_on_command_buffer(&command_buffer);
             }
@@ -600,7 +753,7 @@ fn main() {
             let textures = std::array::from_fn(|i| AntcTexture {
                 size: network.textures[i].size,
                 block_offsets: &network.textures[i].block_offsets,
-                bytes: buffers[i].try_as_slice::<u8>().unwrap(),
+                bytes: block_buffers[i].try_as_slice::<u8>().unwrap(),
             });
 
             let float_writer = AntcWriter {
