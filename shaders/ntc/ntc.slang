@@ -276,6 +276,34 @@ float[16] loss_from_coord(
     );
 }
 
+
+[Differentiable]
+float[16] loss_from_coord_texture(
+    no_diff float2 uv,
+    no_diff float mip_level,
+    no_diff uint* textures,
+    no_diff uint* latent_textures,
+    no_diff int resolution,
+    Address address,
+    no_diff int num_images,
+    no_diff uint8_t* channel_bitmasks,
+    no_diff float* total,
+    no_diff bool l2
+) {
+    let inputs = (no_diff inputs_from_textures(latent_textures, uv, mip_level, resolution));
+    return loss(
+        eval_from_inputs(inputs, address),
+        uv,
+        mip_level,
+        textures,
+        num_images,
+        channel_bitmasks,
+        total,
+        l2
+    );
+}
+
+
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void optimizer_step(
@@ -431,6 +459,47 @@ void calculate_grads(
         mip,
         pc.textures,
         *pc.network,
+        address,
+        pc.num_textures,
+        (uint8_t*) pc.channel_bitmasks,
+        pc.total,
+        false,
+        gradient_seed
+    );
+}
+
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void calculate_mlp_grads_only(
+    uint thread: SV_DispatchThreadID,
+    uniform CalculateMlpGradsOnlyPushConstants pc
+) {
+    if (thread >= (pc.grid_size*pc.grid_size)) {
+        return;
+    }
+
+    let coord = uint2(thread % pc.grid_size, thread/pc.grid_size);
+    var rng = SobolRng(coord, pc.iteration);
+    let uv = (coord + rng.rand2()) / float2(pc.grid_size);
+    float mip;
+    if (rng.rand() < 0.1f) {
+        mip = (rng.rand() * (pc.num_mip_levels+1))-1; // uniform
+    } else {
+        float u = max(rng.rand(), 1e-6f);
+        mip = clamp(-log(u) / log(4.0f), 0.0f, float(pc.num_mip_levels - 1));
+    }
+
+    // Backpropagate through the loss
+    float[16] gradient_seed;
+    for (int i = 0; i < 16; ++i)
+        gradient_seed[i] = 1.0f;
+    let address = DifferentialPtrPair<Address>(Address(pc.network.weights_and_biases), Address(pc.network.weights_and_biases_grad));
+    bwd_diff(loss_from_coord_texture)(
+        uv,
+        mip,
+        pc.textures,
+        pc.latent_textures,
+        pc.resolution,
         address,
         pc.num_textures,
         (uint8_t*) pc.channel_bitmasks,

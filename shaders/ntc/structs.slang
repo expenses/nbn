@@ -17,6 +17,19 @@ struct CalculateGradsPushConstants {
     float* total;
 }
 
+struct CalculateMlpGradsOnlyPushConstants {
+    Network* network;
+    uint* latent_textures;
+    int resolution;
+    uint* textures;
+    int num_textures;
+    int num_mip_levels;
+    uint* channel_bitmasks;
+    uint iteration;
+    uint grid_size;
+    float* total;
+}
+
 struct OptimizePushConstants {
     // For latent textures, this is actually half* but that can't be used due to missing StoragePushConstant16
     float* primal;
