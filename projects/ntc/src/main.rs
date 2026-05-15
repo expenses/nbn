@@ -367,12 +367,38 @@ fn main() {
             let compress_blocks = device.create_compute_pipeline(&shader, c"compress_blocks");
             let copy_network_params =
                 device.create_compute_pipeline(&shader, c"copy_network_params");
+            let calculate_mlp_grads_only =
+                device.create_compute_pipeline(&shader, c"calculate_mlp_grads_only");
 
             let mut rng = rand::rng();
             let network = NetworkData::train(&device, &mut staging_buffer, size, &mut rng);
 
             let network_buffer =
                 staging_buffer.create_buffer_from_slice(&device, "network", &[network.as_struct()]);
+
+            let latent_textures: [_; 4] = std::array::from_fn(|i| {
+                device.register_owned_image(
+                    device.create_image(nbn::ImageDescriptor {
+                        name: "latent texture",
+                        format: vk::Format::BC1_RGB_UNORM_BLOCK,
+                        extent: nbn::ImageExtent::D2 {
+                            width: network.textures[i].size,
+                            height: network.textures[i].size,
+                        },
+                        usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                        mip_levels: network.textures[i].num_mip_levels as _,
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                    }),
+                    false,
+                )
+            });
+
+            let latent_texture_indices: [u32; 4] = std::array::from_fn(|i| *latent_textures[i]);
+            let latent_texture_indices = staging_buffer.create_buffer_from_slice(
+                &device,
+                "latent_texture_indices",
+                &latent_texture_indices,
+            );
 
             staging_buffer.finish(&device);
 
@@ -432,6 +458,7 @@ fn main() {
                             grid_size: batch_size,
                             channel_bitmasks: *channel_bitmasks,
                             total: *loss_total,
+                            latent_textures: *latent_texture_indices,
                         },
                     );
                     device.cmd_dispatch(
@@ -667,7 +694,7 @@ fn load_images(
         })
         .collect::<(Vec<_>, Vec<u32>)>();
 
-    let mut channel_bitmasks: Vec<u8> = paths
+    let channel_bitmasks: Vec<u8> = paths
         .channels
         .iter()
         .map(|channels| channels.as_bitmask())
