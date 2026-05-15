@@ -170,7 +170,7 @@ float[16] sample_references(
     float mip_level,
     uint* textures,
     int num_images,
-    uint* channel_counts,
+    uint8_t* channel_bitmasks,
     inout uint num_channels
 ) {
     float[16] values;
@@ -182,10 +182,14 @@ float[16] sample_references(
         Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
         let sample = texture.SampleLevel(uv, mip_level);
 
-        for (int j = 0; j < channel_counts[i]; ++j) {
-            values[num_channels+j] = sample[j];
+        for (int j = 0; j < 4; ++j) {
+            if (!bool(channel_bitmasks[i] & (1 << j))) {
+                continue;
+            }
+
+            values[num_channels] = sample[j];
+            num_channels ++;
         }
-        num_channels += channel_counts[i];
     }
     return values;
 }
@@ -208,7 +212,7 @@ float[16] loss(
     no_diff float mip_level,
     uint* textures,
     int num_images,
-    uint* channel_counts,
+    uint8_t* channel_bitmasks,
     bool l2
 ) {
     uint num_channels = 0;
@@ -217,7 +221,7 @@ float[16] loss(
         mip_level,
         textures,
         num_images,
-        channel_counts,
+        channel_bitmasks,
         num_channels
     ));
 
@@ -233,32 +237,6 @@ float[16] loss(
     return error;
 }
 
-float[16] loss_grad(
-    half[16] evaluated,
-    float2 uv,
-    float4 uv_grad,
-    uint* textures,
-    int num_images,
-    uint* channel_counts,
-    bool l2
-) {
-    float[16] error;
-    for (int i = 0; i < 16; ++i) {
-        error[i] = 0.0;
-    }
-    var num_channels = 0;
-    for (int i = 0; i < num_images; i++) {
-        Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
-        let sample = texture.SampleGrad(uv, uv_grad.xy, uv_grad.zw);
-
-        for (int j = 0; j < channel_counts[i]; ++j) {
-            error[num_channels+j] = calc_loss(evaluated[num_channels+j], sample[j], l2);
-        }
-        num_channels += channel_counts[i];
-    }
-    return error;
-}
-
 [Differentiable]
 float[16] loss_from_coord(
     no_diff float2 uv,
@@ -267,7 +245,7 @@ float[16] loss_from_coord(
     Network network,
     Address address,
     int num_images,
-    uint* channel_counts,
+    uint8_t* channel_bitmasks,
     bool l2
 ) {
     return loss(
@@ -276,7 +254,7 @@ float[16] loss_from_coord(
         mip_level,
         textures,
         num_images,
-        channel_counts,
+        channel_bitmasks,
         l2
     );
 }
@@ -390,7 +368,7 @@ void sum_loss(
         *pc.network,
         Address(pc.network.weights_and_biases),
         pc.num_textures,
-        pc.channel_counts,
+        (uint8_t*)pc.channel_bitmasks,
         true
     );
     float local_sum = 0.0;
@@ -430,7 +408,7 @@ void sum_textures_loss(
         mip_level,
         pc.textures,
         pc.num_textures,
-        pc.channel_counts,
+        (uint8_t*)pc.channel_bitmasks,
         true
     );
     float local_sum = 0.0;
@@ -477,7 +455,7 @@ void calculate_grads(
         *pc.network,
         address,
         pc.num_textures,
-        pc.channel_counts,
+        (uint8_t*) pc.channel_bitmasks,
         false,
         gradient_seed
     );

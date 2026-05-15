@@ -12,18 +12,49 @@ use std::fmt::Write;
 use std::path::PathBuf;
 use tensorboard_rs::summary_writer::SummaryWriter;
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+enum Channels {
+    Rgba,
+    Rgb,
+    Rg,
+    Gb,
+    R,
+    G,
+    B,
+}
+
+impl Channels {
+    fn as_bitmask(&self) -> u8 {
+        match self {
+            Self::Rgba => 0b1111,
+            Self::Rgb => 0b0111,
+            Self::Rg => 0b0011,
+            Self::Gb => 0b0110,
+            Self::R => 0b0001,
+            Self::G => 0b0010,
+            Self::B => 0b0100,
+        }
+    }
+}
+
+#[derive(clap::Args)]
+struct ImagePaths {
+    #[arg(long, num_args = 1..)]
+    srgb: Vec<std::path::PathBuf>,
+    #[arg(long, num_args = 1..)]
+    non_srgb: Vec<std::path::PathBuf>,
+    #[arg(long, num_args = 1..)]
+    channels: Vec<Channels>,
+}
+
 #[derive(clap::Subcommand)]
 enum Mode {
     Eval {
         path: std::path::PathBuf,
     },
     Train {
-        #[arg(long, num_args = 1..)]
-        srgb: Vec<std::path::PathBuf>,
-        #[arg(long, num_args = 1..)]
-        non_srgb: Vec<std::path::PathBuf>,
-        #[arg(long, num_args = 1..)]
-        scalar: Vec<std::path::PathBuf>,
+        #[command(flatten)]
+        paths: ImagePaths,
         #[arg(short, long, default_value_t = 10_000)]
         iterations: u32,
         #[arg(short, long)]
@@ -299,9 +330,7 @@ fn main() {
             event_loop.run_app(&mut App::new(path)).unwrap();
         }
         Mode::Train {
-            srgb,
-            non_srgb,
-            scalar,
+            paths,
             iterations,
             size,
             loss_eval_freq,
@@ -315,8 +344,8 @@ fn main() {
             let mut staging_buffer =
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
 
-            let (images, image_indices, channel_counts, image_size) =
-                load_images(&device, &mut staging_buffer, &srgb, &non_srgb, &scalar);
+            let (images, image_indices, channel_bitmasks, image_size) =
+                load_images(&device, &mut staging_buffer, &paths);
             let size = size.unwrap_or(image_size);
             dbg!(size);
 
@@ -389,7 +418,7 @@ fn main() {
                             num_textures: images.len() as _,
                             iteration: i as _,
                             grid_size: batch_size,
-                            channel_counts: *channel_counts,
+                            channel_bitmasks: *channel_bitmasks,
                         },
                     );
                     device.cmd_dispatch(
@@ -439,7 +468,7 @@ fn main() {
                                 textures: *image_indices,
                                 resolution: network.size as _,
                                 num_textures: images.len() as _,
-                                channel_counts: *channel_counts,
+                                channel_bitmasks: *channel_bitmasks,
                                 total: *loss_total,
                             },
                         );
@@ -586,7 +615,7 @@ fn main() {
                 &device,
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Compute),
                 &image_indices,
-                &channel_counts,
+                &channel_bitmasks,
                 size,
                 images.len() as _,
                 &float_output,
@@ -598,7 +627,7 @@ fn main() {
                 &device,
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Compute),
                 &image_indices,
-                &channel_counts,
+                &channel_bitmasks,
                 size,
                 images.len() as _,
                 &half_output,
@@ -612,25 +641,20 @@ fn main() {
 fn load_images(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
-    srgb: &[PathBuf],
-    non_srgb: &[PathBuf],
-    scalar: &[PathBuf],
+    paths: &ImagePaths,
 ) -> (Vec<nbn::IndexedImage>, nbn::Buffer, nbn::Buffer, u32) {
     let mut size = None;
-    let (images, indices, channel_counts) = srgb
+    let (images, indices) = paths
+        .srgb
         .iter()
-        .map(|image| (image, vk::Format::R8G8B8A8_SRGB, 3))
+        .map(|image| (image, vk::Format::R8G8B8A8_SRGB))
         .chain(
-            non_srgb
+            paths
+                .non_srgb
                 .iter()
-                .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 3)),
+                .map(|image| (image, vk::Format::R8G8B8A8_UNORM)),
         )
-        .chain(
-            scalar
-                .iter()
-                .map(|image| (image, vk::Format::R8G8B8A8_UNORM, 1)),
-        )
-        .map(|(filepath, format, channel_count)| {
+        .map(|(filepath, format)| {
             let image = image::open(&filepath)
                 .expect(&format!("{}", filepath.display()))
                 .to_rgba8();
@@ -662,18 +686,28 @@ fn load_images(
             );
 
             let index = *image;
-            (image, index, channel_count)
+            (image, index)
         })
-        .collect::<(Vec<_>, Vec<u32>, Vec<u32>)>();
+        .collect::<(Vec<_>, Vec<u32>)>();
+
+    let mut channel_bitmasks: Vec<u8> = paths
+        .channels
+        .iter()
+        .map(|channels| channels.as_bitmask())
+        .collect();
+
+    while channel_bitmasks.len() < images.len() {
+        channel_bitmasks.push(Channels::Rgb.as_bitmask());
+    }
 
     let size = size.unwrap();
 
     let image_indices = staging_buffer.create_buffer_from_slice(&device, "image_indices", &indices);
 
-    let channel_counts =
-        staging_buffer.create_buffer_from_slice(&device, "channel_counts", &channel_counts);
+    let channel_bitmasks =
+        staging_buffer.create_buffer_from_slice(&device, "channel_bitmasks", &channel_bitmasks);
 
-    (images, image_indices, channel_counts, size)
+    (images, image_indices, channel_bitmasks, size)
 }
 
 fn l1_psnr(loss: f32) -> f32 {
@@ -745,7 +779,7 @@ fn eval_textures(
     device: &nbn::Device,
     mut staging_buffer: nbn::StagingBuffer,
     image_indices: &nbn::Buffer,
-    channel_counts: &nbn::Buffer,
+    channel_bitmasks: &nbn::Buffer,
     size: u32,
     num_textures: i32,
     bytes: &[u8],
@@ -795,7 +829,7 @@ fn eval_textures(
                 textures: **image_indices,
                 resolution: size as _,
                 num_textures,
-                channel_counts: **channel_counts,
+                channel_bitmasks: **channel_bitmasks,
                 total: *loss_total,
                 latent_textures: *latent_texture_indices,
                 use_halfs: use_halfs as u32,
