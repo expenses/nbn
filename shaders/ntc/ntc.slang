@@ -218,8 +218,8 @@ float[16] sample_references(
     }
     var offset = 0;
     for (int i = 0; i < num_images; i++) {
-        Sampler2D texture = sampled_images[NonUniformResourceIndex(textures[i])];
-        let sample = texture.SampleLevel(uv, mip_level);
+        Sampler2D<float4> texture = sampled_images[NonUniformResourceIndex(textures[i])];
+        float4 sample = texture.SampleLevel(uv, mip_level);
 
         for (int j = 0; j < 4; ++j) {
             if (!bool(channel_bitmasks[i] & (1 << j))) {
@@ -265,12 +265,15 @@ float[16] loss(
         num_channels
     ));
 
+    let alpha_channel = 3;
+    let is_alpha = reference_values[alpha_channel] == 0.0;
+
     float[16] error;
     [ForceUnroll]
     for (int i = 0; i < 16; ++i) {
         error[i] = calc_loss(evaluated[i], reference_values[i], l2);
         // Let the network focus on channels we care about.
-        if (i >= num_channels) {
+        if (i >= num_channels || (is_alpha && i != alpha_channel)) {
             error[i] = 0.0;
         }
     }
