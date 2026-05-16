@@ -540,7 +540,7 @@ fn main() {
 
             staging_buffer.finish(&device);
 
-            let run_name = std::env::args().collect::<String>();
+            let run_name = std::env::args().collect::<Vec<String>>().join("_");
             let log_dir = format!("logs/{}", run_name);
             let mut writer = SummaryWriter::new(&log_dir);
 
