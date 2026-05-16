@@ -253,6 +253,7 @@ float[16] loss(
     no_diff int num_images,
     no_diff uint8_t* channel_bitmasks,
     no_diff float* total,
+    no_diff uint alpha_channel,
     no_diff bool l2,
 ) {
     uint num_channels = 0;
@@ -265,7 +266,6 @@ float[16] loss(
         num_channels
     ));
 
-    let alpha_channel = 3;
     let is_alpha = reference_values[alpha_channel] == 0.0;
 
     float[16] error;
@@ -304,6 +304,7 @@ float[16] loss_from_coord(
     no_diff int num_images,
     no_diff uint8_t* channel_bitmasks,
     no_diff float* total,
+    no_diff uint alpha_channel,
     no_diff bool l2
 ) {
     return loss(
@@ -314,6 +315,7 @@ float[16] loss_from_coord(
         num_images,
         channel_bitmasks,
         total,
+        alpha_channel,
         l2
     );
 }
@@ -328,6 +330,7 @@ float[16] loss_from_inputs(
     no_diff int num_images,
     no_diff uint8_t* channel_bitmasks,
     no_diff float* total,
+    no_diff uint alpha_channel,
     no_diff bool l2
 ) {
     return loss(
@@ -338,6 +341,7 @@ float[16] loss_from_inputs(
         num_images,
         channel_bitmasks,
         total,
+        alpha_channel,
         l2
     );
 }
@@ -464,6 +468,7 @@ void sum_textures_loss(
         pc.num_textures,
         (uint8_t*)pc.channel_bitmasks,
         pc.total,
+        pc.alpha_channel,
         true
     );
 }
@@ -516,6 +521,7 @@ void calculate_grads(
         pc.num_textures,
         (uint8_t*) pc.channel_bitmasks,
         pc.total,
+        pc.alpha_channel,
         false,
         gradient_seed
     );
@@ -555,6 +561,7 @@ void calculate_mlp_grads_only(
         pc.num_textures,
         (uint8_t*) pc.channel_bitmasks,
         pc.total,
+        pc.alpha_channel,
         false,
         gradient_seed
     );

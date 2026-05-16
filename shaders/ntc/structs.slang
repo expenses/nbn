@@ -16,6 +16,7 @@ struct CalculateGradsPushConstants {
     uint iteration;
     uint batch_size;
     float* total;
+    uint alpha_channel;
 }
 
 struct OptimizePushConstants {
@@ -31,15 +32,6 @@ struct OptimizePushConstants {
     float adam_v_factor;
 }
 
-struct SumLossPushConstants {
-    Network* network;
-    uint* textures;
-    uint* channel_bitmasks;
-    int num_textures;
-    int resolution;
-    float* total;
-}
-
 struct SumTexturesLossPushConstants {
     float* params;
     uint* latent_textures;
@@ -49,6 +41,7 @@ struct SumTexturesLossPushConstants {
     int resolution;
     float* total;
     uint use_halfs;
+    uint alpha_channel;
 }
 
 struct CompressBlocksPushConstants {

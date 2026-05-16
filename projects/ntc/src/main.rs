@@ -79,6 +79,8 @@ enum Mode {
         mlp_learning_rate: f32,
         #[arg(long, default_value_t = 256)]
         batch_size: u32,
+        #[arg(long)]
+        alpha_channel: Option<u32>,
     },
 }
 
@@ -483,6 +485,7 @@ fn main() {
             learning_rate,
             batch_size,
             mlp_learning_rate,
+            alpha_channel,
         } => {
             let device = nbn::Device::new(None);
             let shader = device.load_shader("shaders/compiled/ntc.spv");
@@ -568,6 +571,7 @@ fn main() {
                         channel_bitmasks: *channel_bitmasks,
                         total: *loss_total,
                         latent_textures: *latent_texture_indices,
+                        alpha_channel: alpha_channel.unwrap_or(u32::max_value()),
                     },
                     &pipelines,
                     &loss_total,
@@ -775,6 +779,7 @@ fn main() {
                 &float_output,
                 &shader,
                 false,
+                alpha_channel,
             );
 
             eval_textures(
@@ -787,6 +792,7 @@ fn main() {
                 &half_output,
                 &shader,
                 true,
+                alpha_channel,
             );
         }
     };
@@ -935,6 +941,7 @@ fn eval_textures(
     bytes: &[u8],
     shader: &nbn::ShaderModule,
     use_halfs: bool,
+    alpha_channel: Option<u32>,
 ) {
     let sum_textures_loss = device.create_compute_pipeline(shader, c"sum_textures_loss");
     let render = device.create_compute_pipeline(&shader, c"render_compute");
@@ -983,6 +990,7 @@ fn eval_textures(
                 total: *loss_total,
                 latent_textures: *latent_texture_indices,
                 use_halfs: use_halfs as u32,
+                alpha_channel: alpha_channel.unwrap_or(u32::max_value()),
             },
         );
         device.cmd_dispatch(*command_buffer, (size * size).div_ceil(64), 1, 1);
