@@ -266,10 +266,10 @@ float[16] loss(
         num_channels
     ));
 
-    let is_alpha = reference_values[alpha_channel] == 0.0;
+    let is_alpha = alpha_channel < 16 ? reference_values[alpha_channel] == 0.0 : false;
 
     float[16] error;
-    [ForceUnroll]
+    [MaxIters(16)]
     for (int i = 0; i < 16; ++i) {
         error[i] = calc_loss(evaluated[i], reference_values[i], l2);
         // Let the network focus on channels we care about.
