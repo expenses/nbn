@@ -69,7 +69,7 @@ enum Mode {
     Train {
         #[command(flatten)]
         paths: ImagePaths,
-        #[arg(short, long, default_value_t = 100_000)]
+        #[arg(short, long, default_value_t = 10_000)]
         iterations: u32,
         #[arg(short, long)]
         size: Option<u32>,
@@ -77,7 +77,7 @@ enum Mode {
         learning_rate: f32,
         #[arg(long, default_value_t = 0.005)]
         mlp_learning_rate: f32,
-        #[arg(long, default_value_t = 64)]
+        #[arg(long, default_value_t = 256)]
         batch_size: u32,
     },
 }
