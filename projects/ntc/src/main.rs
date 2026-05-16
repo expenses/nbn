@@ -73,9 +73,9 @@ enum Mode {
         iterations: u32,
         #[arg(short, long)]
         size: Option<u32>,
-        #[arg(long, default_value_t = 0.02)]
+        #[arg(long, default_value_t = 0.1)]
         learning_rate: f32,
-        #[arg(long, default_value_t = 0.002)]
+        #[arg(long, default_value_t = 0.005)]
         mlp_learning_rate: f32,
         #[arg(long, default_value_t = 64)]
         batch_size: u32,
@@ -540,15 +540,7 @@ fn main() {
 
             staging_buffer.finish(&device);
 
-            let run_name = {
-                let mut name = String::from("lr");
-                write!(name, "{}", learning_rate).unwrap();
-                name.push_str("_mlr");
-                write!(name, "{}", mlp_learning_rate).unwrap();
-                name.push_str("_bs");
-                write!(name, "{}", batch_size).unwrap();
-                name
-            };
+            let run_name = std::env::args().collect::<String>();
             let log_dir = format!("logs/{}", run_name);
             let mut writer = SummaryWriter::new(&log_dir);
 
