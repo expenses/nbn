@@ -26,8 +26,9 @@ struct OptimizePushConstants {
     float* variance;
     float learning_rate;
     uint64_t* bitmask;
-    int iteration;
     int num_values;
+    float adam_m_factor;
+    float adam_v_factor;
 }
 
 struct SumLossPushConstants {

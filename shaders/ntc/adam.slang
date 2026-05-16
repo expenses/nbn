@@ -8,7 +8,8 @@ float3 adam_step(
     inout float3 mean,
     inout float3 variance,
     float learning_rate,
-    int iteration
+    float adam_m_factor,
+    float adam_v_factor,
 ) {
     // Running average of gradient and square gradient (== variance)
     mean = lerp(grad, mean, ADAM_BETA_1);
@@ -16,8 +17,8 @@ float3 adam_step(
 
     // The running average is initialized with zeros, and underestimates
     // the true values at the beginning. Adam divides by a compensation factor
-    let mHat = mean / (1.0f - pow(ADAM_BETA_1, iteration));
-    let vHat = variance / (1.0f - pow(ADAM_BETA_2, iteration));
+    let mHat = mean * adam_m_factor;
+    let vHat = variance * adam_v_factor;
     // Compute the adam step by scaling the mean gradient by the learning rate and the variance estimate
     let step = learning_rate * mHat / (sqrt(vHat) + ADAM_EPSILON);
     // flip sign
@@ -30,7 +31,8 @@ float adam_step(
     inout float mean,
     inout float variance,
     float learning_rate,
-    int iteration
+    float adam_m_factor,
+    float adam_v_factor,
 ) {
     // Running average of gradient and square gradient (== variance)
     mean = lerp(grad, mean, ADAM_BETA_1);
@@ -38,8 +40,8 @@ float adam_step(
 
     // The running average is initialized with zeros, and underestimates
     // the true values at the beginning. Adam divides by a compensation factor
-    let mHat = mean / (1.0f - pow(ADAM_BETA_1, iteration));
-    let vHat = variance / (1.0f - pow(ADAM_BETA_2, iteration));
+    let mHat = mean * adam_m_factor;
+    let vHat = variance * adam_v_factor;
     // Compute the adam step by scaling the mean gradient by the learning rate and the variance estimate
     let step = learning_rate * mHat / (sqrt(vHat) + ADAM_EPSILON);
     // flip sign

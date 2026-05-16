@@ -358,7 +358,8 @@ void optimizer_step(
         pc.mean[thread],
         pc.variance[thread],
         pc.learning_rate,
-        pc.iteration
+        pc.adam_m_factor,
+        pc.adam_v_factor,
     );
     // Clear gradients
     pc.grad[thread] = 0.0;
@@ -390,7 +391,8 @@ void optimize_latent_textures_dense(
         pc.mean[thread],
         pc.variance[thread],
         pc.learning_rate,
-        pc.iteration
+        pc.adam_m_factor,
+        pc.adam_v_factor,
     ));
     // Clear gradients
     pc.grad[thread] = 0.0;
@@ -424,7 +426,8 @@ void optimize_latent_textures(
             pc.mean[i],
             pc.variance[i],
             pc.learning_rate,
-            pc.iteration
+            pc.adam_m_factor,
+            pc.adam_v_factor,
         ));
         // Clear gradients
         pc.grad[i] = 0.0;

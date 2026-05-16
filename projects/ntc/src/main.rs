@@ -275,6 +275,9 @@ impl NetworkData {
     }
 }
 
+const ADAM_BETA_1: f32 = 0.9;
+const ADAM_BETA_2: f32 = 0.999;
+
 fn optimize(
     device: &nbn::Device,
     command_buffer: &nbn::CommandBuffer,
@@ -293,7 +296,8 @@ fn optimize(
                 variance: *training.v,
                 learning_rate,
                 num_values: tensor.size as _,
-                iteration: iteration as _,
+                adam_m_factor: (1.0 - ADAM_BETA_1.powi(iteration as _)).recip(),
+                adam_v_factor: (1.0 - ADAM_BETA_2.powi(iteration as _)).recip(),
                 // unused
                 bitmask: 0,
             },
@@ -320,7 +324,8 @@ fn optimize_half(
                 variance: *training.v,
                 learning_rate,
                 num_values: texture.data.size as _,
-                iteration: iteration as _,
+                adam_m_factor: (1.0 - ADAM_BETA_1.powi(iteration as _)).recip(),
+                adam_v_factor: (1.0 - ADAM_BETA_2.powi(iteration as _)).recip(),
                 bitmask: *texture.bitmasks,
             },
         );
