@@ -7,16 +7,21 @@ struct RenderComputePushConstants {
     uint channel_offset;
 }
 
+struct LossParams {
+    uint* textures;
+    uint* channel_bitmasks;
+    float* total;
+    int num_textures;
+    uint alpha_channel;
+    float* channel_weights;
+}
+
 struct CalculateGradsPushConstants {
     Network* network;
+    LossParams loss_params;
     uint* latent_textures;
-    uint* textures;
-    int num_textures;
-    uint* channel_bitmasks;
     uint iteration;
     uint batch_size;
-    float* total;
-    uint alpha_channel;
 }
 
 struct OptimizePushConstants {
@@ -33,15 +38,11 @@ struct OptimizePushConstants {
 }
 
 struct SumTexturesLossPushConstants {
+    LossParams loss_params;
     float* params;
     uint* latent_textures;
-    uint* textures;
-    uint* channel_bitmasks;
-    int num_textures;
     int resolution;
-    float* total;
     uint use_halfs;
-    uint alpha_channel;
 }
 
 struct CompressBlocksPushConstants {

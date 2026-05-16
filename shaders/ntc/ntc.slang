@@ -199,17 +199,10 @@ half[16] inputs_from_network(Network network, no_diff float2 uv, no_diff float m
     return inputs;
 }
 
-[Differentiable]
-half relu(half x) {
-    return max(x, half(0.0));
-}
-
 float[16] sample_references(
     float2 uv,
     float mip_level,
-    uint* textures,
-    int num_images,
-    uint8_t* channel_bitmasks,
+    LossParams params,
     inout uint num_channels
 ) {
     float[16] values;
@@ -217,8 +210,9 @@ float[16] sample_references(
         values[i] = 0.0;
     }
     var offset = 0;
-    for (int i = 0; i < num_images; i++) {
-        Sampler2D<float4> texture = sampled_images[NonUniformResourceIndex(textures[i])];
+    let channel_bitmasks = (uint8_t*) params.channel_bitmasks;
+    for (int i = 0; i < params.num_textures; i++) {
+        Sampler2D<float4> texture = sampled_images[NonUniformResourceIndex(params.textures[i])];
         float4 sample = texture.SampleLevel(uv, mip_level);
 
         for (int j = 0; j < 4; ++j) {
@@ -249,36 +243,30 @@ float[16] loss(
     half[16] evaluated,
     no_diff float2 uv,
     no_diff float mip_level,
-    no_diff uint* textures,
-    no_diff int num_images,
-    no_diff uint8_t* channel_bitmasks,
-    no_diff float* total,
-    no_diff uint alpha_channel,
+    no_diff LossParams params,
     no_diff bool l2,
 ) {
     uint num_channels = 0;
     let reference_values = (no_diff sample_references(
         uv,
         mip_level,
-        textures,
-        num_images,
-        channel_bitmasks,
+        params,
         num_channels
     ));
 
-    let is_alpha = alpha_channel < 16 ? reference_values[alpha_channel] == 0.0 : false;
+    let is_alpha = params.alpha_channel < 16 ? reference_values[params.alpha_channel] == 0.0 : false;
 
     float[16] error;
     [MaxIters(16)]
     for (int i = 0; i < 16; ++i) {
-        error[i] = calc_loss(evaluated[i], reference_values[i], l2);
+        error[i] = calc_loss(evaluated[i], reference_values[i], l2);// * params.channel_weights[i];
         // Let the network focus on channels we care about.
-        if (i >= num_channels || (is_alpha && i != alpha_channel)) {
+        if (i >= num_channels || (is_alpha && i != params.alpha_channel)) {
             error[i] = 0.0;
         }
     }
-    if (total) {
-        (no_diff increment_loss(total, error));
+    if (params.total) {
+        (no_diff increment_loss(params.total, error));
     }
     return error;
 }
@@ -298,24 +286,16 @@ void increment_loss(float* total, float[16] loss) {
 float[16] loss_from_coord(
     no_diff float2 uv,
     no_diff float mip_level,
-    no_diff uint* textures,
     Network network,
     Address address,
-    no_diff int num_images,
-    no_diff uint8_t* channel_bitmasks,
-    no_diff float* total,
-    no_diff uint alpha_channel,
+    no_diff LossParams loss_params,
     no_diff bool l2
 ) {
     return loss(
         eval_from_inputs(inputs_from_network(network, uv, mip_level), address),
         uv,
         mip_level,
-        textures,
-        num_images,
-        channel_bitmasks,
-        total,
-        alpha_channel,
+        loss_params,
         l2
     );
 }
@@ -324,24 +304,16 @@ float[16] loss_from_coord(
 float[16] loss_from_inputs(
     no_diff float2 uv,
     no_diff float mip_level,
-    no_diff uint* textures,
     no_diff half[16] inputs,
     Address address,
-    no_diff int num_images,
-    no_diff uint8_t* channel_bitmasks,
-    no_diff float* total,
-    no_diff uint alpha_channel,
+    no_diff LossParams loss_params,
     no_diff bool l2
 ) {
     return loss(
         eval_from_inputs(inputs, address),
         uv,
         mip_level,
-        textures,
-        num_images,
-        channel_bitmasks,
-        total,
-        alpha_channel,
+        loss_params,
         l2
     );
 }
@@ -464,11 +436,7 @@ void sum_textures_loss(
         evaluated,
         uv,
         mip_level,
-        pc.textures,
-        pc.num_textures,
-        (uint8_t*)pc.channel_bitmasks,
-        pc.total,
-        pc.alpha_channel,
+        pc.loss_params,
         true
     );
 }
@@ -515,13 +483,9 @@ void calculate_grads(
     bwd_diff(loss_from_coord)(
         uv_mip.xy,
         uv_mip.z,
-        pc.textures,
         *pc.network,
         address,
-        pc.num_textures,
-        (uint8_t*) pc.channel_bitmasks,
-        pc.total,
-        pc.alpha_channel,
+        pc.loss_params,
         false,
         gradient_seed
     );
@@ -555,13 +519,9 @@ void calculate_mlp_grads_only(
     bwd_diff(loss_from_inputs)(
         uv_mip.xy,
         uv_mip.z,
-        pc.textures,
         inputs,
         address,
-        pc.num_textures,
-        (uint8_t*) pc.channel_bitmasks,
-        pc.total,
-        pc.alpha_channel,
+        pc.loss_params,
         false,
         gradient_seed
     );
