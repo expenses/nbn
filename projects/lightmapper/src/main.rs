@@ -2,7 +2,7 @@ use nbn::vk;
 use std::sync::Arc;
 use winit::{event::ElementState, keyboard::KeyCode};
 
-slang_struct::slang_include!("shaders/lightmapper_structs.slang");
+slang_struct::slang_include!("shaders/lightmapper/structs.slang");
 
 mod least_squares;
 
@@ -123,7 +123,7 @@ fn lightmap(args: &CommonArgs, lightmapper_args: &LightmapperArgs) {
         },
         nbn::cast_slice(&*envmap),
         nbn::QueueType::Graphics,
-        &[0],
+        nbn::ImageLods::Offsets(&[0]),
     );
     let envmap = device.register_owned_image(envmap, false);
 
@@ -391,7 +391,7 @@ impl winit::application::ApplicationHandler for App {
             },
             nbn::cast_slice(&*envmap),
             nbn::QueueType::Graphics,
-            &[0],
+            nbn::ImageLods::Offsets(&[0]),
         );
         let envmap = device.register_owned_image(envmap, false);
 
@@ -424,7 +424,7 @@ impl winit::application::ApplicationHandler for App {
                     },
                     nbn::cast_slice(&*lightmap),
                     nbn::QueueType::Graphics,
-                    &[0],
+                    nbn::ImageLods::Offsets(&[0]),
                 ),
                 false,
             )
@@ -588,9 +588,10 @@ impl winit::application::ApplicationHandler for App {
                     *state.render_pipeline,
                 );
 
-                let (view, proj) = state
-                    .freecam
-                    .update(extent.width, extent.height, 1.0 / 60.0);
+                let (view, proj) =
+                    state
+                        .freecam
+                        .update(extent.width, extent.height, 1.0 / 60.0, 1.0);
 
                 device.push_constants(
                     command_buffer,
@@ -773,7 +774,7 @@ fn load_gltf(
                 },
                 &data,
                 nbn::QueueType::Compute,
-                &[0],
+                nbn::ImageLods::Offsets(&[0]),
             );
             nbn::IndexedImage {
                 index: device.register_image_with_sampler(

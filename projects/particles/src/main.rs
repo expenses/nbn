@@ -1,6 +1,6 @@
 use nbn::{vk, winit};
 
-slang_struct::slang_include!("shaders/particles_structs.slang");
+slang_struct::slang_include!("shaders/particles/structs.slang");
 
 struct Particles {
     data: nbn::Buffer,
@@ -69,7 +69,7 @@ impl winit::application::ApplicationHandler for App {
                 desire_hdr: false,
             },
         );
-        let shader = device.load_shader("../shaders/compiled/particles.spv");
+        let shader = device.load_shader("shaders/compiled/particles.spv");
         let pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
             name: "triangle pipeline",
             shaders: nbn::GraphicsPipelineShaders::Legacy {

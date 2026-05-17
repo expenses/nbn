@@ -1,4 +1,4 @@
-import lightmapper_structs;
+import lightmapper.structs;
 import fallback_bindings;
 
 import shared.noise;

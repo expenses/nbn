@@ -1,4 +1,4 @@
-import particles_structs;
+import particles.structs;
 import shared.colour;
 import shared.util;
 import shared.constants;

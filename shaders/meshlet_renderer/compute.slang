@@ -1,6 +1,6 @@
 import models;
 import uniforms;
-import prefix_sum;
+import shared.prefix_sum;
 import dispatches;
 import shared.util;
 

@@ -1,7 +1,7 @@
 import models;
 import shared.constants;
 import uniforms;
-import prefix_sum;
+import shared.prefix_sum;
 
 struct PushConstants {
     UniformBuffer* uniforms;

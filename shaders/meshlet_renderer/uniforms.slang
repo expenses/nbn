@@ -1,6 +1,6 @@
 import models;
 import dispatches;
-import prefix_sum;
+import shared.prefix_sum;
 import shared.noise;
 import shared.util;
 
