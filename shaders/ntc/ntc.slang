@@ -203,7 +203,6 @@ float[16] sample_references(
     float2 uv,
     float mip_level,
     LossParams params,
-    inout uint num_channels
 ) {
     float[16] values;
     for (int i = 0; i < 16; i++) {
@@ -220,8 +219,8 @@ float[16] sample_references(
                 continue;
             }
 
-            values[num_channels] = sample[j];
-            num_channels ++;
+            values[offset] = sample[j];
+            offset ++;
         }
     }
     return values;
@@ -246,23 +245,19 @@ float[16] loss(
     no_diff LossParams params,
     no_diff bool l2,
 ) {
-    uint num_channels = 0;
     let reference_values = (no_diff sample_references(
         uv,
         mip_level,
         params,
-        num_channels
     ));
 
     let is_alpha = params.alpha_channel < 16 ? reference_values[params.alpha_channel] == 0.0 : false;
 
     float[16] error;
     [MaxIters(16)]
-    for (int i = 0; i < 16; ++i) {
-        error[i] = calc_loss(evaluated[i], reference_values[i], l2);// * params.channel_weights[i];
-        // Let the network focus on channels we care about.
-        if (i >= num_channels || (is_alpha && i != params.alpha_channel)) {
-            error[i] = 0.0;
+    for (int i = 0; i < params.num_channels; ++i) {
+        if (!is_alpha || i == params.alpha_channel) {
+            error[i] = calc_loss(evaluated[i], reference_values[i], l2) * params.channel_weights[i];
         }
     }
     if (params.total) {

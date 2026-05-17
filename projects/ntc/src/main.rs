@@ -493,9 +493,8 @@ fn main() {
             let mut staging_buffer =
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Graphics);
 
-            let (images, image_indices, channel_bitmasks, image_size) =
-                load_images(&device, &mut staging_buffer, &paths);
-            let size = size.unwrap_or(image_size);
+            let image_data = load_images(&device, &mut staging_buffer, &paths);
+            let size = size.unwrap_or(image_data.size);
             dbg!(size);
 
             let pipelines = Pipelines {
@@ -568,12 +567,13 @@ fn main() {
                         iteration: i as _,
                         batch_size,
                         loss_params: LossParams {
-                            num_textures: images.len() as _,
-                            channel_bitmasks: *channel_bitmasks,
+                            num_textures: image_data.images.len() as _,
+                            channel_bitmasks: *image_data.channel_bitmasks,
                             total: *loss_total,
                             alpha_channel: alpha_channel.unwrap_or(u32::max_value()),
-                            textures: *image_indices,
-                            channel_weights: 0,
+                            textures: *image_data.image_indices,
+                            channel_weights: *image_data.channel_weights,
+                            num_channels: image_data.num_channels,
                         },
                     },
                     &pipelines,
@@ -775,10 +775,8 @@ fn main() {
             eval_textures(
                 &device,
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Compute),
-                &image_indices,
-                &channel_bitmasks,
+                &image_data,
                 size,
-                images.len() as _,
                 &float_output,
                 &shader,
                 false,
@@ -788,10 +786,8 @@ fn main() {
             eval_textures(
                 &device,
                 nbn::StagingBuffer::new(&device, 1024 * 1024, nbn::QueueType::Compute),
-                &image_indices,
-                &channel_bitmasks,
+                &image_data,
                 size,
-                images.len() as _,
                 &half_output,
                 &shader,
                 true,
@@ -801,11 +797,20 @@ fn main() {
     };
 }
 
+struct ImageData {
+    images: Vec<nbn::IndexedImage>,
+    image_indices: nbn::Buffer,
+    channel_bitmasks: nbn::Buffer,
+    channel_weights: nbn::Buffer,
+    num_channels: u32,
+    size: u32,
+}
+
 fn load_images(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
     paths: &ImagePaths,
-) -> (Vec<nbn::IndexedImage>, nbn::Buffer, nbn::Buffer, u32) {
+) -> ImageData {
     assert_eq!(paths.paths.len(), paths.channels.len());
 
     let mut size = None;
@@ -853,6 +858,17 @@ fn load_images(
         })
         .collect::<(Vec<_>, Vec<u32>)>();
 
+    let num_channels = paths
+        .channels
+        .iter()
+        .map(|channels| channels.as_bitmask().count_ones())
+        .sum::<u32>();
+
+    let mut channel_weights = vec![1.0_f32; num_channels as usize];
+
+    let channel_weights =
+        staging_buffer.create_buffer_from_slice(&device, "channel_weights", &channel_weights);
+
     let channel_bitmasks: Vec<u8> = paths
         .channels
         .iter()
@@ -866,7 +882,14 @@ fn load_images(
     let channel_bitmasks =
         staging_buffer.create_buffer_from_slice(&device, "channel_bitmasks", &channel_bitmasks);
 
-    (images, image_indices, channel_bitmasks, size)
+    ImageData {
+        images,
+        image_indices,
+        channel_bitmasks,
+        channel_weights,
+        num_channels,
+        size,
+    }
 }
 
 fn l1_psnr(loss: f32) -> f32 {
@@ -937,10 +960,8 @@ fn load_ntc_texture(
 fn eval_textures(
     device: &nbn::Device,
     mut staging_buffer: nbn::StagingBuffer,
-    image_indices: &nbn::Buffer,
-    channel_bitmasks: &nbn::Buffer,
+    image_data: &ImageData,
     size: u32,
-    num_textures: i32,
     bytes: &[u8],
     shader: &nbn::ShaderModule,
     use_halfs: bool,
@@ -988,12 +1009,13 @@ fn eval_textures(
                 params: *params,
                 latent_textures: *latent_texture_indices,
                 loss_params: LossParams {
-                    channel_bitmasks: **channel_bitmasks,
+                    channel_bitmasks: *image_data.channel_bitmasks,
                     total: *loss_total,
                     alpha_channel: alpha_channel.unwrap_or(u32::max_value()),
-                    textures: **image_indices,
-                    num_textures,
-                    channel_weights: 0,
+                    textures: *image_data.image_indices,
+                    num_textures: image_data.images.len() as _,
+                    num_channels: image_data.num_channels,
+                    channel_weights: *image_data.channel_weights,
                 },
                 resolution: size as _,
                 use_halfs: use_halfs as u32,

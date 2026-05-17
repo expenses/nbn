@@ -14,6 +14,7 @@ struct LossParams {
     int num_textures;
     uint alpha_channel;
     float* channel_weights;
+    uint num_channels;
 }
 
 struct CalculateGradsPushConstants {
