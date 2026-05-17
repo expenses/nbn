@@ -8,7 +8,6 @@ use writer::{AntcTexture, AntcWriter};
 
 use nbn::{vk, winit};
 use rand::{Rng, RngExt};
-use std::fmt::Write;
 use std::path::PathBuf;
 use tensorboard_rs::summary_writer::SummaryWriter;
 
@@ -83,6 +82,8 @@ enum Mode {
         batch_size: u32,
         #[arg(long)]
         alpha_channel: Option<u32>,
+        #[arg(long)]
+        tweak: bool,
     },
 }
 
@@ -359,8 +360,7 @@ fn optimization_iter(
     network: &NetworkData,
     mlp_learning_rate: f32,
     learning_rate: f32,
-    writer: &mut SummaryWriter,
-) {
+) -> f32 {
     let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
 
     unsafe {
@@ -407,11 +407,7 @@ fn optimization_iter(
     }
 
     let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
-    let loss = loss / batch_size as f32 / batch_size as f32 / 16.0;
-    writer.add_scalar("loss", loss, i as usize);
-    writer.add_scalar("psnr", l1_psnr(loss), i as usize);
-    writer.flush();
-    println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
+    loss / batch_size as f32 / batch_size as f32 / 16.0
 }
 
 fn mlp_optimization_iter(
@@ -488,6 +484,7 @@ fn main() {
             batch_size,
             mlp_learning_rate,
             alpha_channel,
+            tweak,
         } => {
             let device = nbn::Device::new(None);
             let shader = device.load_shader("shaders/compiled/ntc.spv");
@@ -497,7 +494,6 @@ fn main() {
 
             let image_data = load_images(&device, &mut staging_buffer, &paths);
             let size = size.unwrap_or(image_data.size);
-            dbg!(size);
 
             let pipelines = Pipelines {
                 calculate_grads: device.create_compute_pipeline(&shader, c"calculate_grads"),
@@ -544,9 +540,13 @@ fn main() {
 
             staging_buffer.finish(&device);
 
-            let run_name = std::env::args().collect::<Vec<String>>().join("_");
-            let log_dir = format!("logs/{}", run_name);
-            let mut writer = SummaryWriter::new(&log_dir);
+            let mut writer = if !tweak {
+                let run_name = std::env::args().collect::<Vec<String>>().join("_");
+                let log_dir = format!("logs/{}", run_name);
+                Some(SummaryWriter::new(&log_dir))
+            } else {
+                None
+            };
 
             let start = std::time::Instant::now();
 
@@ -558,8 +558,10 @@ fn main() {
                 })
                 .unwrap();
 
+            let mut min_loss = f32::INFINITY;
+
             for i in 0..iterations {
-                optimization_iter(
+                let loss = optimization_iter(
                     &device,
                     i,
                     batch_size,
@@ -583,8 +585,21 @@ fn main() {
                     &network,
                     mlp_learning_rate,
                     learning_rate,
-                    &mut writer,
                 );
+                min_loss = min_loss.min(loss);
+                if !tweak {
+                    println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
+                }
+                if let Some(writer) = writer.as_mut() {
+                    writer.add_scalar("loss", loss, i as usize);
+                    writer.add_scalar("psnr", l1_psnr(loss), i as usize);
+                    writer.flush();
+                }
+            }
+
+            if tweak {
+                println!("{}", min_loss);
+                return;
             }
 
             let duration = std::time::Instant::now() - start;
