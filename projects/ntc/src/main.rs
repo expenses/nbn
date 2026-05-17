@@ -295,37 +295,6 @@ fn optimize(
     }
 }
 
-fn optimize_half(
-    device: &nbn::Device,
-    command_buffer: &nbn::CommandBuffer,
-    texture: &TextureData,
-    iteration: u32,
-    learning_rate: f32,
-) {
-    unsafe {
-        device.push_constants::<OptimizePushConstants>(
-            command_buffer,
-            OptimizePushConstants {
-                primal: *texture.data.data,
-                grad: *texture.data.grad,
-                mean: *texture.data.m,
-                variance: *texture.data.v,
-                learning_rate,
-                num_values: texture.data.size as _,
-                adam_m_factor: (1.0 - ADAM_BETA_1.powi(iteration as _)).recip(),
-                adam_v_factor: (1.0 - ADAM_BETA_2.powi(iteration as _)).recip(),
-                bitmask: *texture.bitmasks,
-            },
-        );
-        device.cmd_dispatch(
-            **command_buffer,
-            (texture.data.size as u32).div_ceil(64 * 64),
-            1,
-            1,
-        );
-    }
-}
-
 struct Pipelines {
     calculate_grads: nbn::Pipeline,
     optimizer_step: nbn::Pipeline,
@@ -333,64 +302,56 @@ struct Pipelines {
     calculate_mlp_grads_only: nbn::Pipeline,
 }
 
-fn optimization_iter(
+fn apply_weights(
     device: &nbn::Device,
-    i: u32,
-    batch_size: u32,
-    push_constants: CalculateGradsPushConstants,
+    command_buffer: &nbn::CommandBuffer,
     pipelines: &Pipelines,
-    loss_total: &nbn::Buffer,
     network: &NetworkData,
-    mlp_learning_rate: f32,
+    iteration: u32,
     learning_rate: f32,
-) -> f32 {
-    let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
-
+    mlp_learning_rate: f32,
+) {
     unsafe {
-        device
-            .begin_command_buffer(*command_buffer, &Default::default())
-            .unwrap();
-        device.cmd_fill_buffer(*command_buffer, *loss_total.buffer, 0, vk::WHOLE_SIZE, 0);
-        device.bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
         device.cmd_bind_pipeline(
-            *command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            *pipelines.calculate_grads,
-        );
-        device.push_constants::<CalculateGradsPushConstants>(&command_buffer, push_constants);
-        device.cmd_dispatch(
-            *command_buffer,
-            (batch_size * batch_size).div_ceil(64),
-            1,
-            1,
-        );
-        device.cmd_bind_pipeline(
-            *command_buffer,
+            **command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             *pipelines.optimizer_step,
         );
         optimize(
-            &device,
-            &command_buffer,
+            device,
+            command_buffer,
             &network.weights_and_biases,
-            i + 1,
+            iteration,
             mlp_learning_rate,
         );
         device.cmd_bind_pipeline(
-            *command_buffer,
+            **command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             *pipelines.optimize_latent_textures,
         );
         for texture in &network.textures {
-            optimize_half(&device, &command_buffer, texture, i + 1, learning_rate);
+            device.push_constants::<OptimizePushConstants>(
+                command_buffer,
+                OptimizePushConstants {
+                    primal: *texture.data.data,
+                    grad: *texture.data.grad,
+                    mean: *texture.data.m,
+                    variance: *texture.data.v,
+                    learning_rate,
+                    num_values: texture.data.size as _,
+                    adam_m_factor: (1.0 - ADAM_BETA_1.powi(iteration as _)).recip(),
+                    adam_v_factor: (1.0 - ADAM_BETA_2.powi(iteration as _)).recip(),
+                    bitmask: *texture.bitmasks,
+                },
+            );
+            device.cmd_dispatch(
+                **command_buffer,
+                (texture.data.size as u32).div_ceil(64 * 64),
+                1,
+                1,
+            );
         }
-
-        device.end_command_buffer(*command_buffer).unwrap();
-        device.submit_and_wait_on_command_buffer(&command_buffer);
     }
-
-    let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
-    loss / batch_size as f32 / batch_size as f32 / 16.0
 }
 
 fn mlp_optimization_iter(
@@ -544,31 +505,68 @@ fn main() {
             let mut min_loss = f32::INFINITY;
 
             for i in 0..iterations {
-                let loss = optimization_iter(
-                    &device,
-                    i,
-                    batch_size,
-                    CalculateGradsPushConstants {
-                        latent_textures: *latent_texture_indices,
-                        network: *network_buffer,
-                        iteration: i as _,
-                        batch_size,
-                        loss_params: LossParams {
-                            num_textures: image_data.images.len() as _,
-                            channel_bitmasks: *image_data.channel_bitmasks,
-                            total: *loss_total,
-                            alpha_channel: alpha_channel.unwrap_or(u32::max_value()),
-                            textures: *image_data.image_indices,
-                            channel_weights: *image_data.channel_weights,
-                            num_channels: image_data.num_channels,
+                let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
+
+                unsafe {
+                    device
+                        .begin_command_buffer(*command_buffer, &Default::default())
+                        .unwrap();
+                    device.cmd_fill_buffer(
+                        *command_buffer,
+                        *loss_total.buffer,
+                        0,
+                        vk::WHOLE_SIZE,
+                        0,
+                    );
+                    device.bind_internal_descriptor_sets(
+                        &command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                    );
+                    device.cmd_bind_pipeline(
+                        *command_buffer,
+                        vk::PipelineBindPoint::COMPUTE,
+                        *pipelines.calculate_grads,
+                    );
+                    device.push_constants::<CalculateGradsPushConstants>(
+                        &command_buffer,
+                        CalculateGradsPushConstants {
+                            latent_textures: *latent_texture_indices,
+                            network: *network_buffer,
+                            iteration: i as _,
+                            batch_size,
+                            loss_params: LossParams {
+                                num_textures: image_data.images.len() as _,
+                                channel_bitmasks: *image_data.channel_bitmasks,
+                                total: *loss_total,
+                                alpha_channel: alpha_channel.unwrap_or(u32::max_value()),
+                                textures: *image_data.image_indices,
+                                channel_weights: *image_data.channel_weights,
+                                num_channels: image_data.num_channels,
+                            },
                         },
-                    },
-                    &pipelines,
-                    &loss_total,
-                    &network,
-                    mlp_learning_rate,
-                    learning_rate,
-                );
+                    );
+                    device.cmd_dispatch(
+                        *command_buffer,
+                        (batch_size * batch_size).div_ceil(64),
+                        1,
+                        1,
+                    );
+                    apply_weights(
+                        &device,
+                        &command_buffer,
+                        &pipelines,
+                        &network,
+                        i + 1,
+                        learning_rate,
+                        mlp_learning_rate,
+                    );
+                    device.end_command_buffer(*command_buffer).unwrap();
+                    device.submit_and_wait_on_command_buffer(&command_buffer);
+                }
+
+                let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+                let loss = loss / batch_size as f32 / batch_size as f32 / 16.0;
+
                 min_loss = min_loss.min(loss);
                 if !tweak {
                     println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
