@@ -55,10 +55,12 @@ impl Channels {
 
 #[derive(clap::Args)]
 struct ImagePaths {
-    #[arg(long, num_args = 1..)]
+    #[arg(num_args = 1..)]
     paths: Vec<PathBuf>,
     #[arg(long, num_args = 1..)]
     channels: Vec<Channels>,
+    #[arg(long, num_args = 1..)]
+    channel_weights: Vec<f32>,
 }
 
 #[derive(clap::Subcommand)]
@@ -864,7 +866,10 @@ fn load_images(
         .map(|channels| channels.as_bitmask().count_ones())
         .sum::<u32>();
 
-    let mut channel_weights = vec![1.0_f32; num_channels as usize];
+    let mut channel_weights = paths.channel_weights.clone();
+    while channel_weights.len() < images.len() {
+        channel_weights.push(1.0);
+    }
 
     let channel_weights =
         staging_buffer.create_buffer_from_slice(&device, "channel_weights", &channel_weights);
