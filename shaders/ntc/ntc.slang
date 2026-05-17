@@ -1,10 +1,11 @@
 import slang.neural;
 import ntc.structs;
-import ntc.adam;
+import shared.adam;
 import shared.noise;
-import fallback_bindings;
 import shared.util;
 import shared.colour;
+
+import fallback_bindings;
 
 static const int SubgroupSize = 64;
 static const int SubgroupCount = 1;
