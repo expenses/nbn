@@ -598,12 +598,21 @@ fn main() {
                 loss = total_loss / batch_size as f32 / batch_size as f32 / 16.0;
 
                 min_loss = min_loss.min(loss);
+
+                let psnr = l1_psnr(loss);
+                let max_psnr = l1_psnr(min_loss);
+
                 if !tweak {
-                    println!("{}, Loss: {:.8} PSNR: {:.4} dB,", i, loss, l1_psnr(loss),);
+                    println!(
+                        "{}, Loss: {:.8} PSNR: {:.4} dB, Max PSNR: {:.4} dB",
+                        i, loss, psnr, max_psnr
+                    );
                 }
                 if let Some(writer) = writer.as_mut() {
                     writer.add_scalar("loss", loss, i as usize);
-                    writer.add_scalar("psnr", l1_psnr(loss), i as usize);
+                    writer.add_scalar("min_loss", min_loss, i as usize);
+                    writer.add_scalar("psnr", psnr, i as usize);
+                    writer.add_scalar("max_psnr", max_psnr, i as usize);
                     writer.flush();
                 }
             }
