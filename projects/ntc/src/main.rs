@@ -74,9 +74,9 @@ enum Mode {
         iterations: u32,
         #[arg(short, long)]
         size: Option<u32>,
-        #[arg(long, default_value_t = 0.1)]
+        #[arg(long, default_value_t = 0.03)]
         learning_rate: f32,
-        #[arg(long, default_value_t = 0.005)]
+        #[arg(long, default_value_t = 0.015)]
         mlp_learning_rate: f32,
         #[arg(long, default_value_t = 256)]
         batch_size: u32,
