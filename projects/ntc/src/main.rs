@@ -182,7 +182,7 @@ impl TextureData {
     fn as_struct(&self) -> LatentTexture {
         LatentTexture {
             data: *self.data.data,
-            grads: self.data.training.as_ref().map(|t| *t.grad).unwrap_or(0),
+            grads: *self.data.grad,
             num_blocks: self.num_blocks,
             size: self.size as _,
             num_mip_levels: self.num_mip_levels,
@@ -191,15 +191,11 @@ impl TextureData {
     }
 }
 
-struct Training {
+struct Tensor {
+    data: nbn::Buffer,
     grad: nbn::Buffer,
     m: nbn::Buffer,
     v: nbn::Buffer,
-}
-
-struct Tensor {
-    data: nbn::Buffer,
-    training: Option<Training>,
     size: usize,
 }
 
@@ -213,11 +209,9 @@ impl Tensor {
 
         Self {
             data: staging_buffer.create_buffer_from_slice(device, "data", data),
-            training: Some(Training {
-                grad: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
-                m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
-                v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
-            }),
+            grad: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
+            m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
+            v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
             size: data.len(),
         }
     }
@@ -231,11 +225,9 @@ impl Tensor {
 
         Self {
             data: staging_buffer.create_buffer_from_slice(device, "data", data),
-            training: Some(Training {
-                grad: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
-                m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
-                v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
-            }),
+            grad: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
+            m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
+            v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
             size: data.len(),
         }
     }
@@ -244,7 +236,6 @@ impl Tensor {
 struct NetworkData {
     weights_and_biases: Tensor,
     textures: [TextureData; 4],
-    size: u32,
 }
 
 impl NetworkData {
@@ -262,19 +253,13 @@ impl NetworkData {
                 TextureData::train(device, staging_buffer, size / 2, rng),
                 TextureData::train(device, staging_buffer, size / 2, rng),
             ],
-            size,
         }
     }
 
     fn as_struct(&self) -> Network {
         Network {
             weights_and_biases: *self.weights_and_biases.data,
-            weights_and_biases_grad: self
-                .weights_and_biases
-                .training
-                .as_ref()
-                .map(|t| *t.grad)
-                .unwrap_or(0),
+            weights_and_biases_grad: *self.weights_and_biases.grad,
             textures: std::array::from_fn(|i| self.textures[i].as_struct()),
         }
     }
@@ -290,15 +275,14 @@ fn optimize(
     iteration: u32,
     learning_rate: f32,
 ) {
-    let training = tensor.training.as_ref().unwrap();
     unsafe {
         device.push_constants::<OptimizePushConstants>(
             command_buffer,
             OptimizePushConstants {
                 primal: *tensor.data,
-                grad: *training.grad,
-                mean: *training.m,
-                variance: *training.v,
+                grad: *tensor.grad,
+                mean: *tensor.m,
+                variance: *tensor.v,
                 learning_rate,
                 num_values: tensor.size as _,
                 adam_m_factor: (1.0 - ADAM_BETA_1.powi(iteration as _)).recip(),
@@ -318,15 +302,14 @@ fn optimize_half(
     iteration: u32,
     learning_rate: f32,
 ) {
-    let training = texture.data.training.as_ref().unwrap();
     unsafe {
         device.push_constants::<OptimizePushConstants>(
             command_buffer,
             OptimizePushConstants {
                 primal: *texture.data.data,
-                grad: *training.grad,
-                mean: *training.m,
-                variance: *training.v,
+                grad: *texture.data.grad,
+                mean: *texture.data.m,
+                variance: *texture.data.v,
                 learning_rate,
                 num_values: texture.data.size as _,
                 adam_m_factor: (1.0 - ADAM_BETA_1.powi(iteration as _)).recip(),
