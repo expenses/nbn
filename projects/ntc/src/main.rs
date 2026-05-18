@@ -882,7 +882,7 @@ fn load_images(
         .sum::<u32>();
 
     let mut channel_weights = paths.channel_weights.clone();
-    while channel_weights.len() < images.len() {
+    while channel_weights.len() < num_channels as _ {
         channel_weights.push(1.0);
     }
 
