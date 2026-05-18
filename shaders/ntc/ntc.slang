@@ -529,15 +529,16 @@ void compress_blocks(
     uint thread: SV_DispatchThreadID,
     uniform CompressBlocksPushConstants pc
 ) {
-    let texture = pc.network.textures[pc.texture_index];
-
-    if (thread >= texture.num_blocks) {
+    if (thread >= pc.num_blocks) {
         return;
     }
 
     let blocks = (uint16_t4*) pc.blocks;
-
-    blocks[thread] = compress_latent_texture(texture, thread);
+    blocks[thread] = compress_latent_texture(
+        (half*) pc.values,
+        pc.num_blocks,
+        thread
+    );
 }
 
 [shader("compute")]
@@ -552,7 +553,7 @@ void copy_network_params(
         return;
     }
 
-    let param = pc.network.weights_and_biases[thread];
+    let param = pc.params[thread];
 
     if (bool(pc.write_halfs)) {
         let output = (half*) pc.output;
@@ -562,9 +563,11 @@ void copy_network_params(
     }
 }
 
-uint16_t4 compress_latent_texture(LatentTexture texture, int block) {
-    let endpoint_a = quantize(sigmoid(texture.load_endpoint(block * 2)), uint16_t3(5,6,5));
-    let endpoint_b = quantize(sigmoid(texture.load_endpoint(block * 2 + 1)), uint16_t3(5,6,5));
+uint16_t4 compress_latent_texture(half* values, uint num_blocks, int block) {
+    half3* endpoints = (half3*)values;
+
+    let endpoint_a = quantize(sigmoid(endpoints[block * 2]), uint16_t3(5,6,5));
+    let endpoint_b = quantize(sigmoid(endpoints[block * 2 + 1]), uint16_t3(5,6,5));
 
     let e1 = endpoint_a.b | (endpoint_a.g << 5) | (endpoint_a.r << 11);
     let e2 = endpoint_b.b | (endpoint_b.g << 5) | (endpoint_b.r << 11);
@@ -574,7 +577,7 @@ uint16_t4 compress_latent_texture(LatentTexture texture, int block) {
 
     uint alphas = 0;
     for (int i = 0; i < 16; ++i) {
-        var alpha = uint(quantize(sigmoid(texture.load_alpha(block * 16 + i)), 2));
+        var alpha = uint(quantize(sigmoid(values[block * 16 + i + num_blocks * 3 * 2]), 2));
 
         // If the endpoints were switched, make sure we flip the bits
         if (max_e != e1) {

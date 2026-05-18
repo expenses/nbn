@@ -47,13 +47,13 @@ struct SumTexturesLossPushConstants {
 }
 
 struct CompressBlocksPushConstants {
-    Network* network;
+    float* values;
+    uint num_blocks;
     uint2* blocks;
-    int texture_index;
 }
 
 struct CopyNetworkParamsPushConstants {
-    Network* network;
+    float* params;
     float* output;
     int write_halfs;
 }

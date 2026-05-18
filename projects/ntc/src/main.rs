@@ -193,6 +193,7 @@ impl TextureData {
 
 struct Tensor {
     data: nbn::Buffer,
+    best: nbn::Buffer,
     grad: nbn::Buffer,
     m: nbn::Buffer,
     v: nbn::Buffer,
@@ -209,6 +210,7 @@ impl Tensor {
 
         Self {
             data: staging_buffer.create_buffer_from_slice(device, "data", data),
+            best: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
             grad: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
             m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
             v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
@@ -225,6 +227,7 @@ impl Tensor {
 
         Self {
             data: staging_buffer.create_buffer_from_slice(device, "data", data),
+            best: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
             grad: staging_buffer.create_buffer_from_slice(device, "grad", &zeros),
             m: staging_buffer.create_buffer_from_slice(device, "m", &zeros),
             v: staging_buffer.create_buffer_from_slice(device, "v", &zeros),
@@ -503,6 +506,7 @@ fn main() {
                 .unwrap();
 
             let mut min_loss = f32::INFINITY;
+            let mut loss = f32::INFINITY;
 
             for i in 0..iterations {
                 let command_buffer = device.create_command_buffer(nbn::QueueType::Compute);
@@ -522,6 +526,41 @@ fn main() {
                         &command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
                     );
+                    if loss == min_loss {
+                        device.cmd_copy_buffer(
+                            *command_buffer,
+                            *network.weights_and_biases.data.buffer,
+                            *network.weights_and_biases.best.buffer,
+                            &[vk::BufferCopy {
+                                src_offset: 0,
+                                dst_offset: 0,
+                                size: network.weights_and_biases.size as u64 * 4,
+                            }],
+                        );
+                        for texture in &network.textures {
+                            device.cmd_copy_buffer(
+                                *command_buffer,
+                                *texture.data.data.buffer,
+                                *texture.data.best.buffer,
+                                &[vk::BufferCopy {
+                                    src_offset: 0,
+                                    dst_offset: 0,
+                                    size: texture.data.size as u64 * 2,
+                                }],
+                            );
+                        }
+                    }
+                    if i > 0 {
+                        apply_weights(
+                            &device,
+                            &command_buffer,
+                            &pipelines,
+                            &network,
+                            i,
+                            learning_rate,
+                            mlp_learning_rate,
+                        );
+                    }
                     device.cmd_bind_pipeline(
                         *command_buffer,
                         vk::PipelineBindPoint::COMPUTE,
@@ -551,21 +590,12 @@ fn main() {
                         1,
                         1,
                     );
-                    apply_weights(
-                        &device,
-                        &command_buffer,
-                        &pipelines,
-                        &network,
-                        i + 1,
-                        learning_rate,
-                        mlp_learning_rate,
-                    );
                     device.end_command_buffer(*command_buffer).unwrap();
                     device.submit_and_wait_on_command_buffer(&command_buffer);
                 }
 
-                let loss = loss_total.try_as_slice::<f32>().unwrap()[0];
-                let loss = loss / batch_size as f32 / batch_size as f32 / 16.0;
+                let total_loss = loss_total.try_as_slice::<f32>().unwrap()[0];
+                loss = total_loss / batch_size as f32 / batch_size as f32 / 16.0;
 
                 min_loss = min_loss.min(loss);
                 if !tweak {
@@ -612,12 +642,17 @@ fn main() {
                 );
 
                 for i in 0..4 {
+                    let texture = &network.textures[i];
                     device.push_constants::<CompressBlocksPushConstants>(
                         &command_buffer,
                         CompressBlocksPushConstants {
-                            network: *network_buffer,
+                            values: if loss == min_loss {
+                                *texture.data.data
+                            } else {
+                                *texture.data.best
+                            },
+                            num_blocks: texture.num_blocks,
                             blocks: *block_buffers[i],
-                            texture_index: i as _,
                         },
                     );
                     device.cmd_dispatch(
@@ -724,10 +759,15 @@ fn main() {
                     vk::PipelineBindPoint::COMPUTE,
                     *copy_network_params,
                 );
+                let params = if loss == min_loss {
+                    *network.weights_and_biases.data
+                } else {
+                    *network.weights_and_biases.best
+                };
                 device.push_constants::<CopyNetworkParamsPushConstants>(
                     &command_buffer,
                     CopyNetworkParamsPushConstants {
-                        network: *network_buffer,
+                        params,
                         output: *half_network_params,
                         write_halfs: 1,
                     },
@@ -736,7 +776,7 @@ fn main() {
                 device.push_constants::<CopyNetworkParamsPushConstants>(
                     &command_buffer,
                     CopyNetworkParamsPushConstants {
-                        network: *network_buffer,
+                        params,
                         output: *float_network_params,
                         write_halfs: 0,
                     },
