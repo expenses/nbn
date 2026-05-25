@@ -1,3 +1,5 @@
+import shared.prefix_sum;
+import shared.util;
 
 struct Instance {
     float3 translation;
@@ -21,6 +23,19 @@ struct Instance {
 
 struct PushConstants {
     float4x4 camera;
+    Atomic<uint64_t>* prefix_sum_counter;
+    uint* prefix_sum_values;
+    uint* offsets;
+    DrawIndirectCommand* draw_command;
     Instance* instances;
-    uint instance_index;
+    uint num_instances;
+
+    property PrefixSumBuffer prefix_sum {
+        get {
+            PrefixSumBuffer buffer;
+            buffer.counter = prefix_sum_counter;
+            buffer.values = (PrefixSumValue*)prefix_sum_values;
+            return buffer;
+        }
+    }
 }

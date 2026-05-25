@@ -23,6 +23,10 @@ struct State {
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
     render_pipeline: nbn::Pipeline,
+    reset: nbn::Pipeline,
+    prefix_sum_instances: nbn::Pipeline,
+    prefix_sum_data: nbn::Buffer,
+    offsets: nbn::Buffer,
     _data: LoadedData,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
@@ -57,7 +61,7 @@ impl winit::application::ApplicationHandler for App {
 
         staging_buffer.finish(&device);
 
-        let shader = device.load_shader("../shaders/compiled/jungle.spv");
+        let shader = device.load_shader("shaders/compiled/jungle.spv");
 
         let render_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
             name: "triangle pipeline",
@@ -97,6 +101,18 @@ impl winit::application::ApplicationHandler for App {
         });
 
         self.state = Some(State {
+            prefix_sum_data: device.create_buffer(nbn::BufferDescriptor {
+                name: "prefix_sum_data",
+                size: 8 + 8 * data.instances_cpu.len() as u64,
+                ty: nbn::MemoryLocation::GpuOnly,
+            }).unwrap(),
+            offsets: device.create_buffer(nbn::BufferDescriptor {
+                name: "offsets",
+                size: 4 * data.instances_cpu.len() as u64,
+                ty: nbn::MemoryLocation::GpuOnly,
+            }).unwrap(),
+            prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
+            reset: device.create_compute_pipeline(&shader, c"reset"),
             depthbuffer,
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -212,6 +228,45 @@ impl winit::application::ApplicationHandler for App {
                     nbn::BarrierOp::DepthStencilAttachmentReadWrite,
                 );
 
+                let (view, proj) =
+                    state
+                        .freecam
+                        .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
+
+                device.push_constants::<PushConstants>(
+                    &command_buffer,
+                    PushConstants {
+                        camera: (proj * view).to_cols_array(),
+                        instances: *state._data.instances,
+                        prefix_sum_counter: *state.prefix_sum_data,
+                        prefix_sum_values: *state.prefix_sum_data + 8,
+                        draw_command: Default::default(),
+                        offsets: *state.offsets,
+                        num_instances: state._data.instances_cpu.len() as _
+                    },
+                );
+
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.reset,
+                );
+
+                device.cmd_dispatch(**command_buffer,
+                    1,1,1
+                );
+
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.prefix_sum_instances,
+                );
+
+                device.cmd_dispatch(**command_buffer,
+                    (state._data.instances_cpu.len() as u32).div_ceil(64),1,1
+                );
+
+
                 device.begin_rendering(
                     command_buffer,
                     extent.width,
@@ -245,27 +300,13 @@ impl winit::application::ApplicationHandler for App {
                     *state.render_pipeline,
                 );
 
-                let (view, proj) =
-                    state
-                        .freecam
-                        .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
-
                 for i in 0..state._data.instances_cpu.len() {
-                    device.push_constants::<PushConstants>(
-                        &command_buffer,
-                        PushConstants {
-                            camera: (proj * view).to_cols_array(),
-                            instances: *state._data.instances,
-                            instance_index: i as _,
-                        },
-                    );
-
                     device.cmd_draw(
                         **command_buffer,
                         state._data.instances_cpu[i].num_indices,
                         1,
                         0,
-                        0,
+                        i as _,
                     );
                 }
 
@@ -495,7 +536,7 @@ fn load_dds<P: AsRef<std::path::Path>>(
         },
         &dds.data,
         nbn::QueueType::Graphics,
-        &offsets[1..],
+        nbn::ImageLods::Offsets(&offsets[1..]),
     )
 }
 
