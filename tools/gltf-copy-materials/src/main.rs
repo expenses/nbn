@@ -19,6 +19,7 @@ fn main() {
     let mut data: std::collections::HashMap<_, _> = from_data
         .materials
         .into_iter()
+        .filter(|mat| mat.pbr_metallic_roughness.base_color_texture.is_some())
         .map(|mat| (mat.name.clone().unwrap(), mat))
         .collect();
 
