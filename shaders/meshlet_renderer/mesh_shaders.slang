@@ -2,6 +2,7 @@ import models;
 import shared.constants;
 import uniforms;
 import shared.prefix_sum;
+import shared.culling;
 
 struct PushConstants {
     UniformBuffer* uniforms;
@@ -19,17 +20,6 @@ struct Interp {
 struct PerPrimitive {
     uint32_t visbuffer_value: SV_PrimitiveID;
 };
-
-bool coneCull(
-    float3 center,
-    float radius,
-    float3 cone_axis,
-    float cone_cutoff,
-    float3 camera_position
-) {
-    return dot(normalize(center - camera_position), cone_axis)
-        > cone_cutoff + radius / length(center - camera_position);
-}
 
 groupshared uint[64] gs_meshlet_instance_indices;
 
@@ -66,23 +56,14 @@ groupshared uint[64] gs_meshlet_instance_indices;
 
         let view_center = mul(uniforms.view, float4(meshlet.center, 1.0)).xyz;
 
-        visible &= !coneCull(
+        visible &= coneCull(
             meshlet.center,
             meshlet.radius,
             meshlet.cone_axis,
             meshlet.cone_cutoff,
             uniforms.camera_position
         );
-        // near plane
-        visible &= view_center.z - meshlet.radius < uniforms.near_plane;
-        // left and right planes
-        visible &= view_center.z * uniforms.frustum[1]
-                - abs(view_center.x) * uniforms.frustum[0]
-            > -meshlet.radius;
-        // top and bottom planes
-        visible &= view_center.z * uniforms.frustum[3]
-                - abs(view_center.y) * uniforms.frustum[2]
-            > -meshlet.radius;
+        visible &= frustumCull(view_center, meshlet.radius, uniforms.near_plane, uniforms.frustum);
 
         if (visible) {
             // Correctly calculate output index and write the meshlet instance.

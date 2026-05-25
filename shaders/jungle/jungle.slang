@@ -6,6 +6,7 @@ import shared.util;
 import shared.constants;
 import shared.derivatives;
 import shared.barycentrics;
+import shared.culling;
 
 struct Interp {
     float4 position: SV_Position;
@@ -35,21 +36,9 @@ void prefix_sum_instances(
     let num_tris = num_indices / 3;
 
     let radius = instance.radius * max(instance.scale.x, max(instance.scale.y, instance.scale.z));
-    
-    var visible = true;
 
     let view_center = mul(pc.view, float4(instance.translation, 1.0)).xyz;
-
-    // near plane
-    visible &= view_center.z - radius < pc.near_plane;
-    // left and right planes
-    visible &= view_center.z * pc.frustum[1]
-            - abs(view_center.x) * pc.frustum[0]
-        > -radius;
-    // top and bottom planes
-    visible &= view_center.z * pc.frustum[3]
-            - abs(view_center.y) * pc.frustum[2]
-        > -radius;    
+    var visible = frustumCull(view_center, radius, pc.near_plane, pc.frustum);
     let dist = radius * 75;
     visible &= distance_squared(pc.camera_pos, instance.translation) < (dist*dist);
 
