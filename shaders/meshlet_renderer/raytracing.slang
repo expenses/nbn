@@ -116,16 +116,18 @@ float3 trace_primary_ray(
         model.read_index(primitive_index * 3 + 1),
         model.read_index(primitive_index * 3 + 2),
     );
-    let bary_and_pos = calculate_barycentrics_from_world_positions(
+    WithDerivatives<float3> position;
+    let barycentrics = calculate_barycentrics_from_world_positions(
         uniforms.mat,
         model.positions[indices.x], // + instance.position.xyz,
         model.positions[indices.y], // + instance.position.xyz,
         model.positions[indices.z], // + instance.position.xyz,
         thread,
-        uniforms.extent
+        uniforms.extent,
+        position
     );
     let uv = interpolate(
-        bary_and_pos.barycentrics,
+        barycentrics,
         model.uvs[indices.x],
         model.uvs[indices.y],
         model.uvs[indices.z]

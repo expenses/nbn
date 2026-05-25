@@ -64,16 +64,16 @@ float3 resolve_visbuffer_inner(uint2 thread, UniformBuffer* uniforms) {
                    [meshlet.triangle_offset + triangle_index * 3 + 2]],
     );
 
-    let bary_and_pos = calculate_barycentrics_from_world_positions(
+    WithDerivatives<float3> pos;
+    let bary = calculate_barycentrics_from_world_positions(
         uniforms.mat,
         model.positions[indices.x] + instance.position.xyz,
         model.positions[indices.y] + instance.position.xyz,
         model.positions[indices.z] + instance.position.xyz,
         thread,
-        uniforms.extent
+        uniforms.extent,
+        pos
     );
-    let pos = bary_and_pos.position;
-    let bary = bary_and_pos.barycentrics;
 
     let uv = interpolate(
         bary,

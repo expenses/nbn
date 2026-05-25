@@ -19,25 +19,24 @@ struct BarycentricsAndInterpolatedPosition {
 
 }
 
-BarycentricsAndInterpolatedPosition
-calculate_barycentrics_from_world_positions(
+BarycentricDeriv calculate_barycentrics_from_world_positions(
     float4x4 mat,
     float3 pos_a,
     float3 pos_b,
     float3 pos_c,
     uint2 thread,
-    uint2 extent
+    uint2 extent,
+    out WithDerivatives<float3> position,
 ) {
-    BarycentricsAndInterpolatedPosition output;
-    output.barycentrics = CalcFullBary(
+    let barycentrics = CalcFullBary(
         mul(mat, float4(pos_a, 1.0)),
         mul(mat, float4(pos_b, 1.0)),
         mul(mat, float4(pos_c, 1.0)),
         thread_to_clip(thread, extent),
         extent
     );
-    output.position = interpolate(output.barycentrics, pos_a, pos_b, pos_c);
-    return output;
+    position = interpolate(barycentrics, pos_a, pos_b, pos_c);
+    return barycentrics;
 }
 
 BarycentricDeriv CalcFullBary(
