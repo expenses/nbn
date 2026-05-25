@@ -23,18 +23,19 @@ struct Instance {
 
 struct PushConstants {
     float4x4 camera;
-    Atomic<uint64_t>* prefix_sum_counter;
-    uint* prefix_sum_values;
-    uint* offsets;
-    DrawIndirectCommand* draw_command;
+    uint* prefix_sum_data;
+    DrawIndirectCommand* draw_commands;
     Instance* instances;
+    uint2 extent;
     uint num_instances;
+    uint swapchain;
+    uint vis;
 
     property PrefixSumBuffer prefix_sum {
         get {
             PrefixSumBuffer buffer;
-            buffer.counter = prefix_sum_counter;
-            buffer.values = (PrefixSumValue*)prefix_sum_values;
+            buffer.counter = (Atomic<uint64_t>*)prefix_sum_data;
+            buffer.values = (PrefixSumValue*)&buffer.counter[1];
             return buffer;
         }
     }

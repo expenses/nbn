@@ -2,12 +2,15 @@ import structs;
 import shared.colour;
 import fallback_bindings;
 import shared.prefix_sum;
+import shared.util;
+import shared.constants;
+import shared.derivatives;
+import shared.barycentrics;
 
 struct Interp {
     float4 position: SV_Position;
     uint value;
 }
-
 
 [shader("compute")]
 [NumThreads(1, 1, 1)]
@@ -25,16 +28,23 @@ void prefix_sum_instances(
         return;
     }
 
-    let num_tris = pc.instances[thread].num_indices / 3;
+    let num_indices = pc.instances[thread].num_indices;
+    let num_tris = num_indices / 3;
 
     let value = prefix_sum_inclusive_append(pc.prefix_sum, thread, num_tris);
 
-    pc.offsets[thread] = value.sum - num_tris;
+    DrawIndirectCommand* command = &pc.draw_commands[thread];
+
+    command.vertex_count = num_indices;
+    command.instance_count = 1;
+    command.first_vertex = value.sum - num_tris;
+    command.first_instance = thread;
 }
 
 [shader("vertex")]
 Interp vertex(
-    uint vertex_id : SV_VulkanVertexID,
+    uint vertex_id : SV_VertexID,
+    uint offset : SV_StartVertexLocation,
     uint instance_id: SV_VulkanInstanceID,
     uniform PushConstants pc
 ) {
@@ -42,23 +52,29 @@ Interp vertex(
     let index = instance.read_index(vertex_id);
     let position = instance.positions[index] * instance.scale + instance.translation;
 
-
     Interp interp;
     interp.position = mul(pc.camera, float4(position, 1.0));
-    interp.value = vertex_id/3 + pc.offsets[instance_id];
+    interp.value = vertex_id/3 + offset;
     return interp;
 }
 
 [shader("pixel")]
-float3 pixel(
-    Interp interp,
-    uniform PushConstants pc
-) {
-    let global_tri_id = interp.value;
+uint pixel(Interp interp) {
+    return interp.value;
+}
+
+float3 resolve_inner(uint2 thread, PushConstants pc) {
+    Texture2D<uint> visbuffer = storage_images[pc.vis];
+
+    let global_tri_id = visbuffer[thread];
+
+    if (global_tri_id == MAX_UINT_VALUE) {
+        return float3(0.0);
+    }
+
     let val = prefix_sum_binary_search(pc.prefix_sum, global_tri_id);
-    let instance_id = val.index;
-    let tris_until_next = val.sum - interp.value;
-    let instance = pc.instances[instance_id];
+    let tris_until_next = val.sum - global_tri_id;
+    let instance = pc.instances[val.index];
     let local_tri_id = instance.num_indices/3 - tris_until_next;
 
     let indices = uint3(
@@ -67,11 +83,45 @@ float3 pixel(
         instance.read_index(local_tri_id*3+2),
     );
 
-    let pos = instance.positions[indices.x]  * instance.scale + instance.translation;// + instance.position.xyz,
-    ;//model.positions[indices.y];// + instance.position.xyz,
-    ;//model.positions[indices.z];//
+    WithDerivatives<float3> position;
+    let barycentrics = calculate_barycentrics_from_world_positions(
+        pc.camera,
+        instance.positions[indices.x] * instance.scale + instance.translation,
+        instance.positions[indices.y] * instance.scale + instance.translation,
+        instance.positions[indices.z] * instance.scale + instance.translation,
+        thread,
+        pc.extent,
+        position,
+    );
 
-    Sampler2D img = sampled_images[instance.image];
+    let uv = interpolate(
+        barycentrics,
+        instance.uvs[indices.x],
+        instance.uvs[indices.y],
+        instance.uvs[indices.z]
+    );
 
-    return srgb_lin2encoded(pos);
+    //var normal = normalize(interpolate(
+    //    bary,
+    //    instance.normals[indices.x],
+    //    instance.normals[indices.y],
+    //    instance.normals[indices.z]
+    //).val);
+
+    Sampler2D image = sampled_images[NonUniformResourceIndex(instance.image)];
+
+    return image.SampleGrad(uv.val, uv.dx, uv.dy).rgb;
+}
+
+[shader("compute")]
+[NumThreads(8, 8, 1)]
+void resolve(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
+    if (any(thread >= pc.extent)) {
+        return;
+    }
+
+    let value = resolve_inner(thread, pc);
+
+    WTexture2D<float3> swapchain = storage_images[pc.swapchain];
+    swapchain.Store(thread, srgb_lin2encoded(value));
 }

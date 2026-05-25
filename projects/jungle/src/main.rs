@@ -24,13 +24,42 @@ struct State {
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
     render_pipeline: nbn::Pipeline,
     reset: nbn::Pipeline,
+    resolve: nbn::Pipeline,
     prefix_sum_instances: nbn::Pipeline,
     prefix_sum_data: nbn::Buffer,
-    offsets: nbn::Buffer,
+    draw_commands: nbn::Buffer,
     _data: LoadedData,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
-    depthbuffer: nbn::Image,
+    images: Images,
+}
+
+struct Images {
+    depth: nbn::Image,
+    vis: nbn::IndexedImage,
+}
+
+impl Images {
+    fn new(device: &nbn::Device, width: u32, height: u32,) -> Self {
+        Self {
+            depth: device.create_image(nbn::ImageDescriptor {
+                name: "depth attachment",
+                format: vk::Format::D32_SFLOAT,
+                extent: nbn::ImageExtent::D2 { width, height },
+                usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                mip_levels: 1,
+            }),
+            vis: device.register_owned_image(device.create_image(nbn::ImageDescriptor {
+                name: "vis",
+                format: vk::Format::R32_UINT,
+                extent: nbn::ImageExtent::D2 { width, height },
+                usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_levels: 1,
+            }), true)
+        }
+    }
 }
 
 struct App {
@@ -75,7 +104,7 @@ impl winit::application::ApplicationHandler for App {
                     entry_point: c"pixel",
                 },
             },
-            color_attachment_formats: &[swapchain.create_info.image_format],
+            color_attachment_formats: &[vk::Format::R32_UINT],
             blend_attachments: &[vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)],
             flags: nbn::GraphicsPipelineFlags::BACKFACE_CULLING,
@@ -91,29 +120,27 @@ impl winit::application::ApplicationHandler for App {
         let width = size.width;
         let height = size.height;
 
-        let depthbuffer = device.create_image(nbn::ImageDescriptor {
-            name: "depth attachment",
-            format: vk::Format::D32_SFLOAT,
-            extent: nbn::ImageExtent::D2 { width, height },
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            aspect_mask: vk::ImageAspectFlags::DEPTH,
-            mip_levels: 1,
-        });
 
         self.state = Some(State {
-            prefix_sum_data: device.create_buffer(nbn::BufferDescriptor {
-                name: "prefix_sum_data",
-                size: 8 + 8 * data.instances_cpu.len() as u64,
-                ty: nbn::MemoryLocation::GpuOnly,
-            }).unwrap(),
-            offsets: device.create_buffer(nbn::BufferDescriptor {
-                name: "offsets",
-                size: 4 * data.instances_cpu.len() as u64,
-                ty: nbn::MemoryLocation::GpuOnly,
-            }).unwrap(),
+            prefix_sum_data: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "prefix_sum_data",
+                    size: 8 + 8 * data.num_instances as u64,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
+            draw_commands: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "draw_commands",
+                    size: 16 * data.num_instances as u64,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
             prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
             reset: device.create_compute_pipeline(&shader, c"reset"),
-            depthbuffer,
+            resolve: device.create_compute_pipeline(&shader, c"resolve"),
+
+            images: Images::new(&device, width,height),
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -176,17 +203,7 @@ impl winit::application::ApplicationHandler for App {
                         .iter()
                         .map(|image| device.register_image(*image.view, true)),
                 );
-                state.depthbuffer = device.create_image(nbn::ImageDescriptor {
-                    name: "depth attachment",
-                    format: vk::Format::D32_SFLOAT,
-                    extent: nbn::ImageExtent::D2 {
-                        width: new_size.width,
-                        height: new_size.height,
-                    },
-                    usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-                    aspect_mask: vk::ImageAspectFlags::DEPTH,
-                    mip_levels: 1,
-                });
+                state.images = Images::new(device, new_size.width, new_size.height);
             }
             winit::event::WindowEvent::RedrawRequested => unsafe {
                 let current_frame = state.sync_resources.current_frame;
@@ -218,14 +235,21 @@ impl winit::application::ApplicationHandler for App {
                     command_buffer,
                     image,
                     Some(nbn::BarrierOp::Acquire),
-                    nbn::BarrierOp::ColorAttachmentWrite,
+                    nbn::BarrierOp::ComputeStorageWrite,
                 );
 
                 device.insert_image_pipeline_barrier(
                     command_buffer,
-                    &state.depthbuffer,
+                    &state.images.depth,
                     None,
                     nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+                );
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    &state.images.vis,
+                    None,
+                    nbn::BarrierOp::ColorAttachmentWrite,
                 );
 
                 let (view, proj) =
@@ -238,11 +262,12 @@ impl winit::application::ApplicationHandler for App {
                     PushConstants {
                         camera: (proj * view).to_cols_array(),
                         instances: *state._data.instances,
-                        prefix_sum_counter: *state.prefix_sum_data,
-                        prefix_sum_values: *state.prefix_sum_data + 8,
-                        draw_command: Default::default(),
-                        offsets: *state.offsets,
-                        num_instances: state._data.instances_cpu.len() as _
+                        prefix_sum_data: *state.prefix_sum_data,
+                        draw_commands: *state.draw_commands,
+                        num_instances: state._data.num_instances,
+                        swapchain: *state.swapchain_image_heap_indices[next_image as usize],
+                        vis: *state.images.vis,
+                        extent: [extent.width, extent.height]
                     },
                 );
 
@@ -252,9 +277,7 @@ impl winit::application::ApplicationHandler for App {
                     *state.reset,
                 );
 
-                device.cmd_dispatch(**command_buffer,
-                    1,1,1
-                );
+                device.cmd_dispatch(**command_buffer, 1, 1, 1);
 
                 device.cmd_bind_pipeline(
                     **command_buffer,
@@ -262,20 +285,22 @@ impl winit::application::ApplicationHandler for App {
                     *state.prefix_sum_instances,
                 );
 
-                device.cmd_dispatch(**command_buffer,
-                    (state._data.instances_cpu.len() as u32).div_ceil(64),1,1
+                device.cmd_dispatch(
+                    **command_buffer,
+                    state._data.num_instances.div_ceil(64),
+                    1,
+                    1,
                 );
-
 
                 device.begin_rendering(
                     command_buffer,
                     extent.width,
                     extent.height,
                     &[vk::RenderingAttachmentInfo::default()
-                        .image_view(*image.view)
+                        .image_view(*state.images.vis.image.view)
                         .image_layout(vk::ImageLayout::GENERAL)
                         .clear_value(vk::ClearValue {
-                            color: vk::ClearColorValue { float32: [0.0; 4] },
+                            color: vk::ClearColorValue { uint32: [u32::max_value();4] },
                         })
                         .load_op(vk::AttachmentLoadOp::CLEAR)
                         .store_op(vk::AttachmentStoreOp::STORE)],
@@ -289,7 +314,7 @@ impl winit::application::ApplicationHandler for App {
                             })
                             .load_op(vk::AttachmentLoadOp::CLEAR)
                             .store_op(vk::AttachmentStoreOp::STORE)
-                            .image_view(*state.depthbuffer.view)
+                            .image_view(*state.images.depth.view)
                             .image_layout(vk::ImageLayout::GENERAL),
                     ),
                 );
@@ -300,22 +325,35 @@ impl winit::application::ApplicationHandler for App {
                     *state.render_pipeline,
                 );
 
-                for i in 0..state._data.instances_cpu.len() {
-                    device.cmd_draw(
-                        **command_buffer,
-                        state._data.instances_cpu[i].num_indices,
-                        1,
-                        0,
-                        i as _,
-                    );
-                }
+                device.cmd_draw_indirect(
+                    **command_buffer,
+                    *state.draw_commands.buffer,
+                    0,
+                    state._data.num_instances,
+                    16,
+                );
 
                 device.cmd_end_rendering(**command_buffer);
 
                 device.insert_image_pipeline_barrier(
                     command_buffer,
-                    image,
+                    &state.images.vis,
                     Some(nbn::BarrierOp::ColorAttachmentWrite),
+                    nbn::BarrierOp::ComputeStorageRead,
+                );
+                
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.resolve,
+                );
+
+                device.cmd_dispatch(**command_buffer, extent.width.div_ceil(8), extent.height.div_ceil(8), 1);
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::ComputeStorageWrite),
                     nbn::BarrierOp::Present,
                 );
 
@@ -481,7 +519,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
             &format!("{} instances", path.display()),
             &instances,
         ),
-        instances_cpu: instances,
+        num_instances: instances.len() as _,
     }
 
     // for [num_meshlets, vertices_offset, triangles_offset, meshlets_offset] in meshlets.metadata.iter().flat_map(|x| x) {
@@ -545,7 +583,7 @@ struct LoadedData {
     _meshlets: nbn::Buffer,
     _images: Vec<nbn::IndexedImage>,
     instances: nbn::Buffer,
-    instances_cpu: Vec<Instance>,
+    num_instances: u32,
 }
 
 use nbn::cast_slice;
