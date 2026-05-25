@@ -203,3 +203,8 @@ public struct DrawIndirectCommand {
     public uint first_vertex;
     public uint first_instance;
 };
+
+public float3 rotate_quat(float4 q, float3 v) {
+    float3 t = 2.0f * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
