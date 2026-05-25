@@ -77,10 +77,10 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
     }
 
     let val = prefix_sum_binary_search(pc.prefix_sum, global_tri_id);
-    let tris_until_next = val.sum - global_tri_id;
     let instance = pc.instances[val.index];
     let num_tris = instance.num_indices/3;
-    let local_tri_id = num_tris - tris_until_next;
+    let offset = val.sum - num_tris;
+    let local_tri_id = global_tri_id - offset;
 
     let indices = uint3(
         instance.read_index(local_tri_id*3),
