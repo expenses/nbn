@@ -40,7 +40,7 @@ struct Images {
 }
 
 impl Images {
-    fn new(device: &nbn::Device, width: u32, height: u32,) -> Self {
+    fn new(device: &nbn::Device, width: u32, height: u32) -> Self {
         Self {
             depth: device.create_image(nbn::ImageDescriptor {
                 name: "depth attachment",
@@ -50,14 +50,17 @@ impl Images {
                 aspect_mask: vk::ImageAspectFlags::DEPTH,
                 mip_levels: 1,
             }),
-            vis: device.register_owned_image(device.create_image(nbn::ImageDescriptor {
-                name: "vis",
-                format: vk::Format::R32_UINT,
-                extent: nbn::ImageExtent::D2 { width, height },
-                usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_levels: 1,
-            }), true)
+            vis: device.register_owned_image(
+                device.create_image(nbn::ImageDescriptor {
+                    name: "vis",
+                    format: vk::Format::R32_UINT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                }),
+                true,
+            ),
         }
     }
 }
@@ -120,7 +123,6 @@ impl winit::application::ApplicationHandler for App {
         let width = size.width;
         let height = size.height;
 
-
         self.state = Some(State {
             prefix_sum_data: device
                 .create_buffer(nbn::BufferDescriptor {
@@ -140,7 +142,7 @@ impl winit::application::ApplicationHandler for App {
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
 
-            images: Images::new(&device, width,height),
+            images: Images::new(&device, width, height),
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -231,27 +233,6 @@ impl winit::application::ApplicationHandler for App {
 
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
 
-                device.insert_image_pipeline_barrier(
-                    command_buffer,
-                    image,
-                    Some(nbn::BarrierOp::Acquire),
-                    nbn::BarrierOp::ComputeStorageWrite,
-                );
-
-                device.insert_image_pipeline_barrier(
-                    command_buffer,
-                    &state.images.depth,
-                    None,
-                    nbn::BarrierOp::DepthStencilAttachmentReadWrite,
-                );
-
-                device.insert_image_pipeline_barrier(
-                    command_buffer,
-                    &state.images.vis,
-                    None,
-                    nbn::BarrierOp::ColorAttachmentWrite,
-                );
-
                 let (view, proj) =
                     state
                         .freecam
@@ -267,7 +248,7 @@ impl winit::application::ApplicationHandler for App {
                         num_instances: state._data.num_instances,
                         swapchain: *state.swapchain_image_heap_indices[next_image as usize],
                         vis: *state.images.vis,
-                        extent: [extent.width, extent.height]
+                        extent: [extent.width, extent.height],
                     },
                 );
 
@@ -292,6 +273,31 @@ impl winit::application::ApplicationHandler for App {
                     1,
                 );
 
+                // todo: the indirect draw buffer written by this dispatch needs to be synced
+                // with the draw call. Currently I'm just hackily doing these image barriers here
+                // but ideally there'd be a buffer barrier mechanism.
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                );
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    &state.images.depth,
+                    None,
+                    nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+                );
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    &state.images.vis,
+                    None,
+                    nbn::BarrierOp::ColorAttachmentWrite,
+                );
+
                 device.begin_rendering(
                     command_buffer,
                     extent.width,
@@ -300,7 +306,9 @@ impl winit::application::ApplicationHandler for App {
                         .image_view(*state.images.vis.image.view)
                         .image_layout(vk::ImageLayout::GENERAL)
                         .clear_value(vk::ClearValue {
-                            color: vk::ClearColorValue { uint32: [u32::max_value();4] },
+                            color: vk::ClearColorValue {
+                                uint32: [u32::max_value(); 4],
+                            },
                         })
                         .load_op(vk::AttachmentLoadOp::CLEAR)
                         .store_op(vk::AttachmentStoreOp::STORE)],
@@ -341,14 +349,19 @@ impl winit::application::ApplicationHandler for App {
                     Some(nbn::BarrierOp::ColorAttachmentWrite),
                     nbn::BarrierOp::ComputeStorageRead,
                 );
-                
+
                 device.cmd_bind_pipeline(
                     **command_buffer,
                     vk::PipelineBindPoint::COMPUTE,
                     *state.resolve,
                 );
 
-                device.cmd_dispatch(**command_buffer, extent.width.div_ceil(8), extent.height.div_ceil(8), 1);
+                device.cmd_dispatch(
+                    **command_buffer,
+                    extent.width.div_ceil(8),
+                    extent.height.div_ceil(8),
+                    1,
+                );
 
                 device.insert_image_pipeline_barrier(
                     command_buffer,
@@ -431,17 +444,22 @@ fn load_gltf<P: AsRef<std::path::Path>>(
 
     assert_eq!(buffer, None);
 
-    let buffer_file =
-        std::fs::File::open(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
-    let buffer = staging_buffer.create_buffer(
+    let buffer_data =
+        std::fs::read(path.with_file_name(gltf.buffers[0].uri.as_ref().unwrap())).unwrap();
+
+    let buffer = staging_buffer.create_buffer_from_slice(
         device,
         &format!("{} buffer", path.display()),
-        buffer_file.metadata().unwrap().len() as _,
-        buffer_file,
+        &buffer_data,
     );
 
-    let meshlets =
-        read_meshlets_file(&device, staging_buffer, &path.with_extension("meshlets")).unwrap();
+    // let meshlets =
+    //     read_meshlets_file(&device, staging_buffer, &path.with_extension("meshlets")).unwrap();
+
+    let get_buffer_data = |accessor: &goth_gltf::Accessor| {
+        let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
+        &buffer_data[bv.byte_offset + accessor.byte_offset..]
+    };
 
     let get_buffer_offset = |accessor: &goth_gltf::Accessor| {
         let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
@@ -457,7 +475,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
         .filter_map(|node| node.mesh.map(|mesh_index| (node, mesh_index)))
         .for_each(|(node, mesh_index)| {
             let mesh = &gltf.meshes[mesh_index];
-            let mesh_meshlets = &meshlets.metadata[mesh_index];
+            // let mesh_meshlets = &meshlets.metadata[mesh_index];
 
             let (translation, scale) = match node.transform() {
                 goth_gltf::NodeTransform::Set {
@@ -483,37 +501,68 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 };
 
                 let material = &gltf.materials[primitive.material.unwrap_or(0)];
-                let texture = &gltf.textures[material
-                    .pbr_metallic_roughness
-                    .base_color_texture
-                    .as_ref()
-                    .unwrap()
-                    .index];
-                let image = &gltf.images[texture.source.unwrap()];
-                let path = path.with_file_name(image.uri.as_ref().unwrap());
-                let image = load_dds(device, staging_buffer, path);
-                let image = device.register_owned_image(image, false);
 
-                let instance = Instance {
-                    translation,
-                    scale,
-                    positions: get(primitive.attributes.position),
-                    uvs: get(primitive.attributes.texcoord_0),
-                    indices: get_buffer_offset(indices),
-                    flags: is_32_bit as _,
-                    num_indices: indices.count as _,
-                    image: *image.index,
+                let image_index = if let Some(sampler) =
+                    material.pbr_metallic_roughness.base_color_texture.as_ref()
+                {
+                    let texture = &gltf.textures[sampler.index];
+                    let image = &gltf.images[texture.source.unwrap()];
+                    let path = path.with_file_name(image.uri.as_ref().unwrap());
+                    let image = load_dds(device, staging_buffer, path);
+                    let image = device.register_owned_image(image, false);
+
+                    let index = *image.index;
+
+                    images.push(image);
+
+                    index
+                } else {
+                    u32::max_value()
                 };
 
-                instances.push(instance);
-                images.push(image);
+                if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {
+                    let translations = &gltf.accessors[instancing.attributes.translation];
+                    let scales = &gltf.accessors[instancing.attributes.scale];
+
+                    let scales =
+                        &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(scales))[..scales.count];
+
+                    let translations =
+                        &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(translations))
+                            [..translations.count];
+
+                    for (&translation, &scale) in translations.iter().zip(scales).take(50) {
+                        dbg!(scale);
+                        instances.push(Instance {
+                            translation,
+                            scale: (scale[0] + scale[1] + scale[2]) / 3.0,
+                            positions: get(primitive.attributes.position),
+                            uvs: get(primitive.attributes.texcoord_0),
+                            indices: get_buffer_offset(indices),
+                            flags: is_32_bit as _,
+                            num_indices: indices.count as _,
+                            image: image_index,
+                        });
+                    }
+                } else {
+                    instances.push(Instance {
+                        translation,
+                        scale,
+                        positions: get(primitive.attributes.position),
+                        uvs: get(primitive.attributes.texcoord_0),
+                        indices: get_buffer_offset(indices),
+                        flags: is_32_bit as _,
+                        num_indices: indices.count as _,
+                        image: image_index,
+                    });
+                }
             }
         });
 
     LoadedData {
         _buffer: buffer,
         _images: images,
-        _meshlets: meshlets.buffer,
+        // _meshlets: meshlets.buffer,
         instances: staging_buffer.create_buffer_from_slice(
             device,
             &format!("{} instances", path.display()),
@@ -560,13 +609,19 @@ fn load_dds<P: AsRef<std::path::Path>>(
 
     // use the 1st image instead as I don't have enough vram otherwise
 
+    let (offsets, divisor) = if extent.width >= 4096 {
+        (nbn::ImageLods::Offsets(&offsets[1..]), 2)
+    } else {
+        (nbn::ImageLods::Offsets(&offsets), 1)
+    };
+
     staging_buffer.create_sampled_image(
         device,
         nbn::SampledImageDescriptor {
             name: &path.display().to_string(),
             extent: vk::Extent3D {
-                width: dds.get_width() / 2,
-                height: dds.get_height() / 2,
+                width: dds.get_width() / divisor,
+                height: dds.get_height() / divisor,
                 depth: dds.get_depth(),
             }
             .into(),
@@ -574,13 +629,13 @@ fn load_dds<P: AsRef<std::path::Path>>(
         },
         &dds.data,
         nbn::QueueType::Graphics,
-        nbn::ImageLods::Offsets(&offsets[1..]),
+        offsets,
     )
 }
 
 struct LoadedData {
     _buffer: nbn::Buffer,
-    _meshlets: nbn::Buffer,
+    // _meshlets: nbn::Buffer,
     _images: Vec<nbn::IndexedImage>,
     instances: nbn::Buffer,
     num_instances: u32,

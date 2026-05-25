@@ -38,14 +38,14 @@ void prefix_sum_instances(
     command.vertex_count = num_indices;
     command.instance_count = 1;
     command.first_vertex = value.sum - num_tris;
-    command.first_instance = thread;
+    command.first_instance = 0;
 }
 
 [shader("vertex")]
 Interp vertex(
     uint vertex_id : SV_VertexID,
     uint offset : SV_StartVertexLocation,
-    uint instance_id: SV_VulkanInstanceID,
+    uint instance_id: SV_DrawIndex,
     uniform PushConstants pc
 ) {
     let instance = pc.instances[instance_id];
@@ -75,7 +75,8 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
     let val = prefix_sum_binary_search(pc.prefix_sum, global_tri_id);
     let tris_until_next = val.sum - global_tri_id;
     let instance = pc.instances[val.index];
-    let local_tri_id = instance.num_indices/3 - tris_until_next;
+    let num_tris = instance.num_indices/3;
+    let local_tri_id = num_tris - tris_until_next;
 
     let indices = uint3(
         instance.read_index(local_tri_id*3),
@@ -108,9 +109,14 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
     //    instance.normals[indices.z]
     //).val);
 
-    Sampler2D image = sampled_images[NonUniformResourceIndex(instance.image)];
+    float3 color = float3(1);
 
-    return image.SampleGrad(uv.val, uv.dx, uv.dy).rgb;
+    if (instance.image != MAX_UINT_VALUE) {
+        Sampler2D image = sampled_images[NonUniformResourceIndex(instance.image)];
+        color = image.SampleGrad(uv.val, uv.dx, uv.dy).rgb;
+    }
+
+    return color;
 }
 
 [shader("compute")]
