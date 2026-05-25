@@ -28,29 +28,33 @@ void prefix_sum_instances(
         return;
     }
 
+    if (thread % 10 != 0) {
+        return;
+    }
+
     let num_indices = pc.instances[thread].num_indices;
     let num_tris = num_indices / 3;
 
     let value = prefix_sum_inclusive_append(pc.prefix_sum, thread, num_tris);
 
-    DrawIndirectCommand* command = &pc.draw_commands[thread];
+    DrawIndirectCommand* command = &pc.draw_commands[value.index];
 
     command.vertex_count = num_indices;
     command.instance_count = 1;
     command.first_vertex = value.sum - num_tris;
-    command.first_instance = 0;
+    command.first_instance = thread;
 }
 
 [shader("vertex")]
 Interp vertex(
     uint vertex_id : SV_VertexID,
     uint offset : SV_StartVertexLocation,
-    uint instance_id: SV_DrawIndex,
+    uint instance_id: SV_VulkanInstanceID,
     uniform PushConstants pc
 ) {
     let instance = pc.instances[instance_id];
     let index = instance.read_index(vertex_id);
-    let position = instance.positions[index] * instance.scale + instance.translation;
+    let position = instance.transform_point(instance.positions[index]);
 
     Interp interp;
     interp.position = mul(pc.camera, float4(position, 1.0));
@@ -87,9 +91,9 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
     WithDerivatives<float3> position;
     let barycentrics = calculate_barycentrics_from_world_positions(
         pc.camera,
-        instance.positions[indices.x] * instance.scale + instance.translation,
-        instance.positions[indices.y] * instance.scale + instance.translation,
-        instance.positions[indices.z] * instance.scale + instance.translation,
+        instance.transform_point(instance.positions[indices.x]),
+        instance.transform_point(instance.positions[indices.y]),
+        instance.transform_point(instance.positions[indices.z]),
         thread,
         pc.extent,
         position,

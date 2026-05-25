@@ -3,13 +3,18 @@ import shared.util;
 
 struct Instance {
     float3 translation;
-    float scale;
+    float3 scale;
+    float4 rotation;
     float3* positions;
     float2* uvs;
     uint* indices;
     uint num_indices;
     uint image;
     uint8_t flags;
+
+    float3 transform_point(float3 point) {
+        return rotate_quat(rotation, point) * scale + translation;
+    }
 
     uint read_index(uint vertex_id) {
         if (flags!=0) {

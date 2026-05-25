@@ -333,11 +333,13 @@ impl winit::application::ApplicationHandler for App {
                     *state.render_pipeline,
                 );
 
-                device.cmd_draw_indirect(
+                device.cmd_draw_indirect_count(
                     **command_buffer,
                     *state.draw_commands.buffer,
                     0,
-                    state._data.num_instances,
+                    *state.prefix_sum_data.buffer,
+                    0,
+                    state._data.num_instances * 10,
                     16,
                 );
 
@@ -477,12 +479,12 @@ fn load_gltf<P: AsRef<std::path::Path>>(
             let mesh = &gltf.meshes[mesh_index];
             // let mesh_meshlets = &meshlets.metadata[mesh_index];
 
-            let (translation, scale) = match node.transform() {
+            let (translation, scale, rotation) = match node.transform() {
                 goth_gltf::NodeTransform::Set {
                     translation,
                     scale,
-                    rotation: [0.0, 0.0, 0.0, 1.0],
-                } if scale[1] == scale[0] && scale[2] == scale[0] => (translation, scale[0]),
+                    rotation,
+                } => (translation, scale, rotation),
                 other => panic!("bad transform: {:?}", other),
             };
 
@@ -523,6 +525,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {
                     let translations = &gltf.accessors[instancing.attributes.translation];
                     let scales = &gltf.accessors[instancing.attributes.scale];
+                    let rotations = &gltf.accessors[instancing.attributes.rotation];
 
                     let scales =
                         &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(scales))[..scales.count];
@@ -531,11 +534,16 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(translations))
                             [..translations.count];
 
-                    for (&translation, &scale) in translations.iter().zip(scales).take(50) {
-                        dbg!(scale);
+                    let rotations = &nbn::cast_slice::<_, [f32; 4]>(get_buffer_data(rotations))
+                        [..rotations.count];
+
+                    for ((&translation, &scale), &rotation) in
+                        translations.iter().zip(scales).zip(rotations).take(500)
+                    {
                         instances.push(Instance {
                             translation,
-                            scale: (scale[0] + scale[1] + scale[2]) / 3.0,
+                            scale,
+                            rotation,
                             positions: get(primitive.attributes.position),
                             uvs: get(primitive.attributes.texcoord_0),
                             indices: get_buffer_offset(indices),
@@ -548,6 +556,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     instances.push(Instance {
                         translation,
                         scale,
+                        rotation,
                         positions: get(primitive.attributes.position),
                         uvs: get(primitive.attributes.texcoord_0),
                         indices: get_buffer_offset(indices),
