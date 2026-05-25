@@ -1540,6 +1540,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gltf-copy-materials"
+version = "0.1.0"
+dependencies = [
+ "goth-gltf 0.3.0",
+ "nanoserde",
+]
+
+[[package]]
 name = "gltf-meshlets"
 version = "0.1.0"
 dependencies = [
