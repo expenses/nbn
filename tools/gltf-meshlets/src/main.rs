@@ -82,8 +82,9 @@ fn main() {
             assert_eq!(positions.component_type, goth_gltf::ComponentType::Float);
             let slice = get_buffer_slice(positions);
             let adapter = meshopt::utilities::VertexDataAdapter::new(slice, 4 * 3, 0).unwrap();
-            let max_vertices = 64;
-            let max_triangles = 96;
+            // https://gpuopen.com/learn/mesh_shaders/mesh_shaders-optimization_and_best_practices/
+            let max_vertices = 128;
+            let max_triangles = 256;
             let meshlets = meshopt::clusterize::build_meshlets(
                 &indices,
                 &adapter,
