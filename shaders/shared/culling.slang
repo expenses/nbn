@@ -19,7 +19,7 @@ bool frustumCull(float3 view_center, float radius, float near_plane, float4 frus
         > -radius;
     // top and bottom planes
     visible &= view_center.z * frustum[3]
-            - abs(view_center.y) * frustum[2]
+            + abs(view_center.y) * frustum[2]
         > -radius;
     return visible;
 }
