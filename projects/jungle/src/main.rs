@@ -29,12 +29,16 @@ struct State {
     resolve: nbn::Pipeline,
     prefix_sum_instances: nbn::Pipeline,
     prefix_sum_data: nbn::Buffer,
-    draw_commands: nbn::Buffer,
-    draw_counts: nbn::Buffer,
+    visible_meshlets: nbn::Buffer,
+    meshlet_instances: nbn::Buffer,
+    dispatch: nbn::Buffer,
     _data: LoadedData,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
     images: Images,
+    view: [f32; 16],
+    update_view: bool,
+    camera_pos: [f32; 3],
     uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
 }
 
@@ -101,10 +105,14 @@ impl winit::application::ApplicationHandler for App {
 
         let render_pipeline = device.create_graphics_pipeline(nbn::GraphicsPipelineDesc {
             name: "triangle pipeline",
-            shaders: nbn::GraphicsPipelineShaders::Legacy {
-                vertex: nbn::ShaderDesc {
+            shaders: nbn::GraphicsPipelineShaders::Task {
+                task: nbn::ShaderDesc {
                     module: &shader,
-                    entry_point: c"vertex",
+                    entry_point: c"task",
+                },
+                mesh: nbn::ShaderDesc {
+                    module: &shader,
+                    entry_point: c"mesh",
                 },
                 fragment: nbn::ShaderDesc {
                     module: &shader,
@@ -127,28 +135,19 @@ impl winit::application::ApplicationHandler for App {
         let width = size.width;
         let height = size.height;
 
+        let create_buffer = |name, size| {
+            device
+                .create_buffer(nbn::BufferDescriptor {
+                    name,
+                    size,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap()
+        };
+
         self.state = Some(State {
-            prefix_sum_data: device
-                .create_buffer(nbn::BufferDescriptor {
-                    name: "prefix_sum_data",
-                    size: 8 + 8 * data.num_instances as u64,
-                    ty: nbn::MemoryLocation::GpuOnly,
-                })
-                .unwrap(),
-            draw_commands: device
-                .create_buffer(nbn::BufferDescriptor {
-                    name: "draw_commands",
-                    size: 16 * data.num_instances as u64,
-                    ty: nbn::MemoryLocation::GpuOnly,
-                })
-                .unwrap(),
-            draw_counts: device
-                .create_buffer(nbn::BufferDescriptor {
-                    name: "draw_counts",
-                    size: 4,
-                    ty: nbn::MemoryLocation::GpuOnly,
-                })
-                .unwrap(),
+            prefix_sum_data: create_buffer("prefix_sum_data", 8 + 8 * data.num_instances as u64),
+            dispatch: create_buffer("dispatch", 12),
             uniform_buffers: std::array::from_fn(|i| {
                 device
                     .create_buffer(nbn::BufferDescriptor {
@@ -158,6 +157,8 @@ impl winit::application::ApplicationHandler for App {
                     })
                     .unwrap()
             }),
+            visible_meshlets: create_buffer("visible_meshlets", 4),
+            meshlet_instances: create_buffer("meshlet_instances", 8 * 10_000_000),
             prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
@@ -182,6 +183,9 @@ impl winit::application::ApplicationHandler for App {
             _data: data,
             freecam: nbn::freecam::FreeCam::new([0.01; 3].into(), NEAR_PLANE),
             frame_index: 0,
+            view: [0.0; 16],
+            update_view: true,
+            camera_pos: [0.0; 3],
         })
     }
 
@@ -241,6 +245,11 @@ impl winit::application::ApplicationHandler for App {
                 let frustum_x = (proj.row(3).truncate() + proj.row(0).truncate()).normalize();
                 let frustum_y = (proj.row(3).truncate() + proj.row(1).truncate()).normalize();
 
+                if state.update_view {
+                    state.view = view.to_cols_array();
+                    state.camera_pos = state.freecam.camera_rig.final_transform.position.into();
+                }
+
                 state.uniform_buffers[current_frame]
                     .try_as_slice_mut::<Uniforms>()
                     .unwrap()[0] = Uniforms {
@@ -248,10 +257,10 @@ impl winit::application::ApplicationHandler for App {
                     num_instances: state._data.num_instances,
                     vis: *state.images.vis,
                     extent: [extent.width, extent.height],
-                    camera_pos: state.freecam.camera_rig.final_transform.position.into(),
+                    camera_pos: state.camera_pos,
                     near_plane: NEAR_PLANE,
                     frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
-                    view: view.to_cols_array(),
+                    view: state.view,
                 };
 
                 let mut frame = state.sync_resources.wait_for_frame(device);
@@ -280,9 +289,10 @@ impl winit::application::ApplicationHandler for App {
                         uniforms: *state.uniform_buffers[current_frame],
                         instances: *state._data.instances,
                         prefix_sum_data: *state.prefix_sum_data,
-                        draw_commands: *state.draw_commands,
                         swapchain: *state.swapchain_image_heap_indices[next_image as usize],
-                        draw_counts: *state.draw_counts,
+                        meshlet_instances: *state.meshlet_instances,
+                        visible_meshlets: *state.visible_meshlets,
+                        dispatch: *state.dispatch,
                     },
                 );
 
@@ -332,24 +342,6 @@ impl winit::application::ApplicationHandler for App {
                     nbn::BarrierOp::ColorAttachmentWrite,
                 );
 
-                let (src_s, src_a, _) = nbn::BarrierOp::ComputeStorageWrite.into();
-                let (dst_s, dst_a, _) = nbn::BarrierOp::DrawIndirect.into();
-
-                device.cmd_pipeline_barrier2(
-                    **command_buffer,
-                    &vk::DependencyInfo::default().buffer_memory_barriers(&[
-                        vk::BufferMemoryBarrier2::default()
-                            .src_queue_family_index(device.get_queue(command_buffer.ty).index)
-                            .dst_queue_family_index(device.get_queue(command_buffer.ty).index)
-                            .src_stage_mask(src_s)
-                            .src_access_mask(src_a)
-                            .dst_stage_mask(dst_s)
-                            .dst_access_mask(dst_a)
-                            .buffer(*state.draw_commands.buffer)
-                            .size(vk::WHOLE_SIZE),
-                    ]),
-                );
-
                 device.begin_rendering(
                     command_buffer,
                     extent.width,
@@ -385,15 +377,22 @@ impl winit::application::ApplicationHandler for App {
                     *state.render_pipeline,
                 );
 
-                device.cmd_draw_indirect_count(
+                device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
                     **command_buffer,
-                    *state.draw_commands.buffer,
+                    *state.dispatch.buffer,
                     0,
-                    *state.draw_counts.buffer,
-                    0,
-                    state._data.num_instances,
+                    1,
                     16,
                 );
+                // device.cmd_draw_indirect_count(
+                //     **command_buffer,
+                //     *state.draw_commands.buffer,
+                //     0,
+                //     *state.draw_counts.buffer,
+                //     0,
+                //     state._data.num_instances,
+                //     16,
+                // );
 
                 device.cmd_end_rendering(**command_buffer);
 
@@ -456,6 +455,9 @@ impl winit::application::ApplicationHandler for App {
                 let pressed = element_state == ElementState::Pressed;
 
                 match code {
+                    KeyCode::KeyV if pressed => {
+                        state.update_view = !state.update_view;
+                    }
                     KeyCode::Escape if pressed => {
                         event_loop.exit();
                     }
@@ -507,8 +509,8 @@ fn load_gltf<P: AsRef<std::path::Path>>(
         &buffer_data,
     );
 
-    // let meshlets =
-    //     read_meshlets_file(&device, staging_buffer, &path.with_extension("meshlets")).unwrap();
+    let meshlets =
+        read_meshlets_file(&device, staging_buffer, &path.with_extension("meshlets")).unwrap();
 
     let get_buffer_data = |accessor: &goth_gltf::Accessor| {
         let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
@@ -540,7 +542,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
         .filter_map(|(i, node)| node.mesh.map(|mesh_index| (i, node, mesh_index)))
         .for_each(|(i, node, mesh_index)| {
             let mesh = &gltf.meshes[mesh_index];
-            // let mesh_meshlets = &meshlets.metadata[mesh_index];
+            let mesh_meshlets = &meshlets.metadata[mesh_index];
 
             let (mut translation, scale, rotation) = match node.transform() {
                 goth_gltf::NodeTransform::Set {
@@ -565,7 +567,16 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 }
             }
 
-            for primitive in &mesh.primitives {
+            for (
+                primitive,
+                &[
+                    num_meshlets,
+                    vertices_offset,
+                    triangles_offset,
+                    meshlets_offset,
+                ],
+            ) in mesh.primitives.iter().zip(mesh_meshlets)
+            {
                 let get = |accessor_index: Option<usize>| {
                     let accessor = &gltf.accessors[accessor_index.unwrap()];
                     assert_eq!(accessor.component_type, goth_gltf::ComponentType::Float);
@@ -621,6 +632,21 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     u32::max_value()
                 };
 
+                let instance = Instance {
+                    translation,
+                    scale,
+                    rotation,
+                    positions: get(primitive.attributes.position),
+                    // uvs: get(primitive.attributes.texcoord_0),
+                    flags: is_32_bit as _,
+                    image: image_index,
+                    radius,
+                    meshlets: *meshlets.buffer + meshlets_offset as u64,
+                    triangles: *meshlets.buffer + triangles_offset as u64,
+                    vertices: *meshlets.buffer + vertices_offset as u64,
+                    num_meshlets,
+                };
+
                 if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {
                     assert_eq!(
                         (translation, rotation, scale),
@@ -648,29 +674,12 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                             translation,
                             scale,
                             rotation,
-                            positions: get(primitive.attributes.position),
-                            uvs: get(primitive.attributes.texcoord_0),
-                            indices: get_buffer_offset(indices),
-                            flags: is_32_bit as _,
-                            num_indices: indices.count as _,
-                            image: image_index,
-                            radius,
+                            ..instance
                         });
                         num_indices += indices.count;
                     }
                 } else {
-                    instances.push(Instance {
-                        translation,
-                        scale,
-                        rotation,
-                        positions: get(primitive.attributes.position),
-                        uvs: get(primitive.attributes.texcoord_0),
-                        indices: get_buffer_offset(indices),
-                        flags: is_32_bit as _,
-                        num_indices: indices.count as _,
-                        image: image_index,
-                        radius,
-                    });
+                    instances.push(instance);
                     num_indices += indices.count;
                 }
 
@@ -681,7 +690,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
     LoadedData {
         _buffer: buffer,
         _images: images,
-        // _meshlets: meshlets.buffer,
+        _meshlets: meshlets.buffer,
         instances: staging_buffer.create_buffer_from_slice(
             device,
             &format!("{} instances", path.display()),
@@ -754,7 +763,7 @@ fn load_dds<P: AsRef<std::path::Path>>(
 
 struct LoadedData {
     _buffer: nbn::Buffer,
-    // _meshlets: nbn::Buffer,
+    _meshlets: nbn::Buffer,
     _images: Vec<nbn::IndexedImage>,
     instances: nbn::Buffer,
     num_instances: u32,
