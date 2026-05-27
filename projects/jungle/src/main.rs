@@ -298,6 +298,23 @@ impl winit::application::ApplicationHandler for App {
                     nbn::BarrierOp::ColorAttachmentWrite,
                 );
 
+                let (src_s, src_a, _) = nbn::BarrierOp::ComputeStorageWrite.into();
+                let (dst_s, dst_a, _) = nbn::BarrierOp::DrawIndirect.into();
+
+                device.cmd_pipeline_barrier2(
+                    **command_buffer,
+                    &vk::DependencyInfo::default().buffer_memory_barriers(&[
+                        vk::BufferMemoryBarrier2::default()
+                            .src_queue_family_index(device.get_queue(command_buffer.ty).index)
+                            .dst_queue_family_index(device.get_queue(command_buffer.ty).index)
+                            .src_stage_mask(src_s)
+                            .src_access_mask(src_a)
+                            .dst_stage_mask(dst_s)
+                            .dst_access_mask(dst_a)
+                            .buffer(*state.draw_commands.buffer),
+                    ]),
+                );
+
                 device.begin_rendering(
                     command_buffer,
                     extent.width,
