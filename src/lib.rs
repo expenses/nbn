@@ -366,6 +366,7 @@ impl Device {
         assert!(enabled_vulkan_1_2_features.shader_float16 > 0);
         assert!(enabled_vulkan_1_2_features.vulkan_memory_model > 0);
         assert!(enabled_vulkan_1_2_features.vulkan_memory_model_device_scope > 0);
+        assert!(enabled_vulkan_1_2_features.draw_indirect_count > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_mesh_shader_features.mesh_shader > 0);
@@ -402,7 +403,8 @@ impl Device {
             .shader_buffer_int64_atomics(true)
             .shader_float16(true)
             .vulkan_memory_model(true)
-            .vulkan_memory_model_device_scope(true);
+            .vulkan_memory_model_device_scope(true)
+            .draw_indirect_count(true);
 
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
