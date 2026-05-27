@@ -34,6 +34,7 @@ fn main() {
 
     to_data.images = from_data.images;
     to_data.textures = from_data.textures;
+    to_data.samplers = from_data.samplers;
 
     std::fs::write(&to, to_data.serialize_json()).unwrap();
 }
