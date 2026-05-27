@@ -15,6 +15,8 @@ fn main() {
         .unwrap();
 }
 
+const NEAR_PLANE: f32 = 0.001;
+
 struct State {
     device: nbn::Device,
     window: winit::window::Window,
@@ -168,7 +170,7 @@ impl winit::application::ApplicationHandler for App {
             render_pipeline,
             swapchain,
             _data: data,
-            freecam: nbn::freecam::FreeCam::new([0.01; 3].into()),
+            freecam: nbn::freecam::FreeCam::new([0.01; 3].into(), NEAR_PLANE),
             frame_index: 0,
         })
     }
@@ -246,6 +248,9 @@ impl winit::application::ApplicationHandler for App {
                         .freecam
                         .update(extent.width, extent.height, 1.0 / 60.0, 5.0);
 
+                let frustum_x = (proj.row(3).truncate() + proj.row(0).truncate()).normalize();
+                let frustum_y = (proj.row(3).truncate() + proj.row(1).truncate()).normalize();
+
                 device.push_constants::<PushConstants>(
                     &command_buffer,
                     PushConstants {
@@ -259,6 +264,9 @@ impl winit::application::ApplicationHandler for App {
                         extent: [extent.width, extent.height],
                         camera_pos: state.freecam.camera_rig.final_transform.position.into(),
                         draw_counts: *state.draw_counts,
+                        near_plane: NEAR_PLANE,
+                        frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
+                        view: view.to_cols_array(),
                     },
                 );
 
@@ -321,7 +329,8 @@ impl winit::application::ApplicationHandler for App {
                             .src_access_mask(src_a)
                             .dst_stage_mask(dst_s)
                             .dst_access_mask(dst_a)
-                            .buffer(*state.draw_commands.buffer),
+                            .buffer(*state.draw_commands.buffer)
+                            .size(vk::WHOLE_SIZE),
                     ]),
                 );
 

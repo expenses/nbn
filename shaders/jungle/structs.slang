@@ -29,7 +29,10 @@ struct Instance {
 
 struct PushConstants {
     float4x4 camera;
+    float4x4 view;
+    float4 frustum;
     float3 camera_pos;
+    float near_plane;
     uint* prefix_sum_data;
     DrawIndirectCommand* draw_commands;
     Instance* instances;

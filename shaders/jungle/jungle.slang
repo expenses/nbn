@@ -34,9 +34,26 @@ void prefix_sum_instances(
     let num_indices = instance.num_indices;
     let num_tris = num_indices / 3;
 
-    let dist = instance.radius * max(instance.scale.x, max(instance.scale.y, instance.scale.z)) * 75;
+    let radius = instance.radius * max(instance.scale.x, max(instance.scale.y, instance.scale.z));
+    
+    var visible = true;
 
-    if (distance_squared(pc.camera_pos, instance.translation) > (dist*dist)) {
+    let view_center = mul(pc.view, float4(instance.translation, 1.0)).xyz;
+
+    // near plane
+    visible &= view_center.z - radius < pc.near_plane;
+    // left and right planes
+    visible &= view_center.z * pc.frustum[1]
+            - abs(view_center.x) * pc.frustum[0]
+        > -radius;
+    // top and bottom planes
+    visible &= view_center.z * pc.frustum[3]
+            - abs(view_center.y) * pc.frustum[2]
+        > -radius;    
+    let dist = radius * 75;
+    visible &= distance_squared(pc.camera_pos, instance.translation) < (dist*dist);
+
+    if (!visible) {
         return;
     }
 
