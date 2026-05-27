@@ -198,6 +198,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         let instance = pc.instances[query.CommittedRayInstanceCustomIndex()];
         let prim = query.CommittedPrimitiveIndex();
+        let mat = query.CommittedObjectToWorld3x4();
         let indices = uint3(
             instance.read_index(prim*3),
             instance.read_index(prim*3+1),
@@ -207,9 +208,9 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         WithDerivatives<float3> position;
         let barycentrics = calculate_barycentrics_from_world_positions(
             pc.uniforms.camera,
-            instance.transform_point(instance.positions[indices.x]),
-            instance.transform_point(instance.positions[indices.y]),
-            instance.transform_point(instance.positions[indices.z]),
+            mul(mat, float4(instance.positions[indices.x],1)),
+            mul(mat, float4(instance.positions[indices.y],1)),
+            mul(mat, float4(instance.positions[indices.z],1)),
             thread,
             pc.uniforms.extent,
             position
