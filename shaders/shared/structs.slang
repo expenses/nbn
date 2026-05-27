@@ -14,6 +14,7 @@ struct Meshlet {
     uint triangle_offset;
     uint8_t vertex_count;
     uint8_t triangle_count;
+    uint8_t2 pad;
 
     property float3 cone_axis {
         get {
