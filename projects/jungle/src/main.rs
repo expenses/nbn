@@ -35,6 +35,7 @@ struct State {
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
     images: Images,
+    uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
 }
 
 struct Images {
@@ -148,6 +149,15 @@ impl winit::application::ApplicationHandler for App {
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
+            uniform_buffers: std::array::from_fn(|i| {
+                device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: &format!("uniform_buffer_{}", i),
+                        size: std::mem::size_of::<Uniforms>() as _,
+                        ty: nbn::MemoryLocation::CpuToGpu,
+                    })
+                    .unwrap()
+            }),
             prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
@@ -223,6 +233,27 @@ impl winit::application::ApplicationHandler for App {
 
                 let extent = state.swapchain.create_info.image_extent;
 
+                let (view, proj) =
+                    state
+                        .freecam
+                        .update(extent.width, extent.height, 1.0 / 60.0, 5.0);
+
+                let frustum_x = (proj.row(3).truncate() + proj.row(0).truncate()).normalize();
+                let frustum_y = (proj.row(3).truncate() + proj.row(1).truncate()).normalize();
+
+                state.uniform_buffers[current_frame]
+                    .try_as_slice_mut::<Uniforms>()
+                    .unwrap()[0] = Uniforms {
+                    camera: (proj * view).to_cols_array(),
+                    num_instances: state._data.num_instances,
+                    vis: *state.images.vis,
+                    extent: [extent.width, extent.height],
+                    camera_pos: state.freecam.camera_rig.final_transform.position.into(),
+                    near_plane: NEAR_PLANE,
+                    frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
+                    view: view.to_cols_array(),
+                };
+
                 let mut frame = state.sync_resources.wait_for_frame(device);
 
                 let (next_image, _suboptimal) = device
@@ -243,30 +274,15 @@ impl winit::application::ApplicationHandler for App {
 
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
 
-                let (view, proj) =
-                    state
-                        .freecam
-                        .update(extent.width, extent.height, 1.0 / 60.0, 5.0);
-
-                let frustum_x = (proj.row(3).truncate() + proj.row(0).truncate()).normalize();
-                let frustum_y = (proj.row(3).truncate() + proj.row(1).truncate()).normalize();
-
                 device.push_constants::<PushConstants>(
                     &command_buffer,
                     PushConstants {
-                        camera: (proj * view).to_cols_array(),
+                        uniforms: *state.uniform_buffers[current_frame],
                         instances: *state._data.instances,
                         prefix_sum_data: *state.prefix_sum_data,
                         draw_commands: *state.draw_commands,
-                        num_instances: state._data.num_instances,
                         swapchain: *state.swapchain_image_heap_indices[next_image as usize],
-                        vis: *state.images.vis,
-                        extent: [extent.width, extent.height],
-                        camera_pos: state.freecam.camera_rig.final_transform.position.into(),
                         draw_counts: *state.draw_counts,
-                        near_plane: NEAR_PLANE,
-                        frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
-                        view: view.to_cols_array(),
                     },
                 );
 

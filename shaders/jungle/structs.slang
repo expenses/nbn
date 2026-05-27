@@ -27,20 +27,24 @@ struct Instance {
     }
 }
 
-struct PushConstants {
+struct Uniforms {
     float4x4 camera;
     float4x4 view;
     float4 frustum;
     float3 camera_pos;
     float near_plane;
+    uint2 extent;
+    uint num_instances;
+    uint vis;
+}
+
+struct PushConstants {
+    Uniforms* uniforms;
     uint* prefix_sum_data;
     DrawIndirectCommand* draw_commands;
     Instance* instances;
     uint* draw_counts;
-    uint2 extent;
-    uint num_instances;
     uint swapchain;
-    uint vis;
 
     property PrefixSumBuffer prefix_sum {
         get {

@@ -26,7 +26,7 @@ void prefix_sum_instances(
     uint thread: SV_DispatchThreadID,
     uniform PushConstants pc
 ) {
-    if ((thread >= pc.num_instances)) {
+    if ((thread >= pc.uniforms.num_instances)) {
         return;
     }
 
@@ -37,10 +37,10 @@ void prefix_sum_instances(
 
     let radius = instance.radius * max(instance.scale.x, max(instance.scale.y, instance.scale.z));
 
-    let view_center = mul(pc.view, float4(instance.translation, 1.0)).xyz;
-    var visible = frustumCull(view_center, radius, pc.near_plane, pc.frustum);
+    let view_center = mul(pc.uniforms.view, float4(instance.translation, 1.0)).xyz;
+    var visible = frustumCull(view_center, radius, pc.uniforms.near_plane, pc.uniforms.frustum);
     let dist = radius * 75;
-    visible &= distance_squared(pc.camera_pos, instance.translation) < (dist*dist);
+    visible &= distance_squared(pc.uniforms.camera_pos, instance.translation) < (dist*dist);
 
     if (!visible) {
         return;
@@ -71,7 +71,7 @@ Interp vertex(
     let position = instance.transform_point(instance.positions[index]);
 
     Interp interp;
-    interp.position = mul(pc.camera, float4(position, 1.0));
+    interp.position = mul(pc.uniforms.camera, float4(position, 1.0));
     interp.value = vertex_id/3 + offset;
     return interp;
 }
@@ -87,7 +87,7 @@ float4 sample(uint image_index, WithDerivatives<float2> uv) {
 }
 
 float3 resolve_inner(uint2 thread, PushConstants pc) {
-    Texture2D<uint> visbuffer = storage_images[pc.vis];
+    Texture2D<uint> visbuffer = storage_images[pc.uniforms.vis];
 
     let global_tri_id = visbuffer[thread];
 
@@ -109,12 +109,12 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
 
     WithDerivatives<float3> position;
     let barycentrics = calculate_barycentrics_from_world_positions(
-        pc.camera,
+        pc.uniforms.camera,
         instance.transform_point(instance.positions[indices.x]),
         instance.transform_point(instance.positions[indices.y]),
         instance.transform_point(instance.positions[indices.z]),
         thread,
-        pc.extent,
+        pc.uniforms.extent,
         position,
     );
 
@@ -144,7 +144,7 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
 [shader("compute")]
 [NumThreads(8, 8, 1)]
 void resolve(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
-    if (any(thread >= pc.extent)) {
+    if (any(thread >= pc.uniforms.extent)) {
         return;
     }
 
