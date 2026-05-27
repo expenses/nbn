@@ -95,9 +95,15 @@ fn main() {
 
             write_val(&mut output, meshlets.meshlets.len() as _);
 
+            while data.len() % 4 != 0 {
+                data.push(0);
+            }
             write_val(&mut output, data.len() as _);
             data.extend_from_slice(cast_slice(&meshlets.vertices));
 
+            while data.len() % 4 != 0 {
+                data.push(0);
+            }
             write_val(&mut output, data.len() as _);
             data.extend_from_slice(cast_slice(&meshlets.triangles));
 
@@ -122,6 +128,9 @@ fn main() {
 
             //dbg!(std::mem::size_of::<Meshlet>());
 
+            while data.len() % 4 != 0 {
+                data.push(0);
+            }
             write_val(&mut output, data.len() as _);
             data.extend_from_slice(cast_slice(&meshlets));
         }
