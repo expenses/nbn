@@ -12,7 +12,7 @@ import shared.culling;
 [NumThreads(1, 1, 1)]
 void reset(uniform PushConstants pc) {
     *pc.prefix_sum.counter = 0;
-    *pc.dispatch = uint3(0,1,1);
+    *pc.dispatch = uint3(0,10,1);
     *pc.visible_meshlets = 0;
 }
 
@@ -41,7 +41,7 @@ void prefix_sum_instances(
 
     let val = prefix_sum_inclusive_append(pc.prefix_sum, thread, instance.num_meshlets);
 
-    InterlockedMax(pc.dispatch[0][0], div_ceil(val.sum, 64));
+    InterlockedMax(pc.dispatch[0][0], div_ceil(val.sum, 64*10));
 }
 
 float4 sample(uint image_index, WithDerivatives<float2> uv) {
@@ -171,16 +171,18 @@ groupshared uint[64] gs_global_meshlet_indices;
 [numthreads(64, 1, 1)]
 void task(
     uniform PushConstants pc,
-    uint thread : SV_DispatchThreadID,
+    uint2 thread : SV_DispatchThreadID,
 ) {
     // Check that we're in range for the number of meshlets being drawn.
 
-    var visible = thread < prefix_sum_total(pc.prefix_sum);
+    let global_meshlet_index = thread.y + thread.x * 10;
+
+    var visible = global_meshlet_index < prefix_sum_total(pc.prefix_sum);
 
     if (visible) {
         // Find instance and meshlet via binary search.
         Instance instance;
-        let local_meshlet_index = pc.get_local_meshlet(thread, instance);
+        let local_meshlet_index = pc.get_local_meshlet(global_meshlet_index, instance);
         let meshlet = instance.meshlets[local_meshlet_index];
 
         // Attempt to cull the meshlet.
@@ -201,7 +203,7 @@ void task(
         // Add to output if visible.
         if (visible) {
             let index = WavePrefixSum(visible);
-            gs_global_meshlet_indices[index] = thread;
+            gs_global_meshlet_indices[index] = global_meshlet_index;
         }
     }
 
