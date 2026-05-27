@@ -1,7 +1,11 @@
 import derivatives;
 
-float length_squared(float3 v) {
+public float length_squared(float3 v) {
     return dot(v, v);
+}
+
+public float distance_squared(float3 a, float3 b) {
+    return length_squared(a-b);
 }
 
 // Adapted from http://www.thetenthplanet.de/archives/1180
