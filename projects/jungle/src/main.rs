@@ -699,6 +699,11 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     for ((&translation, &scale), &rotation) in
                         translations.iter().zip(scales).zip(rotations)
                     {
+                        let transform = nbn::glam::Mat4::from_scale_rotation_translation(
+                            scale.into(),
+                            nbn::glam::Quat::from_array(rotation),
+                            translation.into(),
+                        );
                         tlas_instances.push(
                             nbn::AccelerationStructureInstance {
                                 acceleration_structure: *acceleration_structure,
