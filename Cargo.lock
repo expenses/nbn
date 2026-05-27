@@ -2293,7 +2293,8 @@ dependencies = [
 [[package]]
 name = "meshopt"
 version = "0.6.2"
-source = "git+https://github.com/expenses/meshopt-rs?branch=meshopt-update#a97bdcae163ea329f17dd761bef6cd10aaecbaa6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01e77ead21976b3a9f01ec1724f766923da74f0726364e2b0f425658935d71a"
 dependencies = [
  "bitflags 2.10.0",
  "cc",

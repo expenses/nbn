@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 goth-gltf = "0.3.0"
-meshopt = { git = "https://github.com/expenses/meshopt-rs", branch = "meshopt-update" }
+meshopt = { version = "*" }
