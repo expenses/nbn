@@ -5,10 +5,11 @@ pub struct FreeCam {
     pub keyboard: KeyboardState,
     pub camera_rig: dolly::rig::CameraRig,
     pub cursor_grabbed: bool,
+    pub near_plane: f32,
 }
 
 impl FreeCam {
-    pub fn new(position: [f32; 3]) -> Self {
+    pub fn new(position: [f32; 3], near_plane: f32) -> Self {
         Self {
             camera_rig: dolly::rig::CameraRig::builder()
                 .with(dolly::drivers::Position::new(position))
@@ -17,6 +18,7 @@ impl FreeCam {
                 .build(),
             keyboard: Default::default(),
             cursor_grabbed: false,
+            near_plane,
         }
     }
 
@@ -112,7 +114,7 @@ impl FreeCam {
         let proj = crate::perspective_reversed_infinite_z_vk(
             59.0_f32.to_radians(),
             width as f32 / height as f32,
-            0.001,
+            self.near_plane,
         );
         (view, proj)
     }
