@@ -28,6 +28,7 @@ struct State {
     prefix_sum_instances: nbn::Pipeline,
     prefix_sum_data: nbn::Buffer,
     draw_commands: nbn::Buffer,
+    draw_counts: nbn::Buffer,
     _data: LoadedData,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
@@ -138,6 +139,13 @@ impl winit::application::ApplicationHandler for App {
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
+            draw_counts: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "draw_counts",
+                    size: 4,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
             prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
@@ -236,7 +244,7 @@ impl winit::application::ApplicationHandler for App {
                 let (view, proj) =
                     state
                         .freecam
-                        .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
+                        .update(extent.width, extent.height, 1.0 / 60.0, 1.0);
 
                 device.push_constants::<PushConstants>(
                     &command_buffer,
@@ -249,6 +257,8 @@ impl winit::application::ApplicationHandler for App {
                         swapchain: *state.swapchain_image_heap_indices[next_image as usize],
                         vis: *state.images.vis,
                         extent: [extent.width, extent.height],
+                        camera_pos: state.freecam.camera_rig.final_transform.position.into(),
+                        draw_counts: *state.draw_counts,
                     },
                 );
 
@@ -354,7 +364,7 @@ impl winit::application::ApplicationHandler for App {
                     **command_buffer,
                     *state.draw_commands.buffer,
                     0,
-                    *state.prefix_sum_data.buffer,
+                    *state.draw_counts.buffer,
                     0,
                     state._data.num_instances,
                     16,
@@ -489,6 +499,8 @@ fn load_gltf<P: AsRef<std::path::Path>>(
     let mut instances = Vec::new();
     let mut images = Vec::new();
 
+    let mut num_indices = 0;
+
     gltf.nodes
         .iter()
         .filter_map(|node| node.mesh.map(|mesh_index| (node, mesh_index)))
@@ -555,7 +567,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         [..rotations.count];
 
                     for ((&translation, &scale), &rotation) in
-                        translations.iter().zip(scales).zip(rotations).take(500)
+                        translations.iter().zip(scales).zip(rotations)
                     {
                         instances.push(Instance {
                             translation,
@@ -569,6 +581,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                             image: image_index,
                             padding: 0,
                         });
+                        num_indices += indices.count;
                     }
                 } else {
                     instances.push(Instance {
@@ -583,7 +596,10 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         image: image_index,
                         padding: 0,
                     });
+                    num_indices += indices.count;
                 }
+
+                dbg!(num_indices);
             }
         });
 

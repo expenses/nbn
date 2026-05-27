@@ -16,6 +16,7 @@ struct Interp {
 [NumThreads(1, 1, 1)]
 void reset(uniform PushConstants pc) {
     *pc.prefix_sum.counter = 0;
+    *pc.draw_counts = 0;
 }
 
 [shader("compute")]
@@ -28,16 +29,21 @@ void prefix_sum_instances(
         return;
     }
 
-    if (thread % 10 != 0) {
+    let instance = pc.instances[thread];
+
+    let num_indices = instance.num_indices;
+    let num_tris = num_indices / 3;
+
+    if (distance_squared(pc.camera_pos, instance.translation) > (1000*1000)) {
         return;
     }
 
-    let num_indices = pc.instances[thread].num_indices;
-    let num_tris = num_indices / 3;
-
     let value = prefix_sum_inclusive_append(pc.prefix_sum, thread, num_tris);
 
-    DrawIndirectCommand* command = &pc.draw_commands[value.index];
+    uint draw = 0;
+    InterlockedAdd(*pc.draw_counts, 1, draw);
+
+    DrawIndirectCommand* command = &pc.draw_commands[draw];
 
     command.vertex_count = num_indices;
     command.instance_count = 1;
