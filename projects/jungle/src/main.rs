@@ -248,19 +248,6 @@ impl winit::application::ApplicationHandler for App {
                     state.camera_pos = state.freecam.camera_rig.final_transform.position.into();
                 }
 
-                state.uniform_buffers[current_frame]
-                    .try_as_slice_mut::<Uniforms>()
-                    .unwrap()[0] = Uniforms {
-                    camera: (proj * view).to_cols_array(),
-                    num_instances: state._data.num_instances,
-                    vis: *state.images.vis,
-                    extent: [extent.width, extent.height],
-                    camera_pos: state.camera_pos,
-                    near_plane: NEAR_PLANE,
-                    frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
-                    view: state.view,
-                };
-
                 let mut frame = state.sync_resources.wait_for_frame(device);
 
                 let (next_image, _suboptimal) = device
@@ -273,6 +260,20 @@ impl winit::application::ApplicationHandler for App {
                     )
                     .unwrap();
                 let image = &state.swapchain.images[next_image as usize];
+
+                  state.uniform_buffers[current_frame]
+                    .try_as_slice_mut::<Uniforms>()
+                    .unwrap()[0] = Uniforms {
+                    camera: (proj * view).to_cols_array(),
+                    num_instances: state._data.num_instances,
+                    vis: *state.images.vis,
+                    extent: [extent.width, extent.height],
+                    camera_pos: state.camera_pos,
+                    near_plane: NEAR_PLANE,
+                    frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
+                    view: state.view,
+                };
+
 
                 device.reset_command_buffer(command_buffer);
                 device
