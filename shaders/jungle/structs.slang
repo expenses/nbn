@@ -2,15 +2,16 @@ import shared.prefix_sum;
 import shared.util;
 
 struct Instance {
-    float3 translation;
-    float3 scale;
-    float4 rotation;
     float3* positions;
     float2* uvs;
     uint* indices;
+    float4 rotation;
+    float3 translation;
+    float3 scale;
     uint num_indices;
     uint image;
-    uint8_t flags;
+    uint flags;
+    uint padding;
 
     float3 transform_point(float3 point) {
         return rotate_quat(rotation, point) * scale + translation;

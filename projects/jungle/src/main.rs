@@ -339,7 +339,7 @@ impl winit::application::ApplicationHandler for App {
                     0,
                     *state.prefix_sum_data.buffer,
                     0,
-                    state._data.num_instances * 10,
+                    state._data.num_instances,
                     16,
                 );
 
@@ -550,6 +550,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                             flags: is_32_bit as _,
                             num_indices: indices.count as _,
                             image: image_index,
+                            padding: 0,
                         });
                     }
                 } else {
@@ -563,6 +564,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         flags: is_32_bit as _,
                         num_indices: indices.count as _,
                         image: image_index,
+                        padding: 0,
                     });
                 }
             }
