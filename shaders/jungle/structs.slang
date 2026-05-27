@@ -11,7 +11,7 @@ struct Instance {
     uint num_indices;
     uint image;
     uint flags;
-    uint padding;
+    float radius;
 
     float3 transform_point(float3 point) {
         return rotate_quat(rotation, point) * scale + translation;

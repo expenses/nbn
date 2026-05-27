@@ -34,7 +34,9 @@ void prefix_sum_instances(
     let num_indices = instance.num_indices;
     let num_tris = num_indices / 3;
 
-    if (distance_squared(pc.camera_pos, instance.translation) > (1000*1000)) {
+    let dist = instance.radius * max(instance.scale.x, max(instance.scale.y, instance.scale.z)) * 75;
+
+    if (distance_squared(pc.camera_pos, instance.translation) > (dist*dist)) {
         return;
     }
 
@@ -71,6 +73,11 @@ Interp vertex(
 [shader("pixel")]
 uint pixel(Interp interp) {
     return interp.value;
+}
+
+float4 sample(uint image_index, WithDerivatives<float2> uv) {
+     Sampler2D image = sampled_images[NonUniformResourceIndex(image_index)];
+     return image.SampleGrad(uv.val, uv.dx, uv.dy);
 }
 
 float3 resolve_inner(uint2 thread, PushConstants pc) {
@@ -122,8 +129,7 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
     float3 color = float3(1);
 
     if (instance.image != MAX_UINT_VALUE) {
-        Sampler2D image = sampled_images[NonUniformResourceIndex(instance.image)];
-        color = image.SampleGrad(uv.val, uv.dx, uv.dy).rgb;
+        color = sample(instance.image, uv).rgb;
     }
 
     return color;

@@ -244,7 +244,7 @@ impl winit::application::ApplicationHandler for App {
                 let (view, proj) =
                     state
                         .freecam
-                        .update(extent.width, extent.height, 1.0 / 60.0, 1.0);
+                        .update(extent.width, extent.height, 1.0 / 60.0, 5.0);
 
                 device.push_constants::<PushConstants>(
                     &command_buffer,
@@ -501,14 +501,23 @@ fn load_gltf<P: AsRef<std::path::Path>>(
 
     let mut num_indices = 0;
 
+    let mut parent_mappings = vec![None; gltf.nodes.len()];
+
+    for (i, node) in gltf.nodes.iter().enumerate() {
+        for &child in &node.children {
+            parent_mappings[child] = Some(i);
+        }
+    }
+
     gltf.nodes
         .iter()
-        .filter_map(|node| node.mesh.map(|mesh_index| (node, mesh_index)))
-        .for_each(|(node, mesh_index)| {
+        .enumerate()
+        .filter_map(|(i, node)| node.mesh.map(|mesh_index| (i, node, mesh_index)))
+        .for_each(|(i, node, mesh_index)| {
             let mesh = &gltf.meshes[mesh_index];
             // let mesh_meshlets = &meshlets.metadata[mesh_index];
 
-            let (translation, scale, rotation) = match node.transform() {
+            let (mut translation, scale, rotation) = match node.transform() {
                 goth_gltf::NodeTransform::Set {
                     translation,
                     scale,
@@ -516,6 +525,20 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 } => (translation, scale, rotation),
                 other => panic!("bad transform: {:?}", other),
             };
+
+            if let Some(parent) = parent_mappings[i] {
+                match gltf.nodes[parent].transform() {
+                    goth_gltf::NodeTransform::Set {
+                        translation: parent_translation,
+                        scale: [1.0, 1.0, 1.0],
+                        rotation: [0.0, 0.0, 0.0, 1.0],
+                    } => {
+                        translation =
+                            std::array::from_fn(|i| translation[i] + parent_translation[i]);
+                    }
+                    other => panic!("bad parent transform: {:?}", other),
+                }
+            }
 
             for primitive in &mesh.primitives {
                 let get = |accessor_index: Option<usize>| {
@@ -533,14 +556,36 @@ fn load_gltf<P: AsRef<std::path::Path>>(
 
                 let material = &gltf.materials[primitive.material.unwrap_or(0)];
 
-                let image_index = if let Some(sampler) =
+                let positions = &gltf.accessors[primitive.attributes.position.unwrap()];
+                let positions =
+                    &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(positions))[..positions.count];
+                let radius = positions
+                    .iter()
+                    .map(|&p| p[0] * p[0] + p[1] * p[1] + p[2] * p[2])
+                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .unwrap()
+                    .sqrt();
+
+                let image_index = if let Some(info) =
                     material.pbr_metallic_roughness.base_color_texture.as_ref()
                 {
-                    let texture = &gltf.textures[sampler.index];
+                    let texture = &gltf.textures[info.index];
+                    let sampler = &gltf.samplers[texture.sampler.unwrap()];
                     let image = &gltf.images[texture.source.unwrap()];
                     let path = path.with_file_name(image.uri.as_ref().unwrap());
                     let image = load_dds(device, staging_buffer, path);
-                    let image = device.register_owned_image(image, false);
+                    let image = nbn::IndexedImage {
+                        index: device.register_image_with_sampler(
+                            *image.view,
+                            if sampler.wrap_s == goth_gltf::SamplerWrap::ClampToEdge {
+                                &device.samplers.clamp
+                            } else {
+                                &device.samplers.repeat
+                            },
+                            false,
+                        ),
+                        image,
+                    };
 
                     let index = *image.index;
 
@@ -552,6 +597,11 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 };
 
                 if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {
+                    assert_eq!(
+                        (translation, rotation, scale),
+                        ([0.0; 3], [0.0, 0.0, 0.0, 1.0], [1.0; 3])
+                    );
+
                     let translations = &gltf.accessors[instancing.attributes.translation];
                     let scales = &gltf.accessors[instancing.attributes.scale];
                     let rotations = &gltf.accessors[instancing.attributes.rotation];
@@ -579,7 +629,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                             flags: is_32_bit as _,
                             num_indices: indices.count as _,
                             image: image_index,
-                            padding: 0,
+                            radius,
                         });
                         num_indices += indices.count;
                     }
@@ -594,7 +644,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         flags: is_32_bit as _,
                         num_indices: indices.count as _,
                         image: image_index,
-                        padding: 0,
+                        radius,
                     });
                     num_indices += indices.count;
                 }
