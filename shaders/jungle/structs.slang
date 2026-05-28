@@ -8,6 +8,7 @@ struct Instance {
     uint8_t* triangles;
     uint* vertices;
     float2* uvs;
+    uint* indices;
     float4 rotation;
     float3 translation;
     float3 scale;
@@ -19,11 +20,22 @@ struct Instance {
     float3 transform_point(float3 point) {
         return rotate_quat(rotation, point) * scale + translation;
     }
+
+    uint read_index(uint vertex_id) {
+        if (flags!=0) {
+            return indices[vertex_id];
+        } else {
+            uint16_t index = ((uint16_t*)indices)[vertex_id];
+            return uint(index);
+        }
+    }
 }
 
 struct Uniforms {
     float4x4 camera;
     float4x4 view;
+    float4x4 view_inv;
+    float4x4 proj_inv;
     float4 frustum;
     float3 camera_pos;
     float near_plane;
@@ -39,6 +51,7 @@ struct PushConstants {
     uint swapchain;
     Atomic<uint>* visible_meshlets;
     uint3* dispatch;
+    uint64_t tlas;
 
     property PrefixSumBuffer prefix_sum {
         get {

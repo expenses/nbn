@@ -272,6 +272,8 @@ impl winit::application::ApplicationHandler for App {
                     near_plane: NEAR_PLANE,
                     frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
                     view: state.view,
+                    view_inv: view.inverse().to_cols_array(),
+                    proj_inv: proj.inverse().to_cols_array(),
                 };
 
                 device.reset_command_buffer(command_buffer);
@@ -284,6 +286,7 @@ impl winit::application::ApplicationHandler for App {
                 device.push_constants::<PushConstants>(
                     &command_buffer,
                     PushConstants {
+                        tlas: *state._data.tlas.tlas,
                         uniforms: *state.uniform_buffers[current_frame],
                         instances: *state._data.instances,
                         prefix_sum_data: *state.prefix_sum_data,
@@ -534,6 +537,9 @@ fn load_gltf<P: AsRef<std::path::Path>>(
         }
     }
 
+    let mut blases = Vec::new();
+    let mut tlas_instances = Vec::new();
+
     gltf.nodes
         .iter()
         .enumerate()
@@ -590,15 +596,39 @@ fn load_gltf<P: AsRef<std::path::Path>>(
 
                 let material = &gltf.materials[primitive.material.unwrap_or(0)];
 
-                let positions = &gltf.accessors[primitive.attributes.position.unwrap()];
+                let positions_accessor = &gltf.accessors[primitive.attributes.position.unwrap()];
                 let positions =
-                    &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(positions))[..positions.count];
+                    &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(positions_accessor))
+                        [..positions_accessor.count];
                 let radius = positions
                     .iter()
                     .map(|&p| p[0] * p[0] + p[1] * p[1] + p[2] * p[2])
                     .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .unwrap()
                     .sqrt();
+
+                let acceleration_structure = device.create_acceleration_structure(
+                    &format!("{} acceleration structure", path.display(),),
+                    nbn::AccelerationStructureData::Triangles {
+                        index_type: if is_32_bit {
+                            vk::IndexType::UINT32
+                        } else {
+                            vk::IndexType::UINT16
+                        },
+                        opaque: true,
+                        vertices_buffer_address: get(primitive.attributes.position),
+                        indices_buffer_address: get_buffer_offset(indices),
+                        num_vertices: positions_accessor.count as _,
+                        num_indices: indices.count as _,
+                    },
+                    staging_buffer,
+                );
+
+                let transform = nbn::glam::Mat4::from_scale_rotation_translation(
+                    scale.into(),
+                    nbn::glam::Quat::from_array(rotation),
+                    translation.into(),
+                );
 
                 let image_index = if let Some(info) =
                     material.pbr_metallic_roughness.base_color_texture.as_ref()
@@ -634,6 +664,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     translation,
                     scale,
                     rotation,
+                    indices: get_buffer_offset(indices),
                     positions: get(primitive.attributes.position),
                     uvs: get(primitive.attributes.texcoord_0),
                     flags: is_32_bit as _,
@@ -668,6 +699,15 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     for ((&translation, &scale), &rotation) in
                         translations.iter().zip(scales).zip(rotations)
                     {
+                        tlas_instances.push(
+                            nbn::AccelerationStructureInstance {
+                                acceleration_structure: *acceleration_structure,
+                                transform,
+                                custom_index: instances.len() as _,
+                                ..Default::default()
+                            }
+                            .to_vk(),
+                        );
                         instances.push(Instance {
                             translation,
                             scale,
@@ -677,11 +717,21 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         num_indices += indices.count;
                     }
                 } else {
+                    tlas_instances.push(
+                        nbn::AccelerationStructureInstance {
+                            acceleration_structure: *acceleration_structure,
+                            transform,
+                            custom_index: instances.len() as _,
+                            ..Default::default()
+                        }
+                        .to_vk(),
+                    );
                     instances.push(instance);
                     num_indices += indices.count;
                 }
 
                 dbg!(num_indices);
+                blases.push(acceleration_structure);
             }
         });
 
@@ -695,6 +745,8 @@ fn load_gltf<P: AsRef<std::path::Path>>(
             &instances,
         ),
         num_instances: instances.len() as _,
+        tlas: device.create_tlas_from_instances(staging_buffer, "tlas", &tlas_instances),
+        blases,
     }
 
     // for [num_meshlets, vertices_offset, triangles_offset, meshlets_offset] in meshlets.metadata.iter().flat_map(|x| x) {
@@ -765,6 +817,8 @@ struct LoadedData {
     _images: Vec<nbn::IndexedImage>,
     instances: nbn::Buffer,
     num_instances: u32,
+    tlas: nbn::TlasWithInstances,
+    blases: Vec<nbn::AccelerationStructure>,
 }
 
 struct Meshlets {

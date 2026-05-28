@@ -165,6 +165,75 @@ void resolve(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     swapchain.Store(thread, srgb_lin2encoded(value));
 }
 
+[shader("compute")]
+[NumThreads(8, 8, 1)]
+void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
+    if (any(thread >= pc.uniforms.extent)) {
+        return;
+    }
+    
+    let d = thread_to_clip(thread, pc.uniforms.extent);
+    let origin = mul(pc.uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    let temp = mul(pc.uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
+    let direction =
+        mul(pc.uniforms.view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
+
+    RayDesc desc;
+    desc.Direction = direction;
+    desc.Origin = origin;
+    desc.TMax = 10000.0;
+    desc.TMin = 0.0;
+
+    var query = RayQuery<RAY_FLAG_NONE>();
+    query.TraceRayInline(
+        RaytracingAccelerationStructure(pc.tlas),
+        RAY_FLAG_NONE,
+        0xff,
+        desc
+    );
+    query.Proceed();
+    
+    var color = float3(0);
+
+    if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        let instance = pc.instances[query.CommittedRayInstanceCustomIndex()];
+        let prim = query.CommittedPrimitiveIndex();
+        let indices = uint3(
+            instance.read_index(prim*3),
+            instance.read_index(prim*3+1),
+            instance.read_index(prim*3+2),
+        );
+
+        WithDerivatives<float3> position;
+        let barycentrics = calculate_barycentrics_from_world_positions(
+            pc.uniforms.camera,
+            instance.transform_point(instance.positions[indices.x]),
+            instance.transform_point(instance.positions[indices.y]),
+            instance.transform_point(instance.positions[indices.z]),
+            thread,
+            pc.uniforms.extent,
+            position
+        );
+
+        let uv = interpolate(
+           barycentrics,
+           instance.uvs[indices.x],
+           instance.uvs[indices.y],
+           instance.uvs[indices.z]
+        );
+        
+        
+        if (instance.image != MAX_UINT_VALUE) {
+            color = sample(instance.image, uv).rgb;
+        } else {
+            color = float3(1);
+        }
+    }
+
+    WTexture2D<float3> swapchain = storage_images[pc.swapchain];
+    swapchain.Store(thread, srgb_lin2encoded(color));
+}
+
 groupshared uint[64] gs_global_meshlet_indices;
 
 [shader("amplification")]
