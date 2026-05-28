@@ -123,8 +123,7 @@ float bits_to_float(uint bits) {
 }
 
 // https://github.com/NVIDIAGameWorks/Falcor/blob/eb540f6748774680ce0039aaf3ac9279266ec521/Source/Falcor/Utils/Math/HashUtils.slang#L50-L74
-uint2 blockCipherTEA(uint v0, uint v1, uint iterations = 16)
-{
+uint2 blockCipherTEA(uint v0, uint v1, uint iterations = 16) {
     uint sum = 0;
     const uint delta = 0x9e3779b9;
     const uint k[4] = { 0xa341316c, 0xc8013ea4, 0xad90777d, 0x7e95761e }; // 128-bit key.
@@ -138,8 +137,7 @@ uint2 blockCipherTEA(uint v0, uint v1, uint iterations = 16)
 }
 
 // https://github.com/NVIDIAGameWorks/Falcor/blob/eb540f6748774680ce0039aaf3ac9279266ec521/Source/Falcor/Utils/Math/BitTricks.slang#L47C1-L62C2
-uint interleave_32bit(uint2 v)
-{
+uint interleave_32bit(uint2 v) {
     uint x = v.x & 0x0000ffff;       // x = ---- ---- ---- ---- fedc ba98 7654 3210
     x = (x | (x << 8)) & 0x00FF00FF; // x = ---- ---- fedc ba98 ---- ---- 7654 3210
     x = (x | (x << 4)) & 0x0F0F0F0F; // x = ---- fedc ---- ba98 ---- 7654 ---- 3210
@@ -160,14 +158,12 @@ uint interleave_32bit(uint2 v)
 // https://github.com/electronicarts/fastnoise/blob/main/FastNoiseDesign.md#references
 // R2 is from http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
 // R2 Low discrepancy sequence
-public float2 R2(int index)
-{
+public float2 R2(int index) {
 	static const float g  = 1.32471795724474602596f;
 	static const float a1 = 1 / g;
 	static const float a2 = 1 / (g * g);
 	return float2(frac(float(index) * a1), frac(float(index) * a2));
 }
-
 
 public struct SobolRng: Rng {
     uint pixel_seed = 0;

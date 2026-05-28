@@ -1,13 +1,7 @@
-
-public
-
 struct WithDerivatives<T> {
-  public
-    T val;
-  public
-    T dx;
-  public
-    T dy;
+  T val;
+  T dx;
+  T dy;
 };
 
 func gen_derivatives<T, let N : int>(vector<T, N> val)

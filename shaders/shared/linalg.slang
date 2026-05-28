@@ -1,7 +1,5 @@
 // https://gist.github.com/mattatz/86fff4b32d198d0928d0fa4ff32cf6fa
 
-public
-
 float4x4 inverse(float4x4 m) {
     float n11 = m[0][0], n12 = m[1][0], n13 = m[2][0], n14 = m[3][0];
     float n21 = m[0][1], n22 = m[1][1], n23 = m[2][1], n24 = m[3][1];
@@ -69,7 +67,7 @@ float4x4 inverse(float4x4 m) {
     return ret;
 }
 
-public float4x4 perspective_reversed_infinite_z_vk(
+float4x4 perspective_reversed_infinite_z_vk(
     float vertical_fov,
     float aspect_ratio,
     float z_near,
@@ -89,7 +87,7 @@ public float4x4 perspective_reversed_infinite_z_vk(
     );
 }
 
-public float4x4 look_to_rh(float3 eye, float3 dir, float3 up) {
+float4x4 look_to_rh(float3 eye, float3 dir, float3 up) {
     let f = dir;
     let s = normalize(cross(f, up));
     let u = cross(s, f);
@@ -102,6 +100,6 @@ public float4x4 look_to_rh(float3 eye, float3 dir, float3 up) {
     );
 }
 
-public float4x4 look_at_rh(float3 eye, float3 center, float3 up) {
+float4x4 look_at_rh(float3 eye, float3 center, float3 up) {
     return look_to_rh(eye, normalize(center - eye), up);
 }

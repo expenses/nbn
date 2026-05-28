@@ -1,11 +1,6 @@
-
-public
-
 float3 colour_from_val(uint val) {
     return float3(float(val & 1), float(val & 3) / 4, float(val & 7) / 8);
 }
-
-public
 
 float3 srgb_lin2encoded(float3 value) {
     return select(
@@ -15,8 +10,6 @@ float3 srgb_lin2encoded(float3 value) {
     );
 }
 
-public
-
 float3 srgb_encoded2lin(float3 value) {
     return select(
         value <= 0.04045,
@@ -24,8 +17,6 @@ float3 srgb_encoded2lin(float3 value) {
         pow((value + 0.055) / 1.055, 2.4)
     );
 }
-
-public
 
 float3 tony_mc_mapface(Sampler3D<float3> tony_mc_mapface_lut, float3 stimulus) {
     // Apply a non-linear transform that the LUT is encoded with.

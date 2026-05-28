@@ -1,4 +1,3 @@
-
 bool coneCull(
     float3 center,
     float radius,

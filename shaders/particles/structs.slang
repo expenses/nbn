@@ -1,4 +1,5 @@
 import shared.util;
+import shared.structs;
 
 struct Particle {
     float2 position;

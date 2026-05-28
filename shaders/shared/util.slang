@@ -24,42 +24,31 @@ public float3x3 compute_cotangent_frame(
     return float3x3(t * invmax, b * invmax, normal);
 }
 
-public
-
-func div_ceil<T : IInteger>(T value, uint divisor) -> T {
+public func div_ceil<T : IInteger>(T value, uint divisor) -> T {
     return (value + T(divisor - 1)) / T(divisor);
 }
 
-public
-
-float2 texel_size(uint2 extent) {
+public float2 texel_size(uint2 extent) {
     return 1.0 / float2(extent);
 }
 
-public
-
-float2 thread_to_uv(uint2 thread, uint2 extent) {
+public float2 thread_to_uv(uint2 thread, uint2 extent) {
     return (float2(thread) + 0.5) * texel_size(extent);
 }
 
-public
-
-float2 thread_to_clip(uint2 thread, uint2 extent) {
+public float2 thread_to_clip(uint2 thread, uint2 extent) {
     return thread_to_uv(thread, extent) * 2.0 - 1.0;
 }
 
 // https://www.reddit.com/r/GraphicsProgramming/comments/f9zwin/linearising_reverse_depth_buffer/fix7ifb/
-public
-
-float linearize_reverse_infinite_depth_buffer(
+public float linearize_reverse_infinite_depth_buffer(
     float sample_value,
     float near_depth
 ) {
     return near_depth / sample_value;
 }
 
-float3
-quadratic_colour_thresholding(float3 colour, float threshold, float knee) {
+float3 quadratic_colour_thresholding(float3 colour, float threshold, float knee) {
     float3 curve = float3(threshold - knee, knee * 2.0, 0.25 / knee);
 
     float brightness = max(colour.x, max(colour.y, colour.z));
@@ -76,8 +65,7 @@ struct Ray {
 
 }
 
-Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv)
-{
+Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv) {
     Ray ray;
 
     let d = uv * 2.0 - 1.0;
@@ -200,13 +188,6 @@ public float2 barycentrics2d(float2 p, float2 a, float2 b, float2 c) {
         cross2d(b - a, p - a)
     ) / denom;
 }
-
-public struct DrawIndirectCommand {
-    public uint vertex_count;
-    public uint instance_count;
-    public uint first_vertex;
-    public uint first_instance;
-};
 
 public float3 rotate_quat(float4 q, float3 v) {
     float3 t = 2.0f * cross(q.xyz, v);
