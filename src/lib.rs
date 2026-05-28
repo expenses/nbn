@@ -2521,33 +2521,6 @@ impl StagingBuffer {
                 }
             }
 
-            if let ImageLods::Offsets(offsets) = lods {
-                let copies: Vec<_> = offsets
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &lod_offset)| {
-                        vk::BufferImageCopy::default()
-                            .buffer_offset(offset as u64 + lod_offset)
-                            .image_extent(vk::Extent3D {
-                                width: image.extent.width >> i,
-                                height: image.extent.height >> i,
-                                depth: image.extent.depth,
-                            })
-                            .image_subresource(
-                                image.subresource_layer().mip_level(i as _).layer_count(1),
-                            )
-                    })
-                    .collect();
-
-                device.cmd_copy_buffer_to_image(
-                    *self.command_buffer,
-                    *self.staging_buffer.buffer,
-                    *image.image,
-                    vk::ImageLayout::GENERAL,
-                    &copies,
-                );
-            }
-
             device.cmd_pipeline_barrier2(
                 *self.command_buffer,
                 &vk::DependencyInfo::default().image_memory_barriers(&[ImageBarrier::<
