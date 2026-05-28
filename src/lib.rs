@@ -1,5 +1,6 @@
 use ash::prelude::VkResult;
 pub use ash::vk;
+pub use glam;
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashSet;
 use std::ffi::{self, CStr};
