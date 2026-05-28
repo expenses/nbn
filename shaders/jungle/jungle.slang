@@ -105,11 +105,51 @@ float3 resolve_inner(uint2 thread, PushConstants pc) {
     return color;
     */
 
-    let meshlet_instance = pc.meshlet_instances[global_tri_id >> 8];
+    let global_meshlet_index = global_tri_id >> 8;
+    Instance instance;
+    let local_meshlet_index = pc.get_local_meshlet(global_meshlet_index, instance);
+    let meshlet = instance.meshlets[local_meshlet_index];
 
     let tri = global_tri_id & 255;
 
-    return colour_from_val(meshlet_instance.y) + colour_from_val(tri) / 10.0;
+    let indices = uint3(
+        instance.vertices[meshlet.vertex_offset + instance.triangles[meshlet.triangle_offset + tri * 3 + 0]],
+        instance.vertices[meshlet.vertex_offset + instance.triangles[meshlet.triangle_offset + tri * 3 + 1]],
+        instance.vertices[meshlet.vertex_offset + instance.triangles[meshlet.triangle_offset + tri * 3 + 2]],
+    );
+
+    WithDerivatives<float3> position;
+    let barycentrics = calculate_barycentrics_from_world_positions(
+        pc.uniforms.camera,
+        instance.transform_point(instance.positions[indices.x]),
+        instance.transform_point(instance.positions[indices.y]),
+        instance.transform_point(instance.positions[indices.z]),
+        thread,
+        pc.uniforms.extent,
+        position,
+    );
+
+    let uv = interpolate(
+        barycentrics,
+        instance.uvs[indices.x],
+        instance.uvs[indices.y],
+        instance.uvs[indices.z]
+    );
+
+    //var normal = normalize(interpolate(
+    //    bary,
+    //    instance.normals[indices.x],
+    //    instance.normals[indices.y],
+    //    instance.normals[indices.z]
+    //).val);
+
+    float3 color = float3(1);
+
+    if (instance.image != MAX_UINT_VALUE) {
+        color = sample(instance.image, uv).rgb;
+    }
+
+    return color;
 }
 
 [shader("compute")]
@@ -125,7 +165,7 @@ void resolve(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     swapchain.Store(thread, srgb_lin2encoded(value));
 }
 
-groupshared uint[64] gs_meshlet_instance_indices;
+groupshared uint[64] gs_global_meshlet_indices;
 
 [shader("amplification")]
 [numthreads(64, 1, 1)]
@@ -166,24 +206,14 @@ void task(
         visible &= frustumCull(view_center, radius, pc.uniforms.near_plane, pc.uniforms.frustum);
 
         if (visible) {
-            // Correctly calculate output index and write the meshlet instance.
-
-            let meshlet_instance_index =
-                pc.visible_meshlets.add(1);
-
-            pc.meshlet_instances[meshlet_instance_index] = uint2(
-                instance_index,
-                local_meshlet_index,
-            );
-
             let index = WavePrefixSum(visible);
-            gs_meshlet_instance_indices[index] = meshlet_instance_index;
+            gs_global_meshlet_indices[index] = thread;
         }
     }
 
     let num_visible = WaveActiveCountBits(visible);
 
-    DispatchMesh(num_visible, 1, 1, gs_meshlet_instance_indices);
+    DispatchMesh(num_visible, 1, 1, gs_global_meshlet_indices);
 }
 
 struct Interp {
@@ -205,15 +235,15 @@ void mesh(
     uniform PushConstants pc,
     uint gtid : SV_GroupThreadID,
     uint gid : SV_GroupID,
-    in payload uint[64] meshlet_instance_indices,
+    in payload uint[64] global_meshlet_indices,
     out indices uint3 triangles[MESHLET_MAX_TRIS],
     out vertices Interp vertices[MESHLET_MAX_VERTS],
     out primitives PerPrimitive triangle_visbuffer_values[MESHLET_MAX_TRIS],
 ) {
-    let meshlet_instance_index = meshlet_instance_indices[gid];
-    let meshlet_instance = pc.meshlet_instances[meshlet_instance_index];
-    let instance = pc.instances[meshlet_instance.x];
-    let meshlet = instance.meshlets[meshlet_instance.y];
+    let global_meshlet_index = global_meshlet_indices[gid];
+    Instance instance;
+    let local_meshlet_index = pc.get_local_meshlet(global_meshlet_index, instance);
+    let meshlet = instance.meshlets[local_meshlet_index];
 
     SetMeshOutputCounts(meshlet.vertex_count, meshlet.triangle_count);
 
@@ -230,8 +260,10 @@ void mesh(
             instance.triangles[meshlet.triangle_offset + tri * 3 + 1],
             instance.triangles[meshlet.triangle_offset + tri * 3 + 2],
         );
+        // note: if we run out of memory here, could just add a R8 buffer
+        // and store tris in that.
         triangle_visbuffer_values[tri].visbuffer_value =
-            meshlet_instance_index << 8 | tri;
+            global_meshlet_index << 8 | tri;
     }
 
     [ForceUnroll]

@@ -30,7 +30,6 @@ struct State {
     prefix_sum_instances: nbn::Pipeline,
     prefix_sum_data: nbn::Buffer,
     visible_meshlets: nbn::Buffer,
-    meshlet_instances: nbn::Buffer,
     dispatch: nbn::Buffer,
     _data: LoadedData,
     freecam: nbn::freecam::FreeCam,
@@ -158,7 +157,6 @@ impl winit::application::ApplicationHandler for App {
                     .unwrap()
             }),
             visible_meshlets: create_buffer("visible_meshlets", 4),
-            meshlet_instances: create_buffer("meshlet_instances", 8 * 10_000_000),
             prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
@@ -290,7 +288,6 @@ impl winit::application::ApplicationHandler for App {
                         instances: *state._data.instances,
                         prefix_sum_data: *state.prefix_sum_data,
                         swapchain: *state.swapchain_image_heap_indices[next_image as usize],
-                        meshlet_instances: *state.meshlet_instances,
                         visible_meshlets: *state.visible_meshlets,
                         dispatch: *state.dispatch,
                     },
@@ -317,29 +314,30 @@ impl winit::application::ApplicationHandler for App {
                     1,
                 );
 
-                // todo: the indirect draw buffer written by this dispatch needs to be synced
-                // with the draw call. Currently I'm just hackily doing these image barriers here
-                // but ideally there'd be a buffer barrier mechanism.
-
-                device.insert_image_pipeline_barrier(
+                device.insert_pipeline_barriers(
                     command_buffer,
-                    image,
-                    Some(nbn::BarrierOp::Acquire),
-                    nbn::BarrierOp::ComputeStorageWrite,
-                );
-
-                device.insert_image_pipeline_barrier(
-                    command_buffer,
-                    &state.images.depth,
-                    None,
-                    nbn::BarrierOp::DepthStencilAttachmentReadWrite,
-                );
-
-                device.insert_image_pipeline_barrier(
-                    command_buffer,
-                    &state.images.vis,
-                    None,
-                    nbn::BarrierOp::ColorAttachmentWrite,
+                    [
+                        (
+                            image.into(),
+                            Some(nbn::BarrierOp::Acquire),
+                            nbn::BarrierOp::ComputeStorageWrite,
+                        ),
+                        (
+                            (&state.images.depth).into(),
+                            None,
+                            nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+                        ),
+                        (
+                            (&state.images.vis).into(),
+                            None,
+                            nbn::BarrierOp::ColorAttachmentWrite,
+                        ),
+                    ],
+                    [(
+                        &state.dispatch,
+                        nbn::BarrierOp::ComputeStorageWrite,
+                        nbn::BarrierOp::IndirectParamRead,
+                    )],
                 );
 
                 device.begin_rendering(
@@ -637,7 +635,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     scale,
                     rotation,
                     positions: get(primitive.attributes.position),
-                    // uvs: get(primitive.attributes.texcoord_0),
+                    uvs: get(primitive.attributes.texcoord_0),
                     flags: is_32_bit as _,
                     image: image_index,
                     radius,

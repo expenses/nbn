@@ -30,11 +30,10 @@ struct Instance {
     Meshlet* meshlets;
     uint8_t* triangles;
     uint* vertices;
+    float2* uvs;
     float4 rotation;
     float3 translation;
     float3 scale;
-
-
     uint image;
     uint flags;
     float radius;
@@ -62,7 +61,6 @@ struct PushConstants {
     Instance* instances;
     uint swapchain;
     Atomic<uint>* visible_meshlets;
-    uint2* meshlet_instances;
     uint3* dispatch;
 
     property PrefixSumBuffer prefix_sum {
@@ -72,5 +70,16 @@ struct PushConstants {
             buffer.values = (PrefixSumValue*)&buffer.counter[1];
             return buffer;
         }
+    }
+
+    uint get_local_meshlet(uint global_meshlet_index, out Instance instance) {
+        let val = prefix_sum_binary_search(prefix_sum, global_meshlet_index);
+        let instance_index = val.index;
+        let meshlet_count_prefix_sum_inc = val.sum;
+
+        instance = instances[instance_index];
+        let meshlet_count_prefix_sum_ex = meshlet_count_prefix_sum_inc - instance.num_meshlets;
+        let local_meshlet_index = global_meshlet_index - meshlet_count_prefix_sum_ex;
+        return local_meshlet_index;
     }
 }
