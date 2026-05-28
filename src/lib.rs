@@ -2653,7 +2653,7 @@ pub enum BarrierOp {
     AllCommandsSampledRead,
     TransferOrBlitRead,
     TransferOrBlitWrite,
-    DrawIndirect,
+    IndirectParamRead,
     Present,
     Acquire,
     AllCommands,
@@ -2673,7 +2673,7 @@ impl BarrierOp {
             Self::TransferOrBlitRead | Self::TransferOrBlitWrite => {
                 vk::PipelineStageFlags2::COPY | vk::PipelineStageFlags2::BLIT
             }
-            Self::DrawIndirect => vk::PipelineStageFlags2::DRAW_INDIRECT,
+            Self::IndirectParamRead => vk::PipelineStageFlags2::DRAW_INDIRECT,
             Self::AllCommandsSampledRead | Self::AllCommands => {
                 vk::PipelineStageFlags2::ALL_COMMANDS
             }
@@ -2699,7 +2699,7 @@ impl BarrierOp {
                 vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
                     | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
             }
-            Self::DrawIndirect => vk::AccessFlags2::INDIRECT_COMMAND_READ,
+            Self::IndirectParamRead => vk::AccessFlags2::INDIRECT_COMMAND_READ,
             Self::AllCommands => {
                 vk::AccessFlags2::SHADER_READ
                     | vk::AccessFlags2::SHADER_WRITE
