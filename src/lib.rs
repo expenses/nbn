@@ -1049,6 +1049,46 @@ impl Device {
         }
     }
 
+    pub fn insert_pipeline_barriers<const I: usize, const B: usize>(
+        &self,
+        command_buffer: &CommandBuffer,
+        images: [(ImageInfo, Option<BarrierOp>, BarrierOp); I],
+        buffers: [(&Buffer, BarrierOp, BarrierOp); B],
+    ) {
+        let queue = self.get_queue(command_buffer.ty).index;
+
+        unsafe {
+            self.cmd_pipeline_barrier2(
+                **command_buffer,
+                &vk::DependencyInfo::default()
+                    .image_memory_barriers(&images.map(|(image, src, dst)| {
+                        ImageBarrier {
+                            image,
+                            src,
+                            dst,
+                            src_queue_family_index: queue,
+                            dst_queue_family_index: queue,
+                        }
+                        .into()
+                    }))
+                    .buffer_memory_barriers(&buffers.map(|(buffer, src, dst)| {
+                        let (src_s, src_a, _) = src.into();
+                        let (dst_s, dst_a, _) = dst.into();
+
+                        vk::BufferMemoryBarrier2::default()
+                            .src_queue_family_index(queue)
+                            .dst_queue_family_index(queue)
+                            .src_stage_mask(src_s)
+                            .src_access_mask(src_a)
+                            .dst_stage_mask(dst_s)
+                            .dst_access_mask(dst_a)
+                            .buffer(*buffer.buffer)
+                            .size(vk::WHOLE_SIZE)
+                    })),
+            );
+        }
+    }
+
     // Note: is not capable of switching images between queue
     // family indices.
     pub fn insert_image_pipeline_barrier(
@@ -1058,19 +1098,7 @@ impl Device {
         src: Option<BarrierOp>,
         dst: BarrierOp,
     ) {
-        unsafe {
-            self.cmd_pipeline_barrier2(
-                **command_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[ImageBarrier {
-                    image,
-                    src,
-                    dst,
-                    src_queue_family_index: self.get_queue(command_buffer.ty).index,
-                    dst_queue_family_index: self.get_queue(command_buffer.ty).index,
-                }
-                .into()]),
-            );
-        }
+        self.insert_pipeline_barriers(command_buffer, [(image.into(), src, dst)], []);
     }
 
     pub fn bind_internal_descriptor_sets(
