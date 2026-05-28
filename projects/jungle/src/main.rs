@@ -284,7 +284,7 @@ impl winit::application::ApplicationHandler for App {
 
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
 
-                raster(state, next_image, frame_index);
+                raytrace(state, next_image, frame_index);
 
                 device.end_command_buffer(**command_buffer).unwrap();
 
