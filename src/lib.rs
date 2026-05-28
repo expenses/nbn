@@ -1844,7 +1844,7 @@ impl Device {
                             | vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR,
                     )
                     .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                    .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)]),
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)]),
             );
         }
 
