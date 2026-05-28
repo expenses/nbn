@@ -261,7 +261,7 @@ impl winit::application::ApplicationHandler for App {
                     .unwrap();
                 let image = &state.swapchain.images[next_image as usize];
 
-                  state.uniform_buffers[current_frame]
+                state.uniform_buffers[current_frame]
                     .try_as_slice_mut::<Uniforms>()
                     .unwrap()[0] = Uniforms {
                     camera: (proj * view).to_cols_array(),
@@ -273,7 +273,6 @@ impl winit::application::ApplicationHandler for App {
                     frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
                     view: state.view,
                 };
-
 
                 device.reset_command_buffer(command_buffer);
                 device
