@@ -489,6 +489,58 @@ fn raster(state: &State, next_image: u32, current_frame: usize) {
     }
 }
 
+fn raytrace(state: &State, next_image: u32, current_frame: usize) {
+    let device = &state.device;
+    let command_buffer = &state.per_frame_command_buffers[current_frame];
+    let extent = state.swapchain.create_info.image_extent;
+    let image = &state.swapchain.images[next_image as usize];
+
+    unsafe {
+        device.push_constants::<PushConstants>(
+            command_buffer,
+            PushConstants {
+                tlas: *state._data.tlas.tlas,
+                uniforms: *state.uniform_buffers[current_frame],
+                instances: *state._data.instances,
+                prefix_sum_data: *state.prefix_sum_data,
+                swapchain: *state.swapchain_image_heap_indices[next_image as usize],
+                visible_meshlets: *state.visible_meshlets,
+                dispatch: *state.dispatch,
+            },
+        );
+
+        device.insert_pipeline_barriers(
+            command_buffer,
+            [(
+                image.into(),
+                Some(nbn::BarrierOp::Acquire),
+                nbn::BarrierOp::ComputeStorageWrite,
+            )],
+            [],
+        );
+
+        device.cmd_bind_pipeline(
+            **command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *state.raytrace,
+        );
+
+        device.cmd_dispatch(
+            **command_buffer,
+            extent.width.div_ceil(8),
+            extent.height.div_ceil(8),
+            1,
+        );
+
+        device.insert_image_pipeline_barrier(
+            command_buffer,
+            image,
+            Some(nbn::BarrierOp::ComputeStorageWrite),
+            nbn::BarrierOp::Present,
+        );
+    }
+}
+
 fn load_gltf<P: AsRef<std::path::Path>>(
     device: &nbn::Device,
     staging_buffer: &mut nbn::StagingBuffer,
