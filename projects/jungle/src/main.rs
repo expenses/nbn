@@ -767,8 +767,6 @@ struct LoadedData {
     num_instances: u32,
 }
 
-use nbn::cast_slice;
-
 struct Meshlets {
     buffer: nbn::Buffer,
     metadata: Vec<Vec<[u32; 4]>>,

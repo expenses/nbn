@@ -178,22 +178,15 @@ void task(
     var visible = thread < prefix_sum_total(pc.prefix_sum);
 
     if (visible) {
-        // Binary search to find out what instance we're rasterizing meshlets for.
-
-        let val = prefix_sum_binary_search(pc.prefix_sum, thread);
-        let instance_index = val.index;
-        let meshlet_count_prefix_sum_inc = val.sum;
-
-        let instance = pc.instances[instance_index];
-        let meshlet_count_prefix_sum_ex = meshlet_count_prefix_sum_inc - instance.num_meshlets;
-        let local_meshlet_index = thread - meshlet_count_prefix_sum_ex;
-
+        // Find instance and meshlet via binary search.
+        Instance instance;
+        let local_meshlet_index = pc.get_local_meshlet(thread, instance);
         let meshlet = instance.meshlets[local_meshlet_index];
+
+        // Attempt to cull the meshlet.
 
         let radius = meshlet.radius * max(instance.scale.x, max(instance.scale.y, instance.scale.z));
         let center = instance.transform_point(meshlet.center);
-
-        // Attempt to cull the meshlet.
 
         visible &= coneCull(
             center,
@@ -205,6 +198,7 @@ void task(
         let view_center = mul(pc.uniforms.view, float4(center, 1.0)).xyz;
         visible &= frustumCull(view_center, radius, pc.uniforms.near_plane, pc.uniforms.frustum);
 
+        // Add to output if visible.
         if (visible) {
             let index = WavePrefixSum(visible);
             gs_global_meshlet_indices[index] = thread;
@@ -212,7 +206,6 @@ void task(
     }
 
     let num_visible = WaveActiveCountBits(visible);
-
     DispatchMesh(num_visible, 1, 1, gs_global_meshlet_indices);
 }
 
