@@ -159,7 +159,7 @@ impl winit::application::ApplicationHandler for App {
             visible_meshlets: create_buffer("visible_meshlets", 4),
             prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
             reset: device.create_compute_pipeline(&shader, c"reset"),
-            resolve: device.create_compute_pipeline(&shader, c"resolve"),
+            resolve: device.create_compute_pipeline(&shader, c"raytrace"),
 
             images: Images::new(&device, width, height),
             per_frame_command_buffers: [
@@ -302,7 +302,7 @@ impl winit::application::ApplicationHandler for App {
                     *state.reset,
                 );
 
-                device.cmd_dispatch(**command_buffer, 1, 1, 1);
+                //device.cmd_dispatch(**command_buffer, 1, 1, 1);
 
                 device.cmd_bind_pipeline(
                     **command_buffer,
@@ -310,12 +310,12 @@ impl winit::application::ApplicationHandler for App {
                     *state.prefix_sum_instances,
                 );
 
-                device.cmd_dispatch(
-                    **command_buffer,
-                    state._data.num_instances.div_ceil(64),
-                    1,
-                    1,
-                );
+                //device.cmd_dispatch(
+                //    **command_buffer,
+                //    state._data.num_instances.div_ceil(64),
+                //    1,
+                //    1,
+                //);
 
                 device.insert_pipeline_barriers(
                     command_buffer,
@@ -378,20 +378,11 @@ impl winit::application::ApplicationHandler for App {
                     *state.render_pipeline,
                 );
 
-                device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
-                    **command_buffer,
-                    *state.dispatch.buffer,
-                    0,
-                    1,
-                    16,
-                );
-                // device.cmd_draw_indirect_count(
+                // device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
                 //     **command_buffer,
-                //     *state.draw_commands.buffer,
+                //     *state.dispatch.buffer,
                 //     0,
-                //     *state.draw_counts.buffer,
-                //     0,
-                //     state._data.num_instances,
+                //     1,
                 //     16,
                 // );
 
