@@ -40,14 +40,14 @@ vertex(uint vertex_id : SV_VertexID, uniform Constants constants) {
 [shader("fragment")] float4
     fragment(Interp in, uniform Constants constants) {
     let image = DescriptorHandle<Sampler2D>(constants.id);
- 
+
     var output = in.colour * image.Sample(in.uv).x;
-    
+
     if (constants.transfer_function_index == 0) {
         output.rgb = srgb_lin2encoded(output.rgb);
     } else {
         output.rgb = ConvertToHDR10(output.rgb, constants.calibrated_nits);
     }
- 
+
     return output;
 }

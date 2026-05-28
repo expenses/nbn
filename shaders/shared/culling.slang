@@ -9,16 +9,19 @@ bool coneCull(
         <= cone_cutoff + radius / length(center - camera_position);
 }
 
-bool frustumCull(float3 view_center, float radius, float near_plane, float4 frustum) {
+bool frustumCull(
+    float3 view_center,
+    float radius,
+    float near_plane,
+    float4 frustum
+) {
     // near plane
     var visible = view_center.z - radius < near_plane;
     // left and right planes
-    visible &= view_center.z * frustum[1]
-            - abs(view_center.x) * frustum[0]
-        > -radius;
+    visible &=
+        view_center.z * frustum[1] - abs(view_center.x) * frustum[0] > -radius;
     // top and bottom planes
-    visible &= view_center.z * frustum[3]
-            + abs(view_center.y) * frustum[2]
-        > -radius;
+    visible &=
+        view_center.z * frustum[3] + abs(view_center.y) * frustum[2] > -radius;
     return visible;
 }

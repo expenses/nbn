@@ -25,7 +25,6 @@ float3 adam_step(
     return -step;
 }
 
-
 float adam_step(
     float grad,
     inout float mean,

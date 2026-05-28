@@ -1,15 +1,15 @@
 import derivatives;
 
-public float length_squared(float3 v) {
+float length_squared(float3 v) {
     return dot(v, v);
 }
 
-public float distance_squared(float3 a, float3 b) {
-    return length_squared(a-b);
+float distance_squared(float3 a, float3 b) {
+    return length_squared(a - b);
 }
 
 // Adapted from http://www.thetenthplanet.de/archives/1180
-public float3x3 compute_cotangent_frame(
+float3x3 compute_cotangent_frame(
     float3 normal,
     WithDerivatives<float3> position,
     WithDerivatives<float2> uv
@@ -24,31 +24,32 @@ public float3x3 compute_cotangent_frame(
     return float3x3(t * invmax, b * invmax, normal);
 }
 
-public func div_ceil<T : IInteger>(T value, uint divisor) -> T {
+func div_ceil<T : IInteger>(T value, uint divisor) -> T {
     return (value + T(divisor - 1)) / T(divisor);
 }
 
-public float2 texel_size(uint2 extent) {
+float2 texel_size(uint2 extent) {
     return 1.0 / float2(extent);
 }
 
-public float2 thread_to_uv(uint2 thread, uint2 extent) {
+float2 thread_to_uv(uint2 thread, uint2 extent) {
     return (float2(thread) + 0.5) * texel_size(extent);
 }
 
-public float2 thread_to_clip(uint2 thread, uint2 extent) {
+float2 thread_to_clip(uint2 thread, uint2 extent) {
     return thread_to_uv(thread, extent) * 2.0 - 1.0;
 }
 
 // https://www.reddit.com/r/GraphicsProgramming/comments/f9zwin/linearising_reverse_depth_buffer/fix7ifb/
-public float linearize_reverse_infinite_depth_buffer(
+float linearize_reverse_infinite_depth_buffer(
     float sample_value,
     float near_depth
 ) {
     return near_depth / sample_value;
 }
 
-float3 quadratic_colour_thresholding(float3 colour, float threshold, float knee) {
+float3
+quadratic_colour_thresholding(float3 colour, float threshold, float knee) {
     float3 curve = float3(threshold - knee, knee * 2.0, 0.25 / knee);
 
     float brightness = max(colour.x, max(colour.y, colour.z));
@@ -76,7 +77,7 @@ Ray create_camera_ray(float4x4 view_inv, float4x4 proj_inv, float2 uv) {
     return ray;
 }
 
-public float3 world_position_from_depth(
+float3 world_position_from_depth(
     float2 clip,
     float depth,
     float4x4 view_proj_inverse
@@ -88,19 +89,19 @@ public float3 world_position_from_depth(
     return world_pos.xyz / world_pos.w;
 }
 
-public float3x3 build_tbn(float3 n) {
+float3x3 build_tbn(float3 n) {
     let basis = abs(n.z) < 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
     let t = normalize(cross(basis, n));
     let b = cross(n, t);
     return transpose(float3x3(t, b, n));
 }
 
-public float inv_lerp(float value, float from, float to){
-  return (value - from) / (to - from);
+float inv_lerp(float value, float from, float to) {
+    return (value - from) / (to - from);
 }
 
 // See Ray Tracing Gems II, Chapter 4, HACKING THE SHADOW TERMINATOR
-public float3 shadow_terminator_hack(
+float3 shadow_terminator_hack(
     float3 A,
     float3 B,
     float3 C,
@@ -121,25 +122,33 @@ public float3 shadow_terminator_hack(
     var tmpw = P - C;
     // project these onto the tangent planes
     // defined by the shading normals
-    float dotu = min(0.0, dot(tmpu , nA));
-    float dotv = min(0.0, dot(tmpv , nB));
-    float dotw = min(0.0, dot(tmpw , nC));
-    tmpu -= dotu*nA;
-    tmpv -= dotv*nB;
-    tmpw -= dotw*nC;
+    float dotu = min(0.0, dot(tmpu, nA));
+    float dotv = min(0.0, dot(tmpv, nB));
+    float dotw = min(0.0, dot(tmpw, nC));
+    tmpu -= dotu * nA;
+    tmpv -= dotv * nB;
+    tmpw -= dotw * nC;
     // finally P' is the barycentric mean of these three
-    let Pp = P + u*tmpu + v*tmpv + w*tmpw;
+    let Pp = P + u * tmpu + v * tmpv + w * tmpw;
     return Pp;
 }
 
 // See Ray Tracing Gems I, Chapter 6
 
-constexpr float origin() { return 1.0f / 32.0f; }
-constexpr float float_scale() { return 1.0f / 65536.0f; }
-constexpr float int_scale() { return 256.0f; }
+constexpr float origin() {
+    return 1.0f / 32.0f;
+}
+
+constexpr float float_scale() {
+    return 1.0f / 65536.0f;
+}
+
+constexpr float int_scale() {
+    return 256.0f;
+}
 
 // Normal points outward for rays exiting the surface, else is flipped.
-public float3 offset_ray(const float3 p, const float3 n) {
+float3 offset_ray(const float3 p, const float3 n) {
     int3 of_i = int3(
         int(int_scale() * n.x),
         int(int_scale() * n.y),
@@ -147,19 +156,19 @@ public float3 offset_ray(const float3 p, const float3 n) {
     );
 
     float3 p_i = float3(
-        asfloat(asint(p.x)+((p.x < 0) ? -of_i.x : of_i.x)),
-        asfloat(asint(p.y)+((p.y < 0) ? -of_i.y : of_i.y)),
-        asfloat(asint(p.z)+((p.z < 0) ? -of_i.z : of_i.z))
+        asfloat(asint(p.x) + ((p.x < 0) ? -of_i.x : of_i.x)),
+        asfloat(asint(p.y) + ((p.y < 0) ? -of_i.y : of_i.y)),
+        asfloat(asint(p.z) + ((p.z < 0) ? -of_i.z : of_i.z))
     );
 
     return float3(
-        abs(p.x) < origin() ? p.x+float_scale()*n.x : p_i.x,
-        abs(p.y) < origin() ? p.y+float_scale()*n.y : p_i.y,
-        abs(p.z) < origin() ? p.z+float_scale()*n.z : p_i.z
+        abs(p.x) < origin() ? p.x + float_scale() * n.x : p_i.x,
+        abs(p.y) < origin() ? p.y + float_scale() * n.y : p_i.y,
+        abs(p.z) < origin() ? p.z + float_scale() * n.z : p_i.z
     );
 }
 
-public uint random_bit(uint64_t bitmask, float rand) {
+uint random_bit(uint64_t bitmask, float rand) {
     let bit = uint(floor(float(countbits(bitmask)) * rand));
 
     var current_bit = 0;
@@ -169,7 +178,7 @@ public uint random_bit(uint64_t bitmask, float rand) {
             if (bit == current_bit) {
                 return i;
             }
-            current_bit ++;
+            current_bit++;
         }
     }
 
@@ -177,19 +186,16 @@ public uint random_bit(uint64_t bitmask, float rand) {
 }
 
 // 2D cross product
-public float cross2d(float2 a, float2 b) {
+float cross2d(float2 a, float2 b) {
     return a.x * b.y - a.y * b.x;
 }
 
-public float2 barycentrics2d(float2 p, float2 a, float2 b, float2 c) {
+float2 barycentrics2d(float2 p, float2 a, float2 b, float2 c) {
     let denom = cross2d(b - a, c - a);
-    return float2(
-        cross2d(p - a, c - a),
-        cross2d(b - a, p - a)
-    ) / denom;
+    return float2(cross2d(p - a, c - a), cross2d(b - a, p - a)) / denom;
 }
 
-public float3 rotate_quat(float4 q, float3 v) {
+float3 rotate_quat(float4 q, float3 v) {
     float3 t = 2.0f * cross(q.xyz, v);
     return v + q.w * t + cross(q.xyz, t);
 }

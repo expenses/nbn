@@ -1,7 +1,7 @@
 struct WithDerivatives<T> {
-  T val;
-  T dx;
-  T dy;
+    T val;
+    T dx;
+    T dy;
 };
 
 func gen_derivatives<T, let N : int>(vector<T, N> val)

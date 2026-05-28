@@ -19,7 +19,8 @@ struct BarycentricsAndInterpolatedPosition {
 
 }
 
-BarycentricDeriv calculate_barycentrics_from_world_positions(
+BarycentricDeriv
+calculate_barycentrics_from_world_positions(
     float4x4 mat,
     float3 pos_a,
     float3 pos_b,

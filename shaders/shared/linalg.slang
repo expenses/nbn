@@ -71,7 +71,7 @@ float4x4 perspective_reversed_infinite_z_vk(
     float vertical_fov,
     float aspect_ratio,
     float z_near,
-)  {
+) {
     let t = tan(vertical_fov / 2.0);
 
     let sy = 1.0 / t;

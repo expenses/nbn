@@ -1,4 +1,6 @@
-// These functions copied and slightly adapted from 
+// clang-format off
+
+// These functions copied and slightly adapted from
 // https://github.com/microsoft/Xbox-ATG-Samples/blob/ff629a6e4876e38fe8761ead116a0e53f634ca67/Kits/ATGTK/HDR/HDRCommon.hlsli
 
 //--------------------------------------------------------------------------------------

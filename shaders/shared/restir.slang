@@ -1,3 +1,5 @@
+// clang-format off
+
 import random;
 import sampling;
 import util;

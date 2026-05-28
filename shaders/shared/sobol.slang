@@ -1,3 +1,4 @@
+// clang-format off
 // Adapted from https://gist.github.com/cessen/697b880ae07f32502db26edef1b1cec2
 
 /* SPDX-FileCopyrightText: 2011-2022 Blender Foundation
