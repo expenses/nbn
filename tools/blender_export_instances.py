@@ -1,6 +1,7 @@
 import bpy
 import json
 import numpy as np
+import os
 
 obj = bpy.context.active_object
 
@@ -33,5 +34,6 @@ np_data = {
     for name, matrices in m.items()
 }
 
-np.savez_compressed("out.npz", **np_data)
+filepath = bpy.path.abspath(os.path.join("//", "out.npz"))
+np.savez_compressed(filepath, **np_data)
 print(total)
