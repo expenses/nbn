@@ -1725,7 +1725,7 @@ impl Device {
         data: AccelerationStructureData,
         staging_buffer: &mut StagingBuffer,
     ) -> AccelerationStructure {
-        let (geometry, ty, num_primitives) = match data {
+        let (geometries, ty, num_primitives, build_ranges) = match data {
             AccelerationStructureData::Triangles {
                 index_type,
                 vertices_buffer_address,
@@ -1734,7 +1734,7 @@ impl Device {
                 num_indices,
                 opaque,
             } => (
-                vk::AccelerationStructureGeometryKHR::default()
+                &[vk::AccelerationStructureGeometryKHR::default()
                     .flags(if opaque {
                         vk::GeometryFlagsKHR::OPAQUE
                     } else {
@@ -1753,28 +1753,29 @@ impl Device {
                             })
                             .vertex_format(vk::Format::R32G32B32_SFLOAT)
                             .vertex_stride(3 * 4),
-                    }),
+                    })],
                 vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                num_indices / 3,
+                &[num_indices / 3],
+                &[vk::AccelerationStructureBuildRangeInfoKHR::default()
+                    .primitive_count(num_indices / 3)],
             ),
             AccelerationStructureData::Instances {
                 buffer_address,
                 count,
             } => (
-                vk::AccelerationStructureGeometryKHR::default()
+                &[vk::AccelerationStructureGeometryKHR::default()
                     .geometry_type(vk::GeometryTypeKHR::INSTANCES)
                     .geometry(vk::AccelerationStructureGeometryDataKHR {
                         instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
                             .data(vk::DeviceOrHostAddressConstKHR {
                                 device_address: buffer_address,
                             }),
-                    }),
+                    })],
                 vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-                count,
+                &[count],
+                &[vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(count)],
             ),
         };
-
-        let geometries = &[geometry];
 
         let geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
@@ -1789,7 +1790,7 @@ impl Device {
                 .get_acceleration_structure_build_sizes(
                     vk::AccelerationStructureBuildTypeKHR::DEVICE,
                     &geometry_info,
-                    &[num_primitives],
+                    num_primitives,
                     &mut size_info,
                 )
         };
@@ -1854,8 +1855,7 @@ impl Device {
                 .cmd_build_acceleration_structures(
                     *staging_buffer.command_buffer,
                     &[geometry_info],
-                    &[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
-                        .primitive_count(num_primitives)]],
+                    &[build_ranges],
                 );
         }
 
@@ -2571,6 +2571,15 @@ impl From<&IndexedImage> for ImageInfo {
     fn from(image: &IndexedImage) -> Self {
         (&image.image).into()
     }
+}
+
+pub struct AccelerationStructureTriangles {
+    index_type: vk::IndexType,
+    vertices_buffer_address: u64,
+    indices_buffer_address: u64,
+    num_vertices: u32,
+    num_indices: u32,
+    opaque: bool,
 }
 
 pub enum AccelerationStructureData {
