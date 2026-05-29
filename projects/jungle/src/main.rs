@@ -1022,7 +1022,7 @@ fn load_dds<P: AsRef<std::path::Path>>(
 
     // use the 1st image instead as I don't have enough vram otherwise
 
-    let (offsets, divisor) = if extent.width >= 4096 {
+    let (offsets, divisor) = if false {
         (nbn::ImageLods::Offsets(&offsets[1..]), 2)
     } else {
         (nbn::ImageLods::Offsets(&offsets), 1)
