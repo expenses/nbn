@@ -1720,66 +1720,19 @@ impl Device {
         }
     }
 
-    pub fn create_acceleration_structure(
+    pub fn create_acceleration_structure_detailed(
         &self,
         name: &str,
-        data: AccelerationStructureData,
+        ty: vk::AccelerationStructureTypeKHR,
+        flags: vk::BuildAccelerationStructureFlagsKHR,
+        geometries: &[vk::AccelerationStructureGeometryKHR],
+        num_primitives: &[u32],
+        build_ranges: &[vk::AccelerationStructureBuildRangeInfoKHR],
         staging_buffer: &mut StagingBuffer,
     ) -> AccelerationStructure {
-        let (geometry, ty, num_primitives) = match data {
-            AccelerationStructureData::Triangles {
-                index_type,
-                vertices_buffer_address,
-                indices_buffer_address,
-                num_vertices,
-                num_indices,
-                opaque,
-            } => (
-                vk::AccelerationStructureGeometryKHR::default()
-                    .flags(if opaque {
-                        vk::GeometryFlagsKHR::OPAQUE
-                    } else {
-                        Default::default()
-                    })
-                    .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
-                    .geometry(vk::AccelerationStructureGeometryDataKHR {
-                        triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
-                            .index_type(index_type)
-                            .max_vertex(num_vertices - 1)
-                            .index_data(vk::DeviceOrHostAddressConstKHR {
-                                device_address: indices_buffer_address,
-                            })
-                            .vertex_data(vk::DeviceOrHostAddressConstKHR {
-                                device_address: vertices_buffer_address,
-                            })
-                            .vertex_format(vk::Format::R32G32B32_SFLOAT)
-                            .vertex_stride(3 * 4),
-                    }),
-                vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-                num_indices / 3,
-            ),
-            AccelerationStructureData::Instances {
-                buffer_address,
-                count,
-            } => (
-                vk::AccelerationStructureGeometryKHR::default()
-                    .geometry_type(vk::GeometryTypeKHR::INSTANCES)
-                    .geometry(vk::AccelerationStructureGeometryDataKHR {
-                        instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
-                            .data(vk::DeviceOrHostAddressConstKHR {
-                                device_address: buffer_address,
-                            }),
-                    }),
-                vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-                count,
-            ),
-        };
-
-        let geometries = &[geometry];
-
         let geometry_info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+            .flags(flags)
             .ty(ty)
             .geometries(geometries);
 
@@ -1790,7 +1743,7 @@ impl Device {
                 .get_acceleration_structure_build_sizes(
                     vk::AccelerationStructureBuildTypeKHR::DEVICE,
                     &geometry_info,
-                    &[num_primitives],
+                    num_primitives,
                     &mut size_info,
                 )
         };
@@ -1804,7 +1757,7 @@ impl Device {
 
         let buffer = self
             .create_buffer(BufferDescriptor {
-                name: &format!("{} backing buffer", name),
+                name: &format!("{} buffer", name),
                 size: size_info.acceleration_structure_size,
                 ty: MemoryLocation::GpuOnly,
             })
@@ -1855,16 +1808,9 @@ impl Device {
                 .cmd_build_acceleration_structures(
                     *staging_buffer.command_buffer,
                     &[geometry_info],
-                    &[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
-                        .primitive_count(num_primitives)]],
+                    &[build_ranges],
                 );
         }
-
-        //self.insert_global_barrier(
-        //    &staging_buffer.command_buffer,
-        //    &[vk_sync::AccessType::AccelerationStructureBuildWrite],
-        //    &[vk_sync::AccessType::AccelerationStructureBuildRead],
-        //);
 
         AccelerationStructure {
             address: unsafe {
@@ -1876,6 +1822,81 @@ impl Device {
             },
             _inner: acceleration_structure,
             _buffer: buffer,
+        }
+    }
+
+    pub fn create_acceleration_structure(
+        &self,
+        name: &str,
+        data: AccelerationStructureData,
+        staging_buffer: &mut StagingBuffer,
+    ) -> AccelerationStructure {
+        match data {
+            AccelerationStructureData::Triangles(triangles) => {
+                let (geometries, num_primitives, build_ranges) = triangles.iter().map(|&AccelerationStructureTriangles {
+                    index_type,
+                    vertices_buffer_address,
+                    indices_buffer_address,
+                    num_vertices,
+                    num_indices,
+                    opaque,
+                }| {
+                    (
+                        vk::AccelerationStructureGeometryKHR::default()
+                            .flags(if opaque {
+                                vk::GeometryFlagsKHR::OPAQUE
+                            } else {
+                                Default::default()
+                            })
+                            .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+                            .geometry(vk::AccelerationStructureGeometryDataKHR {
+                                triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
+                                    .index_type(index_type)
+                                    .max_vertex(num_vertices - 1)
+                                    .index_data(vk::DeviceOrHostAddressConstKHR {
+                                        device_address: indices_buffer_address,
+                                    })
+                                    .vertex_data(vk::DeviceOrHostAddressConstKHR {
+                                        device_address: vertices_buffer_address,
+                                    })
+                                    .vertex_format(vk::Format::R32G32B32_SFLOAT)
+                                    .vertex_stride(3 * 4),
+                            }),
+                        num_indices / 3,
+                        vk::AccelerationStructureBuildRangeInfoKHR::default()
+                            .primitive_count(num_indices / 3),
+                    )
+                }).collect::<(Vec<_>, Vec<_>, Vec<_>)>();
+
+                self.create_acceleration_structure_detailed(
+                    name,
+                    vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                    vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                    &geometries,
+                    &num_primitives,
+                    &build_ranges,
+                    staging_buffer,
+                )
+            }
+            AccelerationStructureData::Instances {
+                buffer_address,
+                count,
+            } => self.create_acceleration_structure_detailed(
+                name,
+                vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+                vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                &[vk::AccelerationStructureGeometryKHR::default()
+                    .geometry_type(vk::GeometryTypeKHR::INSTANCES)
+                    .geometry(vk::AccelerationStructureGeometryDataKHR {
+                        instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
+                            .data(vk::DeviceOrHostAddressConstKHR {
+                                device_address: buffer_address,
+                            }),
+                    })],
+                &[count],
+                &[vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(count)],
+                staging_buffer,
+            ),
         }
     }
 
@@ -2574,19 +2595,18 @@ impl From<&IndexedImage> for ImageInfo {
     }
 }
 
-pub enum AccelerationStructureData {
-    Instances {
-        buffer_address: u64,
-        count: u32,
-    },
-    Triangles {
-        index_type: vk::IndexType,
-        vertices_buffer_address: u64,
-        indices_buffer_address: u64,
-        num_vertices: u32,
-        num_indices: u32,
-        opaque: bool,
-    },
+pub struct AccelerationStructureTriangles {
+    pub index_type: vk::IndexType,
+    pub vertices_buffer_address: u64,
+    pub indices_buffer_address: u64,
+    pub num_vertices: u32,
+    pub num_indices: u32,
+    pub opaque: bool,
+}
+
+pub enum AccelerationStructureData<'a> {
+    Instances { buffer_address: u64, count: u32 },
+    Triangles(&'a [AccelerationStructureTriangles]),
 }
 
 pub struct AccelerationStructure {
