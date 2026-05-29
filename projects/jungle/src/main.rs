@@ -546,6 +546,8 @@ fn load_gltf<P: AsRef<std::path::Path>>(
     staging_buffer: &mut nbn::StagingBuffer,
     path: P,
 ) -> LoadedData {
+    let mut npz = ndarray_npy::NpzReader::new(std::fs::File::open("out.npz").unwrap()).unwrap();
+
     let path = path.as_ref();
 
     let bytes = std::fs::read(path).unwrap();
@@ -733,6 +735,48 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     num_meshlets,
                 };
 
+                let name = mesh.name.as_ref().unwrap();
+
+                let mut is_instanced = false;
+
+                if let Ok(arr) = npz.by_name::<ndarray::OwnedRepr<f32>, ndarray::Ix1>(name) {
+                    is_instanced = true;
+                    if name.starts_with("Queen")
+                        || name.starts_with("Banyan")
+                        || name.starts_with("Anth")
+                        || name.starts_with("Nettle")
+                        || name.starts_with("Shrub_")
+                        || name.starts_with("RiverSapling")
+                        //|| name.starts_with("RiverSeedling_01_Translucent")
+                        //|| name.starts_with("Grass_A")
+                    {
+                        let mut num = 0;
+                        for x in arr.as_slice().unwrap().chunks(16) {
+                            #[rustfmt::skip]
+                            let transform = nbn::glam::Mat4::from_cols_array(&[
+                                 x[0],  x[ 8], -x[4],  x[12],
+                                 x[2],  x[10], -x[6],  x[14],
+                                -x[1], -x[ 9],  x[5], -x[13],
+                                 x[3],  x[11], -x[7],  x[15]
+                            ]);
+
+                            tlas_instances.push(
+                                nbn::AccelerationStructureInstance {
+                                    acceleration_structure: *acceleration_structure,
+                                    transform,
+                                    custom_index: instances.len() as _,
+                                    ..Default::default()
+                                }
+                                .to_vk(),
+                            );
+                            num += 1;
+                        }
+                        dbg!(num);
+                    } else {
+                        dbg!(name, arr.len());
+                    }
+                }
+
                 if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {
                     assert_eq!(
                         (translation, rotation, scale),
@@ -779,20 +823,22 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         num_indices += indices.count;
                     }
                 } else {
-                    tlas_instances.push(
-                        nbn::AccelerationStructureInstance {
-                            acceleration_structure: *acceleration_structure,
-                            transform,
-                            custom_index: instances.len() as _,
-                            ..Default::default()
-                        }
-                        .to_vk(),
-                    );
+                    if !is_instanced {
+                        tlas_instances.push(
+                            nbn::AccelerationStructureInstance {
+                                acceleration_structure: *acceleration_structure,
+                                transform,
+                                custom_index: instances.len() as _,
+                                ..Default::default()
+                            }
+                            .to_vk(),
+                        );
+                    }
                     instances.push(instance);
                     num_indices += indices.count;
                 }
 
-                dbg!(num_indices);
+                //dbg!(num_indices);
                 blases.push(acceleration_structure);
             }
         });

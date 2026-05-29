@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 nbn = {path = "../..", features = ["freecam"]}
-goth-gltf = "0.3.0"
+goth-gltf = { version = "0.3.0", features = ["names"] }
 slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
 ddsfile = "0.6.0"
+ndarray-npy = "0.10.0"
+ndarray = "0.17.2"
