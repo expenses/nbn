@@ -7,6 +7,7 @@ import shared.constants;
 import shared.derivatives;
 import shared.barycentrics;
 import shared.culling;
+import shared.noise;
 
 [shader("compute")]
 [NumThreads(1, 1, 1)]
@@ -26,14 +27,19 @@ void prefix_sum_instances(
         return;
     }
 
+    var rng = SobolRng(uint2(0), thread);
+
     let instance = pc.instances[thread];
 
     let radius = instance.radius * max(instance.scale.x, max(instance.scale.y, instance.scale.z));
 
     let view_center = mul(pc.uniforms.view, float4(instance.translation, 1.0)).xyz;
     var visible = frustumCull(view_center, radius, pc.uniforms.near_plane, pc.uniforms.frustum);
-    let dist = radius * 75;
-    visible &= distance_squared(pc.uniforms.camera_pos, instance.translation) < (dist*dist);
+    
+    let full_dist = radius * 10;
+    let min_dist = radius * 50;
+    var prob = (distance(pc.uniforms.camera_pos, instance.translation) - full_dist) / min_dist;
+    visible &= rng.rand() > prob;
 
     if (!visible) {
         return;
