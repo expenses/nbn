@@ -1696,7 +1696,8 @@ impl Device {
     pub fn create_sync_resources(&self) -> SyncResources {
         SyncResources {
             timeline_semaphore: self.create_timeline_semaphore(2),
-            current_frame: 0,
+            // so that it ticks over to 0 on the first frame.
+            current_frame: FRAMES_IN_FLIGHT - 1,
             frames: [
                 FrameResources::new(self, 0),
                 FrameResources::new(self, 1),

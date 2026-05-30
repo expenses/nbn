@@ -148,10 +148,9 @@ impl winit::application::ApplicationHandler for App {
                     .tessellate(output.shapes, output.pixels_per_point);
 
                 unsafe {
-                    let current_frame = state.sync_resources.current_frame;
-                    let command_buffer = &state.per_frame_command_buffers[current_frame];
+                    let (frame, current_frame) = state.sync_resources.wait_for_frame(device);
 
-                    let mut frame = state.sync_resources.wait_for_frame(device);
+                    let command_buffer = &state.per_frame_command_buffers[current_frame];
 
                     let (next_image, _suboptimal) = device
                         .swapchain_loader
@@ -228,7 +227,7 @@ impl winit::application::ApplicationHandler for App {
 
                     device.end_command_buffer(**command_buffer).unwrap();
 
-                    frame.submit(
+                    state.sync_resources.submit_current_frame(
                         device,
                         image,
                         &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],

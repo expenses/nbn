@@ -10,59 +10,15 @@ use crate::*;
 
 pub const FRAMES_IN_FLIGHT: usize = 3;
 
-pub struct CurrentFrame<'a> {
-    frame: &'a mut FrameResources,
-    timeline_semaphore: &'a Semaphore,
-}
-
-impl std::ops::Deref for CurrentFrame<'_> {
-    type Target = FrameResources;
-
-    fn deref(&self) -> &Self::Target {
-        self.frame
-    }
-}
-
-impl CurrentFrame<'_> {
-    pub fn submit(
-        &mut self,
-        device: &Device,
-        image: &SwapchainImage,
-        command_buffers: &[vk::CommandBufferSubmitInfo],
-    ) {
-        self.frame.number += FRAMES_IN_FLIGHT as u64;
-        unsafe {
-            device.queue_submit2(
-                *device.graphics_queue,
-                &[vk::SubmitInfo2::default()
-                    .command_buffer_infos(command_buffers)
-                    .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(*self.frame.image_available_semaphore)
-                        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
-                    .signal_semaphore_infos(&[
-                        vk::SemaphoreSubmitInfo::default()
-                            .semaphore(*image.render_finished_semaphore)
-                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
-                        vk::SemaphoreSubmitInfo::default()
-                            .value(self.frame.number)
-                            .semaphore(**self.timeline_semaphore)
-                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
-                    ])],
-                vk::Fence::null(),
-            )
-        }
-        .unwrap();
-    }
-}
-
 pub struct SyncResources {
     pub(crate) frames: [FrameResources; FRAMES_IN_FLIGHT],
     pub(crate) timeline_semaphore: Semaphore,
-    pub current_frame: usize,
+    pub(crate) current_frame: usize,
 }
 
 impl SyncResources {
-    pub fn wait_for_frame(&mut self, device: &Device) -> CurrentFrame<'_> {
+    pub fn wait_for_frame(&mut self, device: &Device) -> (&FrameResources, usize) {
+        self.current_frame = (self.current_frame + 1) % FRAMES_IN_FLIGHT;
         let frame = &mut self.frames[self.current_frame];
 
         unsafe {
@@ -76,12 +32,39 @@ impl SyncResources {
                 .unwrap();
         }
 
-        self.current_frame = (self.current_frame + 1) % FRAMES_IN_FLIGHT;
+        (frame, self.current_frame)
+    }
 
-        CurrentFrame {
-            frame,
-            timeline_semaphore: &self.timeline_semaphore,
+    pub fn submit_current_frame(
+        &mut self,
+        device: &Device,
+        image: &SwapchainImage,
+        command_buffers: &[vk::CommandBufferSubmitInfo],
+    ) {
+        let frame = &mut self.frames[self.current_frame];
+
+        frame.number += FRAMES_IN_FLIGHT as u64;
+        unsafe {
+            device.queue_submit2(
+                *device.graphics_queue,
+                &[vk::SubmitInfo2::default()
+                    .command_buffer_infos(command_buffers)
+                    .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                        .semaphore(*frame.image_available_semaphore)
+                        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
+                    .signal_semaphore_infos(&[
+                        vk::SemaphoreSubmitInfo::default()
+                            .semaphore(*image.render_finished_semaphore)
+                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
+                        vk::SemaphoreSubmitInfo::default()
+                            .value(frame.number)
+                            .semaphore(*self.timeline_semaphore)
+                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT),
+                    ])],
+                vk::Fence::null(),
+            )
         }
+        .unwrap();
     }
 }
 
