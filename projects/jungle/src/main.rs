@@ -27,6 +27,7 @@ struct State {
     render_pipeline: nbn::Pipeline,
     reset: nbn::Pipeline,
     resolve: nbn::Pipeline,
+    raytrace: nbn::Pipeline,
     prefix_sum_instances: nbn::Pipeline,
     prefix_sum_data: nbn::Buffer,
     visible_meshlets: nbn::Buffer,
@@ -160,7 +161,7 @@ impl winit::application::ApplicationHandler for App {
             prefix_sum_instances: device.create_compute_pipeline(&shader, c"prefix_sum_instances"),
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
-
+            raytrace: device.create_compute_pipeline(&shader, c"raytrace"),
             images: Images::new(&device, width, height),
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -230,9 +231,6 @@ impl winit::application::ApplicationHandler for App {
                 state.images = Images::new(device, new_size.width, new_size.height);
             }
             winit::event::WindowEvent::RedrawRequested => unsafe {
-                let current_frame = state.sync_resources.current_frame;
-                let command_buffer = &state.per_frame_command_buffers[current_frame];
-
                 let extent = state.swapchain.create_info.image_extent;
 
                 let (view, proj) =
@@ -248,7 +246,7 @@ impl winit::application::ApplicationHandler for App {
                     state.camera_pos = state.freecam.camera_rig.final_transform.position.into();
                 }
 
-                let mut frame = state.sync_resources.wait_for_frame(device);
+                let (frame, frame_index) = state.sync_resources.wait_for_frame(device);
 
                 let (next_image, _suboptimal) = device
                     .swapchain_loader
@@ -259,9 +257,12 @@ impl winit::application::ApplicationHandler for App {
                         vk::Fence::null(),
                     )
                     .unwrap();
+
+                let command_buffer = &state.per_frame_command_buffers[frame_index];
+
                 let image = &state.swapchain.images[next_image as usize];
 
-                state.uniform_buffers[current_frame]
+                state.uniform_buffers[frame_index]
                     .try_as_slice_mut::<Uniforms>()
                     .unwrap()[0] = Uniforms {
                     camera: (proj * view).to_cols_array(),
@@ -283,150 +284,11 @@ impl winit::application::ApplicationHandler for App {
 
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
 
-                device.push_constants::<PushConstants>(
-                    &command_buffer,
-                    PushConstants {
-                        tlas: *state._data.tlas.tlas,
-                        uniforms: *state.uniform_buffers[current_frame],
-                        instances: *state._data.instances,
-                        prefix_sum_data: *state.prefix_sum_data,
-                        swapchain: *state.swapchain_image_heap_indices[next_image as usize],
-                        visible_meshlets: *state.visible_meshlets,
-                        dispatch: *state.dispatch,
-                    },
-                );
-
-                device.cmd_bind_pipeline(
-                    **command_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    *state.reset,
-                );
-
-                device.cmd_dispatch(**command_buffer, 1, 1, 1);
-
-                device.cmd_bind_pipeline(
-                    **command_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    *state.prefix_sum_instances,
-                );
-
-                device.cmd_dispatch(
-                    **command_buffer,
-                    state._data.num_instances.div_ceil(64),
-                    1,
-                    1,
-                );
-
-                device.insert_pipeline_barriers(
-                    command_buffer,
-                    [
-                        (
-                            image.into(),
-                            Some(nbn::BarrierOp::Acquire),
-                            nbn::BarrierOp::ComputeStorageWrite,
-                        ),
-                        (
-                            (&state.images.depth).into(),
-                            None,
-                            nbn::BarrierOp::DepthStencilAttachmentReadWrite,
-                        ),
-                        (
-                            (&state.images.vis).into(),
-                            None,
-                            nbn::BarrierOp::ColorAttachmentWrite,
-                        ),
-                    ],
-                    [(
-                        &state.dispatch,
-                        nbn::BarrierOp::ComputeStorageWrite,
-                        nbn::BarrierOp::IndirectParamRead,
-                    )],
-                );
-
-                device.begin_rendering(
-                    command_buffer,
-                    extent.width,
-                    extent.height,
-                    &[vk::RenderingAttachmentInfo::default()
-                        .image_view(*state.images.vis.image.view)
-                        .image_layout(vk::ImageLayout::GENERAL)
-                        .clear_value(vk::ClearValue {
-                            color: vk::ClearColorValue {
-                                uint32: [u32::max_value(); 4],
-                            },
-                        })
-                        .load_op(vk::AttachmentLoadOp::CLEAR)
-                        .store_op(vk::AttachmentStoreOp::STORE)],
-                    Some(
-                        &vk::RenderingAttachmentInfo::default()
-                            .clear_value(vk::ClearValue {
-                                depth_stencil: vk::ClearDepthStencilValue {
-                                    depth: 0.0,
-                                    stencil: 0,
-                                },
-                            })
-                            .load_op(vk::AttachmentLoadOp::CLEAR)
-                            .store_op(vk::AttachmentStoreOp::STORE)
-                            .image_view(*state.images.depth.view)
-                            .image_layout(vk::ImageLayout::GENERAL),
-                    ),
-                );
-
-                device.cmd_bind_pipeline(
-                    **command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    *state.render_pipeline,
-                );
-
-                device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
-                    **command_buffer,
-                    *state.dispatch.buffer,
-                    0,
-                    1,
-                    16,
-                );
-                // device.cmd_draw_indirect_count(
-                //     **command_buffer,
-                //     *state.draw_commands.buffer,
-                //     0,
-                //     *state.draw_counts.buffer,
-                //     0,
-                //     state._data.num_instances,
-                //     16,
-                // );
-
-                device.cmd_end_rendering(**command_buffer);
-
-                device.insert_image_pipeline_barrier(
-                    command_buffer,
-                    &state.images.vis,
-                    Some(nbn::BarrierOp::ColorAttachmentWrite),
-                    nbn::BarrierOp::ComputeStorageRead,
-                );
-
-                device.cmd_bind_pipeline(
-                    **command_buffer,
-                    vk::PipelineBindPoint::COMPUTE,
-                    *state.resolve,
-                );
-
-                device.cmd_dispatch(
-                    **command_buffer,
-                    extent.width.div_ceil(8),
-                    extent.height.div_ceil(8),
-                    1,
-                );
-
-                device.insert_image_pipeline_barrier(
-                    command_buffer,
-                    image,
-                    Some(nbn::BarrierOp::ComputeStorageWrite),
-                    nbn::BarrierOp::Present,
-                );
+                raster(state, next_image, frame_index);
 
                 device.end_command_buffer(**command_buffer).unwrap();
 
-                frame.submit(
+                state.sync_resources.submit_current_frame(
                     device,
                     &image,
                     &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
@@ -483,6 +345,147 @@ impl winit::application::ApplicationHandler for App {
         if let Some(state) = self.state.as_mut() {
             state.window.request_redraw();
         }
+    }
+}
+
+fn raster(state: &State, next_image: u32, current_frame: usize) {
+    let device = &state.device;
+    let command_buffer = &state.per_frame_command_buffers[current_frame];
+    let extent = state.swapchain.create_info.image_extent;
+    let image = &state.swapchain.images[next_image as usize];
+
+    unsafe {
+        device.push_constants::<PushConstants>(
+            command_buffer,
+            PushConstants {
+                tlas: *state._data.tlas.tlas,
+                uniforms: *state.uniform_buffers[current_frame],
+                instances: *state._data.instances,
+                prefix_sum_data: *state.prefix_sum_data,
+                swapchain: *state.swapchain_image_heap_indices[next_image as usize],
+                visible_meshlets: *state.visible_meshlets,
+                dispatch: *state.dispatch,
+            },
+        );
+
+        device.cmd_bind_pipeline(
+            **command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *state.reset,
+        );
+
+        device.cmd_dispatch(**command_buffer, 1, 1, 1);
+
+        device.cmd_bind_pipeline(
+            **command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *state.prefix_sum_instances,
+        );
+
+        device.cmd_dispatch(
+            **command_buffer,
+            state._data.num_instances.div_ceil(64),
+            1,
+            1,
+        );
+
+        device.insert_pipeline_barriers(
+            command_buffer,
+            [
+                (
+                    image.into(),
+                    Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                ),
+                (
+                    (&state.images.depth).into(),
+                    None,
+                    nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+                ),
+                (
+                    (&state.images.vis).into(),
+                    None,
+                    nbn::BarrierOp::ColorAttachmentWrite,
+                ),
+            ],
+            [(
+                &state.dispatch,
+                nbn::BarrierOp::ComputeStorageWrite,
+                nbn::BarrierOp::IndirectParamRead,
+            )],
+        );
+
+        device.begin_rendering(
+            command_buffer,
+            extent.width,
+            extent.height,
+            &[vk::RenderingAttachmentInfo::default()
+                .image_view(*state.images.vis.image.view)
+                .image_layout(vk::ImageLayout::GENERAL)
+                .clear_value(vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        uint32: [u32::max_value(); 4],
+                    },
+                })
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)],
+            Some(
+                &vk::RenderingAttachmentInfo::default()
+                    .clear_value(vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 0.0,
+                            stencil: 0,
+                        },
+                    })
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .image_view(*state.images.depth.view)
+                    .image_layout(vk::ImageLayout::GENERAL),
+            ),
+        );
+
+        device.cmd_bind_pipeline(
+            **command_buffer,
+            vk::PipelineBindPoint::GRAPHICS,
+            *state.render_pipeline,
+        );
+
+        device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
+            **command_buffer,
+            *state.dispatch.buffer,
+            0,
+            1,
+            16,
+        );
+
+        device.cmd_end_rendering(**command_buffer);
+
+        device.insert_image_pipeline_barrier(
+            command_buffer,
+            &state.images.vis,
+            Some(nbn::BarrierOp::ColorAttachmentWrite),
+            nbn::BarrierOp::ComputeStorageRead,
+        );
+
+        device.cmd_bind_pipeline(
+            **command_buffer,
+            vk::PipelineBindPoint::COMPUTE,
+            *state.resolve,
+        );
+
+        device.cmd_dispatch(
+            **command_buffer,
+            extent.width.div_ceil(8),
+            extent.height.div_ceil(8),
+            1,
+        );
+
+        device.insert_image_pipeline_barrier(
+            command_buffer,
+            image,
+            Some(nbn::BarrierOp::ComputeStorageWrite),
+            nbn::BarrierOp::Present,
+        );
     }
 }
 
