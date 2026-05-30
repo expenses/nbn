@@ -664,18 +664,20 @@ fn load_gltf<P: AsRef<std::path::Path>>(
 
                 let acceleration_structure = device.create_acceleration_structure(
                     &format!("{} acceleration structure", path.display(),),
-                    nbn::AccelerationStructureData::Triangles {
-                        index_type: if is_32_bit {
-                            vk::IndexType::UINT32
-                        } else {
-                            vk::IndexType::UINT16
+                    nbn::AccelerationStructureData::Triangles(&[
+                        nbn::AccelerationStructureTriangles {
+                            index_type: if is_32_bit {
+                                vk::IndexType::UINT32
+                            } else {
+                                vk::IndexType::UINT16
+                            },
+                            opaque: true,
+                            vertices_buffer_address: get(primitive.attributes.position),
+                            indices_buffer_address: get_buffer_offset(indices),
+                            num_vertices: positions_accessor.count as _,
+                            num_indices: indices.count as _,
                         },
-                        opaque: true,
-                        vertices_buffer_address: get(primitive.attributes.position),
-                        indices_buffer_address: get_buffer_offset(indices),
-                        num_vertices: positions_accessor.count as _,
-                        num_indices: indices.count as _,
-                    },
+                    ]),
                     staging_buffer,
                 );
 
