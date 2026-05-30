@@ -171,7 +171,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     if (any(thread >= pc.uniforms.extent)) {
         return;
     }
-    
+
     let d = thread_to_clip(thread, pc.uniforms.extent);
     let origin = mul(pc.uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
     let temp = mul(pc.uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
@@ -192,11 +192,11 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         desc
     );
     query.Proceed();
-    
+
     var color = float3(0);
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        let instance = pc.instances[query.CommittedRayInstanceCustomIndex()];
+        let instance = pc.instances[query.CommittedRayInstanceCustomIndex() + query.CommittedRayGeometryIndex()];
         let prim = query.CommittedPrimitiveIndex();
         let mat = query.CommittedObjectToWorld3x4();
         let indices = uint3(
@@ -222,8 +222,8 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
            instance.uvs[indices.y],
            instance.uvs[indices.z]
         );
-        
-        
+
+
         if (instance.image != MAX_UINT_VALUE) {
             color = sample(instance.image, uv).rgb;
         } else {

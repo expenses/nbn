@@ -628,6 +628,11 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 }
             }
 
+            let mut geos = Vec::new();
+
+            let name = mesh.name.as_ref().unwrap();
+            let model_offset = instances.len() as u32;
+
             for (
                 primitive,
                 &[
@@ -664,30 +669,18 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     .unwrap()
                     .sqrt();
 
-                let acceleration_structure = device.create_acceleration_structure(
-                    &format!("{} acceleration structure", path.display(),),
-                    nbn::AccelerationStructureData::Triangles(&[
-                        nbn::AccelerationStructureTriangles {
-                            index_type: if is_32_bit {
-                                vk::IndexType::UINT32
-                            } else {
-                                vk::IndexType::UINT16
-                            },
-                            opaque: true,
-                            vertices_buffer_address: get(primitive.attributes.position),
-                            indices_buffer_address: get_buffer_offset(indices),
-                            num_vertices: positions_accessor.count as _,
-                            num_indices: indices.count as _,
-                        },
-                    ]),
-                    staging_buffer,
-                );
-
-                let transform = nbn::glam::Mat4::from_scale_rotation_translation(
-                    scale.into(),
-                    nbn::glam::Quat::from_array(rotation),
-                    translation.into(),
-                );
+                geos.push(nbn::AccelerationStructureTriangles {
+                    index_type: if is_32_bit {
+                        vk::IndexType::UINT32
+                    } else {
+                        vk::IndexType::UINT16
+                    },
+                    opaque: true,
+                    vertices_buffer_address: get(primitive.attributes.position),
+                    indices_buffer_address: get_buffer_offset(indices),
+                    num_vertices: positions_accessor.count as _,
+                    num_indices: indices.count as _,
+                });
 
                 let image_index = if let Some(info) =
                     material.pbr_metallic_roughness.base_color_texture.as_ref()
@@ -735,112 +728,125 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     num_meshlets,
                 };
 
-                let name = mesh.name.as_ref().unwrap();
-
-                let mut is_instanced = false;
-
-                if let Ok(arr) = npz.by_name::<ndarray::OwnedRepr<f32>, ndarray::Ix1>(name) {
-                    is_instanced = true;
-                    if name.starts_with("Queen")
-                        || name.starts_with("Banyan")
-                        || name.starts_with("Anth")
-                        || name.starts_with("Nettle")
-                        || name.starts_with("Shrub_")
-                        || name.starts_with("RiverSapling")
-                        //|| name.starts_with("RiverSeedling_01_Translucent")
-                        //|| name.starts_with("Grass_A")
-                    {
-                        let mut num = 0;
-                        for x in arr.as_slice().unwrap().chunks(16) {
-                            #[rustfmt::skip]
-                            let transform = nbn::glam::Mat4::from_cols_array(&[
-                                 x[0],  x[ 8], -x[4],  x[12],
-                                 x[2],  x[10], -x[6],  x[14],
-                                -x[1], -x[ 9],  x[5], -x[13],
-                                 x[3],  x[11], -x[7],  x[15]
-                            ]);
-
-                            tlas_instances.push(
-                                nbn::AccelerationStructureInstance {
-                                    acceleration_structure: *acceleration_structure,
-                                    transform,
-                                    custom_index: instances.len() as _,
-                                    ..Default::default()
-                                }
-                                .to_vk(),
-                            );
-                            num += 1;
-                        }
-                        dbg!(num);
-                    } else {
-                        dbg!(name, arr.len());
-                    }
-                }
-
-                if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {
-                    assert_eq!(
-                        (translation, rotation, scale),
-                        ([0.0; 3], [0.0, 0.0, 0.0, 1.0], [1.0; 3])
-                    );
-
-                    let translations = &gltf.accessors[instancing.attributes.translation];
-                    let scales = &gltf.accessors[instancing.attributes.scale];
-                    let rotations = &gltf.accessors[instancing.attributes.rotation];
-
-                    let scales =
-                        &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(scales))[..scales.count];
-
-                    let translations =
-                        &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(translations))
-                            [..translations.count];
-
-                    let rotations = &nbn::cast_slice::<_, [f32; 4]>(get_buffer_data(rotations))
-                        [..rotations.count];
-
-                    for ((&translation, &scale), &rotation) in
-                        translations.iter().zip(scales).zip(rotations)
-                    {
-                        let transform = nbn::glam::Mat4::from_scale_rotation_translation(
-                            scale.into(),
-                            nbn::glam::Quat::from_array(rotation),
-                            translation.into(),
-                        );
-                        tlas_instances.push(
-                            nbn::AccelerationStructureInstance {
-                                acceleration_structure: *acceleration_structure,
-                                transform,
-                                custom_index: instances.len() as _,
-                                ..Default::default()
-                            }
-                            .to_vk(),
-                        );
-                        instances.push(Instance {
-                            translation,
-                            scale,
-                            rotation,
-                            ..instance
-                        });
-                        num_indices += indices.count;
-                    }
-                } else {
-                    if !is_instanced {
-                        tlas_instances.push(
-                            nbn::AccelerationStructureInstance {
-                                acceleration_structure: *acceleration_structure,
-                                transform,
-                                custom_index: instances.len() as _,
-                                ..Default::default()
-                            }
-                            .to_vk(),
-                        );
-                    }
-                    instances.push(instance);
-                    num_indices += indices.count;
-                }
-
-                //dbg!(num_indices);
-                blases.push(acceleration_structure);
+                instances.push(instance);
             }
+
+            dbg!(model_offset);
+
+            let transform = nbn::glam::Mat4::from_scale_rotation_translation(
+                scale.into(),
+                nbn::glam::Quat::from_array(rotation),
+                translation.into(),
+            );
+
+            let acceleration_structure = device.create_acceleration_structure(
+                &name,
+                nbn::AccelerationStructureData::Triangles(&geos),
+                staging_buffer,
+            );
+
+            let mut is_instanced = false;
+
+            if let Ok(arr) = npz.by_name::<ndarray::OwnedRepr<f32>, ndarray::Ix1>(name) {
+                is_instanced = true;
+                if name.starts_with("Queen")
+                    || name.starts_with("Banyan")
+                    || name.starts_with("Anth")
+                    || name.starts_with("Nettle")
+                    || name.starts_with("Shrub_")
+                    || name.starts_with("RiverSapling")
+                //|| name.starts_with("RiverSeedling_01_Translucent")
+                //|| name.starts_with("Grass_A")
+                {
+                    let mut num = 0;
+                    for x in arr.as_slice().unwrap().chunks(16) {
+                        #[rustfmt::skip]
+                        let transform = nbn::glam::Mat4::from_cols_array(&[
+                             x[0],  x[ 8], -x[4],  x[12],
+                             x[2],  x[10], -x[6],  x[14],
+                            -x[1], -x[ 9],  x[5], -x[13],
+                             x[3],  x[11], -x[7],  x[15]
+                        ]);
+
+                        tlas_instances.push(
+                            nbn::AccelerationStructureInstance {
+                                acceleration_structure: *acceleration_structure,
+                                transform,
+                                custom_index: model_offset,
+                                ..Default::default()
+                            }
+                            .to_vk(),
+                        );
+                        num += 1;
+                    }
+                    dbg!(num);
+                } else {
+                    dbg!(name, arr.len());
+                }
+            }
+
+            if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {
+                assert_eq!(
+                    (translation, rotation, scale),
+                    ([0.0; 3], [0.0, 0.0, 0.0, 1.0], [1.0; 3])
+                );
+
+                let translations = &gltf.accessors[instancing.attributes.translation];
+                let scales = &gltf.accessors[instancing.attributes.scale];
+                let rotations = &gltf.accessors[instancing.attributes.rotation];
+
+                let scales =
+                    &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(scales))[..scales.count];
+
+                let translations = &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(translations))
+                    [..translations.count];
+
+                let rotations =
+                    &nbn::cast_slice::<_, [f32; 4]>(get_buffer_data(rotations))[..rotations.count];
+
+                for ((&translation, &scale), &rotation) in
+                    translations.iter().zip(scales).zip(rotations)
+                {
+                    let transform = nbn::glam::Mat4::from_scale_rotation_translation(
+                        scale.into(),
+                        nbn::glam::Quat::from_array(rotation),
+                        translation.into(),
+                    );
+                    tlas_instances.push(
+                        nbn::AccelerationStructureInstance {
+                            acceleration_structure: *acceleration_structure,
+                            transform,
+                            custom_index: model_offset,
+                            ..Default::default()
+                        }
+                        .to_vk(),
+                    );
+                    // instances.push(Instance {
+                    //     translation,
+                    //     scale,
+                    //     rotation,
+                    //     ..instance
+                    // });
+                    // num_indices += indices.count;
+                }
+            } else {
+                if !is_instanced {
+                    tlas_instances.push(
+                        nbn::AccelerationStructureInstance {
+                            acceleration_structure: *acceleration_structure,
+                            transform,
+                            custom_index: model_offset,
+                            ..Default::default()
+                        }
+                        .to_vk(),
+                    );
+                }
+                //instances.push(instance);
+                // num_indices += indices.count;
+            }
+
+            //dbg!(num_indices);
+            blases.push(acceleration_structure);
         });
 
     LoadedData {
