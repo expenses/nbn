@@ -38,6 +38,8 @@
               ninja
               eog
               tev
+              cmake
+              ninja
               (writeShellScriptBin "format-shaders" ''
                 ${clang-tools}/bin/clang-format -i shaders/**/*.slang shaders/*.slang
               '')
@@ -53,12 +55,6 @@
         devShells.vcc-testing = with pkgs;
           mkShell {
             nativeBuildInputs = [vcc spirv-tools];
-          };
-        devShells.cpp = with pkgs;
-          mkShell {
-            nativeBuildInputs = [cmake ninja];
-            buildInputs = [vulkan-loader
-                vulkan-headers];
           };
       }
     );
