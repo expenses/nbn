@@ -1,11 +1,20 @@
+#include "pch.h"
+
+struct ShaderModule {
+    vk::raii::ShaderModule module = {nullptr};
+    std::string path;
+};
+
 struct Device {
-    vk::Instance instance;
-    vk::PhysicalDevice physical_device;
+    vk::raii::Context context;
+    vk::raii::Instance instance = {nullptr};
+    vk::raii::PhysicalDevice physical_device = {nullptr};
     vk::PhysicalDeviceProperties properties;
-    vk::Device device;
-    vk::Queue graphics_queue;
-    vk::Queue compute_queue;
-    vk::Queue transfer_queue;
-    
+    vk::raii::Device device = {nullptr};
+    vk::raii::Queue graphics_queue = {nullptr};
+    vk::raii::Queue compute_queue = {nullptr};
+    vk::raii::Queue transfer_queue = {nullptr};
+
     Device();
+    ShaderModule load_shader(const std::string& path);
 };

@@ -10,7 +10,8 @@ Device::Device() {
         .engineVersion = VK_MAKE_API_VERSION(0, 1, 0, 0),
         .apiVersion = VK_API_VERSION_1_3,
     };
-    instance = vk::createInstance(
+    instance = vk::raii::Instance(
+        context,
         vk::InstanceCreateInfo {
             .pApplicationInfo = &appInfo,
             .enabledExtensionCount = instance_extensions.size(),
@@ -37,14 +38,11 @@ Device::Device() {
         }
     };
 
-    const auto best_physical_device = std::min_element(
-        devices.begin(),
-        devices.end(),
-        [&](auto& a, auto& b) {
+    const auto best_physical_device =
+        std::min_element(devices.begin(), devices.end(), [&](auto& a, auto& b) {
             return score(a.getProperties().deviceType)
                 < score(b.getProperties().deviceType);
-        }
-    );
+        });
 
     physical_device = std::move(*best_physical_device);
 
@@ -113,25 +111,29 @@ Device::Device() {
             break;
         }
 
-    auto f13 = vk::PhysicalDeviceVulkan13Features {}
-                   .setSynchronization2(true)
-                   .setDynamicRendering(true);
-    auto f12 = vk::PhysicalDeviceVulkan12Features {}
-                   .setPNext(&f13)
-                   .setBufferDeviceAddress(true)
-                   .setDescriptorBindingSampledImageUpdateAfterBind(true)
-                   .setDescriptorBindingStorageImageUpdateAfterBind(true)
-                   .setRuntimeDescriptorArray(true)
-                   .setTimelineSemaphore(true)
-                   .setShaderBufferInt64Atomics(true)
-                   .setShaderInt8(true)
-                   .setShaderFloat16(true)
-                   .setVulkanMemoryModel(true)
-                   .setVulkanMemoryModelDeviceScope(true)
-                   .setDrawIndirectCount(true);
-    auto f11 = vk::PhysicalDeviceVulkan11Features {}
-                   .setPNext(&f12)
-                   .setShaderDrawParameters(true);
+    auto vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features {}
+                                   .setSynchronization2(true)
+                                   .setDynamicRendering(true);
+    auto vulkan_1_2_features =
+        vk::PhysicalDeviceVulkan12Features {}
+            .setPNext(&vulkan_1_3_features)
+            .setBufferDeviceAddress(true)
+            .setDescriptorBindingSampledImageUpdateAfterBind(true)
+            .setDescriptorBindingStorageImageUpdateAfterBind(true)
+            .setRuntimeDescriptorArray(true)
+            .setTimelineSemaphore(true)
+            .setShaderBufferInt64Atomics(true)
+            .setShaderInt8(true)
+            .setShaderFloat16(true)
+            .setVulkanMemoryModel(true)
+            .setVulkanMemoryModelDeviceScope(true)
+            .setDrawIndirectCount(true);
+    auto vulkan_1_1_features = vk::PhysicalDeviceVulkan11Features {}
+                                   .setPNext(&vulkan_1_2_features)
+                                   .setShaderDrawParameters(true);
+    auto ray_query_features = vk::PhysicalDeviceRayQueryFeaturesKHR {}
+                                  .setPNext(&vulkan_1_1_features)
+                                  .setRayQuery(true);
     auto enabled_features = vk::PhysicalDeviceFeatures {}
                                 .setShaderInt64(true)
                                 .setShaderInt16(true)
@@ -142,41 +144,76 @@ Device::Device() {
                                 .setGeometryShader(true);
     float priority = 1.0f;
     std::vector<vk::DeviceQueueCreateInfo> queue_infos;
-    queue_infos.push_back(vk::DeviceQueueCreateInfo {
-        .queueFamilyIndex = graphics_queue_family,
-        .queueCount = 1,
-        .pQueuePriorities = &priority,
-    });
-    if (compute_queue_family != graphics_queue_family) {
-        queue_infos.push_back(vk::DeviceQueueCreateInfo {
-            .queueFamilyIndex = compute_queue_family,
+    queue_infos.push_back(
+        vk::DeviceQueueCreateInfo {
+            .queueFamilyIndex = graphics_queue_family,
             .queueCount = 1,
             .pQueuePriorities = &priority,
-        });
+        }
+    );
+    if (compute_queue_family != graphics_queue_family) {
+        queue_infos.push_back(
+            vk::DeviceQueueCreateInfo {
+                .queueFamilyIndex = compute_queue_family,
+                .queueCount = 1,
+                .pQueuePriorities = &priority,
+            }
+        );
     }
     if (transfer_queue_family != compute_queue_family) {
-        queue_infos.push_back(vk::DeviceQueueCreateInfo {
-            .queueFamilyIndex = transfer_queue_family,
-            .queueCount = 1,
-            .pQueuePriorities = &priority,
-        });
+        queue_infos.push_back(
+            vk::DeviceQueueCreateInfo {
+                .queueFamilyIndex = transfer_queue_family,
+                .queueCount = 1,
+                .pQueuePriorities = &priority,
+            }
+        );
     }
 
-    auto extensions = std::array {"VK_KHR_swapchain"};
+    auto extensions = std::array {
+        "VK_KHR_swapchain",
+        "VK_EXT_mesh_shader",
+        "VK_KHR_ray_tracing_pipeline",
+        "VK_KHR_ray_query",
+        "VK_KHR_acceleration_structure",
+        "VK_KHR_deferred_host_operations"
+    };
 
-    device = physical_device.createDevice(
+    device = vk::raii::Device(
+        physical_device,
         vk::DeviceCreateInfo {}
-            .setQueueCreateInfoCount(
-                static_cast<uint32_t>(queue_infos.size())
-            )
+            .setQueueCreateInfoCount(static_cast<uint32_t>(queue_infos.size()))
             .setPQueueCreateInfos(queue_infos.data())
             .setEnabledExtensionCount(extensions.size())
             .setPpEnabledExtensionNames(extensions.data())
             .setPEnabledFeatures(&enabled_features)
-            .setPNext(&f11)
+            .setPNext(&ray_query_features)
     );
 
     graphics_queue = device.getQueue(graphics_queue_family, 0);
     compute_queue = device.getQueue(compute_queue_family, 0);
     transfer_queue = device.getQueue(transfer_queue_family, 0);
+}
+
+ShaderModule Device::load_shader(const std::string& path) {
+    std::ifstream file(path, std::ios::ate | std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Failed to read " + path);
+    }
+    auto size = static_cast<size_t>(file.tellg());
+    file.seekg(0);
+    std::vector<uint32_t> code(size / 4);
+    file.read(
+        reinterpret_cast<char*>(code.data()),
+        static_cast<std::streamsize>(size)
+    );
+
+    return ShaderModule {
+        device.createShaderModule(
+            vk::ShaderModuleCreateInfo {}.setCodeSize(size).setPCode(
+                code.data()
+            )
+        ),
+        path,
+    };
 }
