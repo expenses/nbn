@@ -1,4 +1,11 @@
-struct Device {
+module;
+#define VULKAN_HPP_NO_CONSTRUCTORS
+#include <algorithm>
+#include <array>
+#include <vulkan/vulkan_raii.hpp>
+export module nbn;
+
+export struct Device {
     vk::Instance instance;
     vk::PhysicalDevice physical_device;
     vk::PhysicalDeviceProperties properties;
@@ -8,7 +15,7 @@ struct Device {
     vk::Queue transfer_queue;
 
     static Device new_device() {
-        VULKAN_HPP_DEFAULT_DISPATCHER.init();
+        auto instance_extensions = std::array {"VK_KHR_surface"};
 
         vk::ApplicationInfo appInfo {
             .pApplicationName = "nbn",
@@ -18,10 +25,12 @@ struct Device {
             .apiVersion = VK_API_VERSION_1_3,
         };
         const auto instance = vk::createInstance(
-            vk::InstanceCreateInfo {.pApplicationInfo = &appInfo}
+            vk::InstanceCreateInfo {
+                .pApplicationInfo = &appInfo,
+                .enabledExtensionCount = instance_extensions.size(),
+                .ppEnabledExtensionNames = instance_extensions.data()
+            }
         );
-
-        VULKAN_HPP_DEFAULT_DISPATCHER.init(instance, vkGetInstanceProcAddr);
 
         auto devices = instance.enumeratePhysicalDevices();
 
@@ -118,59 +127,65 @@ struct Device {
                 break;
             }
 
-        auto f13 = vk::PhysicalDeviceVulkan13Features{}
-            .setSynchronization2(true)
-            .setDynamicRendering(true);
-        auto f12 = vk::PhysicalDeviceVulkan12Features{}
-            .setPNext(&f13)
-            .setBufferDeviceAddress(true)
-            .setDescriptorBindingSampledImageUpdateAfterBind(true)
-            .setDescriptorBindingStorageImageUpdateAfterBind(true)
-            .setRuntimeDescriptorArray(true)
-            .setTimelineSemaphore(true)
-            .setShaderBufferInt64Atomics(true)
-            .setShaderInt8(true)
-            .setShaderFloat16(true)
-            .setVulkanMemoryModel(true)
-            .setVulkanMemoryModelDeviceScope(true)
-            .setDrawIndirectCount(true);
-        auto f11 = vk::PhysicalDeviceVulkan11Features{}
-            .setPNext(&f12)
-            .setShaderDrawParameters(true);
-        auto enabled_features = vk::PhysicalDeviceFeatures{}
-            .setShaderInt64(true)
-            .setShaderInt16(true)
-            .setSamplerAnisotropy(true)
-            .setMultiDrawIndirect(true)
-            .setFragmentStoresAndAtomics(true)
-            .setVertexPipelineStoresAndAtomics(true)
-            .setGeometryShader(true);
+        auto f13 = vk::PhysicalDeviceVulkan13Features {}
+                       .setSynchronization2(true)
+                       .setDynamicRendering(true);
+        auto f12 = vk::PhysicalDeviceVulkan12Features {}
+                       .setPNext(&f13)
+                       .setBufferDeviceAddress(true)
+                       .setDescriptorBindingSampledImageUpdateAfterBind(true)
+                       .setDescriptorBindingStorageImageUpdateAfterBind(true)
+                       .setRuntimeDescriptorArray(true)
+                       .setTimelineSemaphore(true)
+                       .setShaderBufferInt64Atomics(true)
+                       .setShaderInt8(true)
+                       .setShaderFloat16(true)
+                       .setVulkanMemoryModel(true)
+                       .setVulkanMemoryModelDeviceScope(true)
+                       .setDrawIndirectCount(true);
+        auto f11 = vk::PhysicalDeviceVulkan11Features {}
+                       .setPNext(&f12)
+                       .setShaderDrawParameters(true);
+        auto enabled_features = vk::PhysicalDeviceFeatures {}
+                                    .setShaderInt64(true)
+                                    .setShaderInt16(true)
+                                    .setSamplerAnisotropy(true)
+                                    .setMultiDrawIndirect(true)
+                                    .setFragmentStoresAndAtomics(true)
+                                    .setVertexPipelineStoresAndAtomics(true)
+                                    .setGeometryShader(true);
         float priority = 1.0f;
-        std::array<vk::DeviceQueueCreateInfo, 3> queue_infos = {
-            vk::DeviceQueueCreateInfo {
-                .queueFamilyIndex = graphics_queue_family,
-                .queueCount = 1,
-                .pQueuePriorities = &priority,
-            },
-            vk::DeviceQueueCreateInfo {
+        std::vector<vk::DeviceQueueCreateInfo> queue_infos;
+        queue_infos.push_back(vk::DeviceQueueCreateInfo {
+            .queueFamilyIndex = graphics_queue_family,
+            .queueCount = 1,
+            .pQueuePriorities = &priority,
+        });
+        if (compute_queue_family != graphics_queue_family) {
+            queue_infos.push_back(vk::DeviceQueueCreateInfo {
                 .queueFamilyIndex = compute_queue_family,
                 .queueCount = 1,
                 .pQueuePriorities = &priority,
-            },
-            vk::DeviceQueueCreateInfo {
+            });
+        }
+        if (transfer_queue_family != compute_queue_family) {
+            queue_infos.push_back(vk::DeviceQueueCreateInfo {
                 .queueFamilyIndex = transfer_queue_family,
                 .queueCount = 1,
                 .pQueuePriorities = &priority,
-            }
-        };
+            });
+        }
+
+        auto extensions = std::array {"VK_KHR_swapchain"};
 
         const auto device = physical_device.createDevice(
-            vk::DeviceCreateInfo{}
-                .setQueueCreateInfoCount(static_cast<uint32_t>(queue_infos.size()))
+            vk::DeviceCreateInfo {}
+                .setQueueCreateInfoCount(
+                    static_cast<uint32_t>(queue_infos.size())
+                )
                 .setPQueueCreateInfos(queue_infos.data())
-                .setEnabledExtensionCount(1)
-                .setPpEnabledExtensionNames(
-                    std::array{"VK_KHR_swapchain"}.data())
+                .setEnabledExtensionCount(extensions.size())
+                .setPpEnabledExtensionNames(extensions.data())
                 .setPEnabledFeatures(&enabled_features)
                 .setPNext(&f11)
         );
