@@ -14,7 +14,12 @@ struct Device {
     vk::raii::Queue graphics_queue = {nullptr};
     vk::raii::Queue compute_queue = {nullptr};
     vk::raii::Queue transfer_queue = {nullptr};
+    vk::raii::PipelineLayout pipeline_layout = {nullptr};
 
     Device();
     ShaderModule load_shader(const std::string& path);
+    auto create_compute_pipeline(
+        const ShaderModule& module,
+        const std::string& entry_point
+    ) -> vk::raii::Pipeline;
 };

@@ -1,7 +1,8 @@
 #include "device.h"
 
 Device::Device() {
-    auto instance_extensions = std::array {"VK_KHR_surface"};
+    auto instance_extensions =
+        std::array {"VK_KHR_surface", "VK_EXT_debug_utils"};
 
     vk::ApplicationInfo appInfo {
         .pApplicationName = "nbn",
@@ -193,6 +194,19 @@ Device::Device() {
     graphics_queue = device.getQueue(graphics_queue_family, 0);
     compute_queue = device.getQueue(compute_queue_family, 0);
     transfer_queue = device.getQueue(transfer_queue_family, 0);
+
+    auto push_constant_ranges =
+        std::array {vk::PushConstantRange {}
+                        .setStageFlags(vk::ShaderStageFlagBits::eAll)
+                        .setOffset(0)
+                        .setSize(properties.limits.maxPushConstantsSize)};
+
+    pipeline_layout = vk::raii::PipelineLayout(
+        device,
+        vk::PipelineLayoutCreateInfo {}.setPushConstantRanges(
+            push_constant_ranges
+        )
+    );
 }
 
 ShaderModule Device::load_shader(const std::string& path) {
@@ -216,4 +230,31 @@ ShaderModule Device::load_shader(const std::string& path) {
         ),
         path,
     };
+}
+
+auto Device::create_compute_pipeline(
+    const ShaderModule& module,
+    const std::string& entry_point
+) -> vk::raii::Pipeline {
+    auto pipeline = device.createComputePipeline(
+        VK_NULL_HANDLE,
+        vk::ComputePipelineCreateInfo {}
+            .setStage(
+                vk::PipelineShaderStageCreateInfo {}
+                    .setStage(vk::ShaderStageFlagBits::eCompute)
+                    .setModule(*module.module)
+                    .setPName(entry_point.c_str())
+            )
+            .setLayout(*pipeline_layout)
+    );
+
+    auto vk_pipeline = static_cast<VkPipeline>(*pipeline);
+    device.setDebugUtilsObjectNameEXT(
+        vk::DebugUtilsObjectNameInfoEXT {}
+            .setObjectType(vk::ObjectType::ePipeline)
+            .setObjectHandle(reinterpret_cast<uint64_t>(vk_pipeline))
+            .setPObjectName((module.path + " - " + entry_point).c_str())
+    );
+
+    return pipeline;
 }
