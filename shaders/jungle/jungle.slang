@@ -205,12 +205,16 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
             instance.read_index(prim*3+2),
         );
 
+        let a = instance.positions[indices.x];
+        let b = instance.positions[indices.y];
+        let c = instance.positions[indices.z];
+
         WithDerivatives<float3> position;
         let barycentrics = calculate_barycentrics_from_world_positions(
             pc.uniforms.camera,
-            mul(mat, float4(instance.positions[indices.x],1)),
-            mul(mat, float4(instance.positions[indices.y],1)),
-            mul(mat, float4(instance.positions[indices.z],1)),
+            mul(mat, float4(a, 1)),
+            mul(mat, float4(b, 1)),
+            mul(mat, float4(c, 1)),
             thread,
             pc.uniforms.extent,
             position
@@ -223,12 +227,40 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
            instance.uvs[indices.z]
         );
 
+        let normal = normalize(interpolate(
+           barycentrics,
+           instance.normals[indices.x],
+           instance.normals[indices.y],
+           instance.normals[indices.z]
+        ).val);
+
+        let light_dir = normalize(float3(1,5,1));
 
         if (instance.image != MAX_UINT_VALUE) {
             color = sample(instance.image, uv).rgb;
         } else {
             color = float3(1);
         }
+
+        let geom_normal = normalize(cross(b - a, c - a));
+
+        RayDesc desc;
+        desc.Direction = light_dir;
+        desc.Origin = offset_ray(position.val, geom_normal);
+        desc.TMax = 10000.0;
+        desc.TMin = 0.0;
+
+        var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+        query.TraceRayInline(
+            RaytracingAccelerationStructure(pc.tlas),
+            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+            0xff,
+            desc
+        );
+        query.Proceed();
+
+        let lighting = max(dot(normal, light_dir), 0.0) * float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
+        color *= (lighting * 0.75 + 0.25);
     }
 
     WTexture2D<float3> swapchain = storage_images[pc.swapchain];

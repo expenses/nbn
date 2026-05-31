@@ -236,7 +236,7 @@ impl winit::application::ApplicationHandler for App {
                 let (view, proj) =
                     state
                         .freecam
-                        .update(extent.width, extent.height, 1.0 / 60.0, 5.0);
+                        .update(extent.width, extent.height, 1.0 / 60.0, 2.0);
 
                 let frustum_x = (proj.row(3).truncate() + proj.row(0).truncate()).normalize();
                 let frustum_y = (proj.row(3).truncate() + proj.row(1).truncate()).normalize();
@@ -719,6 +719,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     indices: get_buffer_offset(indices),
                     positions: get(primitive.attributes.position),
                     uvs: get(primitive.attributes.texcoord_0),
+                    normals: get(primitive.attributes.normal),
                     flags: is_32_bit as _,
                     image: image_index,
                     radius,
@@ -747,42 +748,51 @@ fn load_gltf<P: AsRef<std::path::Path>>(
 
             let mut is_instanced = false;
 
+            let should_instance = name.starts_with("Queen")
+                || name.starts_with("Banyan")
+                || name.starts_with("Anth")
+                || name.starts_with("Nettle")
+                || name.starts_with("Shrub_")
+                || name.starts_with("RiverSapling")
+                || name.starts_with("Grass_B_05");
+
+            if !should_instance {
+                dbg!(name);
+            }
+
             if let Ok(arr) = npz.by_name::<ndarray::OwnedRepr<f32>, ndarray::Ix1>(name) {
                 is_instanced = true;
-                if name.starts_with("Queen")
-                    || name.starts_with("Banyan")
-                    || name.starts_with("Anth")
-                    || name.starts_with("Nettle")
-                    || name.starts_with("Shrub_")
-                    || name.starts_with("RiverSapling")
-                //|| name.starts_with("RiverSeedling_01_Translucent")
-                //|| name.starts_with("Grass_A")
-                {
-                    let mut num = 0;
-                    for x in arr.as_slice().unwrap().chunks(16) {
-                        #[rustfmt::skip]
-                        let transform = nbn::glam::Mat4::from_cols_array(&[
-                             x[0],  x[ 8], -x[4],  x[12],
-                             x[2],  x[10], -x[6],  x[14],
-                            -x[1], -x[ 9],  x[5], -x[13],
-                             x[3],  x[11], -x[7],  x[15]
-                        ]);
 
-                        tlas_instances.push(
-                            nbn::AccelerationStructureInstance {
-                                acceleration_structure: *acceleration_structure,
-                                transform,
-                                custom_index: model_offset,
-                                ..Default::default()
-                            }
-                            .to_vk(),
-                        );
-                        num += 1;
+                let mut num = 0;
+                for (i, x) in arr.as_slice().unwrap().chunks(16).enumerate() {
+                    #[rustfmt::skip]
+                    let transform = nbn::glam::Mat4::from_cols_array(&[
+                         x[0],  x[ 8], -x[4],  x[12],
+                         x[2],  x[10], -x[6],  x[14],
+                        -x[1], -x[ 9],  x[5], -x[13],
+                         x[3],  x[11], -x[7],  x[15]
+                    ]);
+
+                    if !should_instance && i % 7 < 3 {
+                        continue;
                     }
-                    dbg!(num);
-                } else {
-                    dbg!(name, arr.len());
+
+                    if transform == nbn::glam::Mat4::IDENTITY {
+                        continue;
+                    }
+
+                    tlas_instances.push(
+                        nbn::AccelerationStructureInstance {
+                            acceleration_structure: *acceleration_structure,
+                            transform,
+                            custom_index: model_offset,
+                            ..Default::default()
+                        }
+                        .to_vk(),
+                    );
+                    num += 1;
                 }
+                dbg!(num);
             }
 
             if let Some(instancing) = node.extensions.ext_mesh_gpu_instancing {

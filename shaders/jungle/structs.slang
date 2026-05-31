@@ -8,6 +8,7 @@ struct Instance {
     uint8_t* triangles;
     uint* vertices;
     float2* uvs;
+    float3* normals;
     uint* indices;
     float4 rotation;
     float3 translation;
