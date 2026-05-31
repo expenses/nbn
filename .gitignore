@@ -33,3 +33,4 @@ noise
 *.jpg
 .vs
 export
+cpp/build
