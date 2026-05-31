@@ -1,4 +1,4 @@
-#include "device.h"
+#include "nbn.h"
 
 int main() {
     auto device = Device();

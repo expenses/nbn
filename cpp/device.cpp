@@ -1,4 +1,4 @@
-#include "device.h"
+#include "nbn.h"
 
 Device::Device() {
     auto instance_extensions =
@@ -34,8 +34,6 @@ Device::Device() {
                 return 3;
             case vk::PhysicalDeviceType::eCpu:
                 return 4;
-            default:
-                return 5;
         }
     };
 
@@ -132,8 +130,14 @@ Device::Device() {
     auto vulkan_1_1_features = vk::PhysicalDeviceVulkan11Features {}
                                    .setPNext(&vulkan_1_2_features)
                                    .setShaderDrawParameters(true);
+    auto mutable_descriptor_features =
+        vk::PhysicalDeviceMutableDescriptorTypeFeaturesEXT {}
+            .setMutableDescriptorType(true);
+
+    mutable_descriptor_features.setPNext(&vulkan_1_1_features);
+
     auto ray_query_features = vk::PhysicalDeviceRayQueryFeaturesKHR {}
-                                  .setPNext(&vulkan_1_1_features)
+                                  .setPNext(&mutable_descriptor_features)
                                   .setRayQuery(true);
     auto enabled_features = vk::PhysicalDeviceFeatures {}
                                 .setShaderInt64(true)
@@ -177,7 +181,8 @@ Device::Device() {
         "VK_KHR_ray_tracing_pipeline",
         "VK_KHR_ray_query",
         "VK_KHR_acceleration_structure",
-        "VK_KHR_deferred_host_operations"
+        "VK_KHR_deferred_host_operations",
+        "VK_EXT_mutable_descriptor_type"
     };
 
     device = vk::raii::Device(
@@ -195,6 +200,10 @@ Device::Device() {
     compute_queue = device.getQueue(compute_queue_family, 0);
     transfer_queue = device.getQueue(transfer_queue_family, 0);
 
+    descriptors = Descriptors(device);
+
+    auto set_layouts = std::array {*descriptors.layout};
+
     auto push_constant_ranges =
         std::array {vk::PushConstantRange {}
                         .setStageFlags(vk::ShaderStageFlagBits::eAll)
@@ -203,9 +212,9 @@ Device::Device() {
 
     pipeline_layout = vk::raii::PipelineLayout(
         device,
-        vk::PipelineLayoutCreateInfo {}.setPushConstantRanges(
-            push_constant_ranges
-        )
+        vk::PipelineLayoutCreateInfo {}
+            .setSetLayouts(set_layouts)
+            .setPushConstantRanges(push_constant_ranges)
     );
 }
 
