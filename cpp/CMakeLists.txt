@@ -8,13 +8,22 @@ project(nbn LANGUAGES CXX)
 
 find_package(Vulkan REQUIRED)
 
-add_executable(nbn main.cpp device.cpp descriptors.cpp)
-target_link_libraries(nbn Vulkan::Vulkan)
+include(FetchContent)
+
+FetchContent_Declare(
+    vmahpp
+    URL https://github.com/YaaZ/VulkanMemoryAllocator-Hpp/releases/download/v3.3.0%2B3/VulkanMemoryAllocator-Hpp-3.3.0.tar.gz
+    URL_HASH SHA256=8c2a0573babe1f86f3241d12b4c9df40bb944649b7f4239c1c611797f8af6cd5
+)
+FetchContent_MakeAvailable(vmahpp)
+
+add_executable(nbn main.cpp device.cpp descriptors.cpp allocator.cpp)
+target_link_libraries(nbn Vulkan::Vulkan VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-Hpp)
 target_precompile_headers(nbn PRIVATE pch.h)
 
 # Use extra warnings when compiling with clang.
 target_compile_options(nbn PRIVATE
 $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:
-    -Wall -Wextra -Wpedantic -Wfatal-errors -fdiagnostics-color=always -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-pre-c++20-compat-pedantic -Wno-extra-semi-stmt -Wno-missing-prototypes -Wno-double-promotion -Wno-switch-default
+    -Wall -Wextra -Wpedantic -Wfatal-errors -fdiagnostics-color=always
     >
 )

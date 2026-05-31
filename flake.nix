@@ -44,7 +44,7 @@
                 ${clang-tools}/bin/clang-format -i shaders/**/*.slang shaders/*.slang
               '')
             ];
-            buildInputs = [vulkan-loader vulkan-headers];
+            buildInputs = [vulkan-loader vulkan-headers vulkan-memory-allocator];
             LD_LIBRARY_PATH = lib.makeLibraryPath [vulkan-loader wayland libxkbcommon libxcursor libx11 libxi];
           };
         devShells.slang-build = with pkgs;

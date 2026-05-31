@@ -23,6 +23,7 @@ struct Device {
     vk::raii::Queue graphics_queue = {nullptr};
     vk::raii::Queue compute_queue = {nullptr};
     vk::raii::Queue transfer_queue = {nullptr};
+    vma::raii::Allocator allocator = {nullptr};
     Descriptors descriptors {};
     vk::raii::PipelineLayout pipeline_layout = {nullptr};
 

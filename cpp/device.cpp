@@ -216,6 +216,12 @@ Device::Device() {
             .setSetLayouts(set_layouts)
             .setPushConstantRanges(push_constant_ranges)
     );
+
+    allocator = vma::raii::Allocator {
+        instance,
+        device,
+        vma::AllocatorCreateInfo {{}, physical_device}
+    };
 }
 
 ShaderModule Device::load_shader(const std::string& path) {
