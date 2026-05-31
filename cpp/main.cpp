@@ -1,5 +1,6 @@
-import nbn;
+#include "device.h"
+
 
 int main() {
-    auto device = Device::new_device();
+    auto device = Device();
 }
