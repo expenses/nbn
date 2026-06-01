@@ -1,4 +1,4 @@
-#include "nbn.h"
+#include "descriptors.h"
 
 Descriptors::Descriptors(const vk::raii::Device& device) {
     uint32_t desc_count = 1024;
@@ -82,5 +82,8 @@ Descriptors::Descriptors(const vk::raii::Device& device) {
         )
     );
 
-    set = *descriptor_sets[0];
+    set = std::move(descriptor_sets[0]);
+
+    sampled_image_count = std::make_shared<CountTracker>();
+    storage_image_count = std::make_shared<CountTracker>();
 }

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "descriptors.h"
 
 enum class QueueType { Graphics, Compute, Transfer };
 
@@ -9,15 +10,6 @@ struct Queue {
     vk::raii::Queue* operator->() {
         return &queue;
     }
-};
-
-struct Descriptors {
-    vk::raii::DescriptorPool pool = {nullptr};
-    vk::raii::DescriptorSetLayout layout = {nullptr};
-    vk::DescriptorSet set {};
-
-    Descriptors() = default;
-    explicit Descriptors(const vk::raii::Device& device);
 };
 
 struct ShaderModule {
@@ -48,6 +40,25 @@ struct Image {
     vk::ImageSubresourceRange subresource_range;
 };
 
+struct ImageIndex {
+    uint32_t index = 0;
+    std::shared_ptr<CountTracker> tracker;
+
+    ImageIndex(uint32_t idx, std::shared_ptr<CountTracker> tr) {
+        index = idx;
+        tracker = std::move(tr);
+    }
+
+    ~ImageIndex() {
+        if (tracker)
+            tracker->remove(index);
+    }
+};
+
+struct IndexedImage {
+    ImageIndex index;
+    Image image;
+};
 
 struct Samplers {
     vk::raii::Sampler repeat = {nullptr};
@@ -105,6 +116,14 @@ struct Device {
     );
 
     Image create_image(const ImageDescriptor& desc);
+
+    ImageIndex register_image(vk::ImageView view, bool is_storage);
+    ImageIndex register_image_with_sampler(
+        vk::ImageView view,
+        vk::Sampler sampler,
+        bool is_storage
+    );
+    IndexedImage register_owned_image(Image image, bool is_storage);
 
     Queue& get_queue(QueueType ty);
 

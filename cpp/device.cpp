@@ -422,6 +422,53 @@ Image Device::create_image(const ImageDescriptor& desc) {
     };
 }
 
+ImageIndex Device::register_image(vk::ImageView view, bool is_storage) {
+    return register_image_with_sampler(view, *samplers.repeat, is_storage);
+}
+
+ImageIndex Device::register_image_with_sampler(
+    vk::ImageView view,
+    vk::Sampler sampler,
+    bool is_storage
+) {
+    auto& tracker = is_storage ? descriptors.storage_image_count
+                               : descriptors.sampled_image_count;
+    auto index = tracker->add();
+
+    auto idx = ImageIndex(index, tracker);
+
+    auto image_info = vk::DescriptorImageInfo {}
+                          .setImageLayout(vk::ImageLayout::eGeneral)
+                          .setImageView(view);
+
+    if (!is_storage) {
+        image_info.setSampler(sampler);
+    }
+
+    device.updateDescriptorSets(
+        vk::WriteDescriptorSet {}
+            .setDstSet(descriptors.set)
+            .setDstBinding(is_storage ? 0 : 1)
+            .setDstArrayElement(index)
+            .setDescriptorType(
+                is_storage ? vk::DescriptorType::eStorageImage
+                           : vk::DescriptorType::eCombinedImageSampler
+            )
+            .setDescriptorCount(1)
+            .setImageInfo(image_info),
+        {}
+    );
+
+    return idx;
+}
+
+IndexedImage Device::register_owned_image(Image image, bool is_storage) {
+    return IndexedImage {
+        .index = register_image(*image.view, is_storage),
+        .image = std::move(image),
+    };
+}
+
 Queue& Device::get_queue(QueueType ty) {
     switch (ty) {
         case QueueType::Graphics:

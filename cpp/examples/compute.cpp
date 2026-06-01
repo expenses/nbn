@@ -13,7 +13,7 @@ int main() {
         ptr[i] = float(i) * 1.5;
     }
 
-    auto image = device.create_image({
+    auto image = device.register_owned_image(device.create_image({
         .name = "image",
         .format = vk::Format::eR32Sfloat,
         .extent = vk::Extent3D {.width=64,.height=64,.depth=1},
@@ -21,7 +21,7 @@ int main() {
         .aspect_mask = vk::ImageAspectFlagBits::eColor,
         .mip_levels=1,
         .view_type = vk::ImageViewType::e2D
-    });
+    }), true);
 
     auto command_buffer = device.create_command_buffer(QueueType::Compute);
 

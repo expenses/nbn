@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
