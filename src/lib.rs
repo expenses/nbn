@@ -1585,7 +1585,12 @@ impl Device {
         }
     }
 
-    pub fn create_compute_pipeline(&self, module: &ShaderModule, entry_point: &CStr) -> Pipeline {
+    pub fn create_compute_pipeline_with_layout(
+        &self,
+        module: &ShaderModule,
+        entry_point: &CStr,
+        pipeline_layout: &PipelineLayout,
+    ) -> Pipeline {
         let create_info = vk::ComputePipelineCreateInfo::default()
             .stage(
                 vk::PipelineShaderStageCreateInfo::default()
@@ -1593,7 +1598,7 @@ impl Device {
                     .name(entry_point)
                     .module(**module),
             )
-            .layout(**self.pipeline_layout);
+            .layout(**pipeline_layout);
 
         let pipelines = unsafe {
             self.device
@@ -1613,6 +1618,10 @@ impl Device {
         self.set_object_name(pipeline, &name);
 
         Pipeline::from_raw(pipeline, &self.device)
+    }
+
+    pub fn create_compute_pipeline(&self, module: &ShaderModule, entry_point: &CStr) -> Pipeline {
+        self.create_compute_pipeline_with_layout(module, entry_point, &self.pipeline_layout)
     }
 
     pub fn get_queue(&self, ty: QueueType) -> &Queue {
