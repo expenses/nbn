@@ -11,7 +11,7 @@ impl ReloadableShader {
         let dirty = self.dirty.swap(false, Ordering::Relaxed);
 
         if dirty {
-            self.inner = device.load_shader(&self.path);
+            self.inner = device.load_shader(self.path.as_ref().unwrap());
         }
 
         dirty

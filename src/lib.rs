@@ -1309,22 +1309,32 @@ impl Device {
         let path = path.as_ref();
         let bytes =
             std::fs::read(path).unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
-        let spirv_slice =
-            unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u32, bytes.len() / 4) };
+        self.create_shader_from_bytes(path.to_str().unwrap(), Some(path.to_owned()), &bytes)
+    }
 
+    pub fn create_shader_from_bytes(
+        &self,
+        name: &str,
+        path: Option<PathBuf>,
+        spirv: &[u8],
+    ) -> ShaderModule {
+        let spirv_words: Vec<u32> = spirv
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect();
         let shader_module = unsafe {
             self.device.create_shader_module(
-                &vk::ShaderModuleCreateInfo::default().code(spirv_slice),
+                &vk::ShaderModuleCreateInfo::default().code(&spirv_words),
                 None,
             )
         }
         .unwrap();
 
-        self.set_object_name(shader_module, path.to_str().unwrap());
+        self.set_object_name(shader_module, name);
 
         ShaderModule {
             inner: WrappedShaderModule::from_raw(shader_module, &self.device),
-            path: path.into(),
+            path,
         }
     }
 
@@ -1593,14 +1603,14 @@ impl Device {
 
         let pipeline = pipelines[0];
 
-        self.set_object_name(
-            pipeline,
-            &format!(
-                "{} - {}",
-                module.path.display(),
-                entry_point.to_str().unwrap()
-            ),
-        );
+        let mut name = String::new();
+
+        if let Some(path) = module.path.as_ref() {
+            name.push_str(&format!("{} - ", path.display()));
+        }
+        name.push_str(entry_point.to_str().unwrap());
+
+        self.set_object_name(pipeline, &name);
 
         Pipeline::from_raw(pipeline, &self.device)
     }
@@ -2033,7 +2043,7 @@ macro_rules! wrap_raii_struct {
 
 pub struct ShaderModule {
     inner: WrappedShaderModule,
-    path: PathBuf,
+    path: Option<PathBuf>,
 }
 
 impl Deref for ShaderModule {
