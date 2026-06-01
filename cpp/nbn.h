@@ -14,6 +14,11 @@ struct ShaderModule {
     std::string path;
 };
 
+struct Buffer {
+    vma::raii::Buffer buffer;
+    uint64_t addr;
+};
+
 struct Device {
     vk::raii::Context context;
     vk::raii::Instance instance = {nullptr};
@@ -29,8 +34,14 @@ struct Device {
 
     Device();
     ShaderModule load_shader(const std::string& path);
-    auto create_compute_pipeline(
+    vk::raii::Pipeline create_compute_pipeline(
         const ShaderModule& module,
         const std::string& entry_point
-    ) -> vk::raii::Pipeline;
+    );
+
+    Buffer create_buffer(
+        uint64_t size,
+        const std::string& name,
+        vma::MemoryUsage usage
+    );
 };

@@ -220,7 +220,10 @@ Device::Device() {
     allocator = vma::raii::Allocator {
         instance,
         device,
-        vma::AllocatorCreateInfo {{}, physical_device}
+        vma::AllocatorCreateInfo {
+            .flags = vma::AllocatorCreateFlagBits::eBufferDeviceAddress,
+            .physicalDevice = physical_device
+        }
     };
 }
 
@@ -247,10 +250,10 @@ ShaderModule Device::load_shader(const std::string& path) {
     };
 }
 
-auto Device::create_compute_pipeline(
+vk::raii::Pipeline Device::create_compute_pipeline(
     const ShaderModule& module,
     const std::string& entry_point
-) -> vk::raii::Pipeline {
+) {
     auto pipeline = device.createComputePipeline(
         VK_NULL_HANDLE,
         vk::ComputePipelineCreateInfo {}
@@ -272,4 +275,30 @@ auto Device::create_compute_pipeline(
     );
 
     return pipeline;
+}
+
+Buffer Device::create_buffer(
+    uint64_t size,
+    const std::string& name,
+    vma::MemoryUsage usage
+) {
+    auto buffer = allocator.createBuffer(
+        vk::BufferCreateInfo {}.setSize(size).setUsage(
+            vk::BufferUsageFlagBits::eTransferSrc
+            | vk::BufferUsageFlagBits::eShaderDeviceAddress
+        ),
+        vma::AllocationCreateInfo {.usage = usage}
+    );
+
+    auto addr = device.getBufferAddress({.buffer = buffer});
+
+    auto vk_buffer = static_cast<VkBuffer>(*buffer);
+    device.setDebugUtilsObjectNameEXT(
+        vk::DebugUtilsObjectNameInfoEXT {}
+            .setObjectType(vk::ObjectType::eBuffer)
+            .setObjectHandle(reinterpret_cast<uint64_t>(vk_buffer))
+            .setPObjectName(name.c_str())
+    );
+    
+    return {.buffer = std::move(buffer), .addr = addr};
 }
