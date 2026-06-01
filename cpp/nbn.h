@@ -1,5 +1,12 @@
 #include "pch.h"
 
+enum class QueueType { Graphics, Compute, Transfer };
+
+struct Queue {
+    VkQueue handle = VK_NULL_HANDLE;
+    uint32_t index = 0;
+};
+
 struct Descriptors {
     vk::raii::DescriptorPool pool = {nullptr};
     vk::raii::DescriptorSetLayout layout = {nullptr};
@@ -19,15 +26,21 @@ struct Buffer {
     uint64_t addr;
 };
 
+struct CommandBuffer {
+    vk::raii::CommandPool pool = {nullptr};
+    vk::raii::CommandBuffer handle = {nullptr};
+    QueueType ty;
+};
+
 struct Device {
     vk::raii::Context context;
     vk::raii::Instance instance = {nullptr};
     vk::raii::PhysicalDevice physical_device = {nullptr};
     vk::PhysicalDeviceProperties properties;
     vk::raii::Device device = {nullptr};
-    vk::raii::Queue graphics_queue = {nullptr};
-    vk::raii::Queue compute_queue = {nullptr};
-    vk::raii::Queue transfer_queue = {nullptr};
+    Queue graphics_queue;
+    Queue compute_queue;
+    Queue transfer_queue;
     vma::raii::Allocator allocator = {nullptr};
     Descriptors descriptors {};
     vk::raii::PipelineLayout pipeline_layout = {nullptr};
@@ -44,4 +57,8 @@ struct Device {
         const std::string& name,
         vma::MemoryUsage usage
     );
+
+    Queue& get_queue(QueueType ty);
+
+    CommandBuffer create_command_buffer(QueueType ty);
 };

@@ -196,9 +196,12 @@ Device::Device() {
             .setPNext(&ray_query_features)
     );
 
-    graphics_queue = device.getQueue(graphics_queue_family, 0);
-    compute_queue = device.getQueue(compute_queue_family, 0);
-    transfer_queue = device.getQueue(transfer_queue_family, 0);
+    graphics_queue.handle = *device.getQueue(graphics_queue_family, 0);
+    graphics_queue.index = graphics_queue_family;
+    compute_queue.handle = *device.getQueue(compute_queue_family, 0);
+    compute_queue.index = compute_queue_family;
+    transfer_queue.handle = *device.getQueue(transfer_queue_family, 0);
+    transfer_queue.index = transfer_queue_family;
 
     descriptors = Descriptors(device);
 
@@ -299,6 +302,37 @@ Buffer Device::create_buffer(
             .setObjectHandle(reinterpret_cast<uint64_t>(vk_buffer))
             .setPObjectName(name.c_str())
     );
-    
+
     return {.buffer = std::move(buffer), .addr = addr};
+}
+
+Queue& Device::get_queue(QueueType ty) {
+    switch (ty) {
+        case QueueType::Graphics:
+            return graphics_queue;
+        case QueueType::Compute:
+            return compute_queue;
+        case QueueType::Transfer:
+            return transfer_queue;
+    }
+}
+
+CommandBuffer Device::create_command_buffer(QueueType ty) {
+    auto pool = vk::raii::CommandPool(
+        device,
+        vk::CommandPoolCreateInfo {}.setQueueFamilyIndex(get_queue(ty).index)
+    );
+
+    auto cmd = std::move(device.allocateCommandBuffers(
+        vk::CommandBufferAllocateInfo {}
+            .setCommandPool(*pool)
+            .setLevel(vk::CommandBufferLevel::ePrimary)
+            .setCommandBufferCount(1)
+    )[0]);
+
+    return CommandBuffer {
+        .pool = std::move(pool),
+        .handle = std::move(cmd),
+        .ty = ty,
+    };
 }
