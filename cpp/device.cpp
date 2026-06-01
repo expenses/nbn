@@ -196,11 +196,11 @@ Device::Device() {
             .setPNext(&ray_query_features)
     );
 
-    graphics_queue.handle = device.getQueue(graphics_queue_family, 0);
+    graphics_queue.queue = device.getQueue(graphics_queue_family, 0);
     graphics_queue.index = graphics_queue_family;
-    compute_queue.handle = device.getQueue(compute_queue_family, 0);
+    compute_queue.queue = device.getQueue(compute_queue_family, 0);
     compute_queue.index = compute_queue_family;
-    transfer_queue.handle = device.getQueue(transfer_queue_family, 0);
+    transfer_queue.queue = device.getQueue(transfer_queue_family, 0);
     transfer_queue.index = transfer_queue_family;
 
     descriptors = Descriptors(device);
@@ -342,6 +342,7 @@ CommandBuffer Device::create_command_buffer(QueueType ty) {
     return CommandBuffer {
         .pool = std::move(pool),
         .buffer = std::move(cmd),
+        .pipeline_layout = pipeline_layout,
         .ty = ty,
     };
 }

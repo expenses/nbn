@@ -3,8 +3,12 @@
 enum class QueueType { Graphics, Compute, Transfer };
 
 struct Queue {
-    vk::raii::Queue handle = {nullptr};
+    vk::raii::Queue queue = {nullptr};
     uint32_t index = 0;
+
+    vk::raii::Queue* operator->() {
+        return &queue;
+    }
 };
 
 struct Descriptors {
@@ -30,7 +34,22 @@ struct Buffer {
 struct CommandBuffer {
     vk::raii::CommandPool pool = {nullptr};
     vk::raii::CommandBuffer buffer = {nullptr};
+    vk::raii::PipelineLayout& pipeline_layout;
     QueueType ty;
+
+    vk::raii::CommandBuffer* operator->() {
+        return &buffer;
+    }
+
+    template<class T>
+    void push_constants(T value) {
+        buffer.pushConstants<T>(
+            pipeline_layout,
+            vk::ShaderStageFlagBits::eAll,
+            0,
+            value
+        );
+    }
 };
 
 struct Device {
@@ -62,6 +81,10 @@ struct Device {
     Queue& get_queue(QueueType ty);
 
     CommandBuffer create_command_buffer(QueueType ty);
+
+    vk::raii::Device* operator->() {
+        return &device;
+    }
 };
 
 void check_vk_result(vk::Result err);
