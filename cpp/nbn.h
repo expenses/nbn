@@ -1,7 +1,6 @@
+#include "core.h"
+#include "command_buffer.h"
 #include "descriptors.h"
-#include "pch.h"
-
-enum class QueueType { Graphics, Compute, Transfer };
 
 struct Queue {
     vk::raii::Queue queue = {nullptr};
@@ -15,12 +14,6 @@ struct Queue {
 struct ShaderModule {
     vk::raii::ShaderModule module = {nullptr};
     std::string path;
-};
-
-struct Buffer {
-    vma::raii::Buffer buffer;
-    uint64_t addr;
-    void* ptr;
 };
 
 struct ImageDescriptor {
@@ -87,27 +80,6 @@ struct GraphicsPipelineDesc {
     std::span<const vk::PipelineColorBlendAttachmentState> blend_attachments;
     GraphicsPipelineFlags flags = 0;
     GraphicsPipelineDepthDesc depth;
-};
-
-struct CommandBuffer {
-    vk::raii::CommandPool pool = {nullptr};
-    vk::raii::CommandBuffer buffer = {nullptr};
-    vk::raii::PipelineLayout& pipeline_layout;
-    QueueType ty;
-
-    vk::raii::CommandBuffer* operator->() {
-        return &buffer;
-    }
-
-    template<class T>
-    void push_constants(T value) {
-        buffer.pushConstants<T>(
-            pipeline_layout,
-            vk::ShaderStageFlagBits::eAll,
-            0,
-            value
-        );
-    }
 };
 
 struct Device {

@@ -378,8 +378,7 @@ Device::create_graphics_pipeline(const GraphicsPipelineDesc& desc) {
     auto pipeline = device.createGraphicsPipeline(
         VK_NULL_HANDLE,
         vk::GraphicsPipelineCreateInfo {}
-            .setStageCount(static_cast<uint32_t>(desc.stages.size()))
-            .setPStages(desc.stages.data())
+            .setStages(desc.stages)
             .setPVertexInputState(&vertex_input_state)
             .setPInputAssemblyState(&input_assembly_state)
             .setPMultisampleState(&multisample_state)
@@ -582,5 +581,6 @@ CommandBuffer Device::create_command_buffer(QueueType ty) {
         .buffer = std::move(cmd),
         .pipeline_layout = pipeline_layout,
         .ty = ty,
+        .queue_index = get_queue(ty).index,
     };
 }
