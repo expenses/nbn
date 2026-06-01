@@ -31,6 +31,23 @@ struct Buffer {
     void* ptr;
 };
 
+struct ImageDescriptor {
+    std::string name;
+    vk::Format format;
+    vk::Extent3D extent;
+    vk::ImageUsageFlags usage;
+    vk::ImageAspectFlags aspect_mask;
+    uint32_t mip_levels;
+    vk::ImageViewType view_type;
+};
+
+struct Image {
+    vma::raii::Image image = {nullptr};
+    vk::raii::ImageView view = {nullptr};
+    vk::Extent3D extent;
+    vk::ImageSubresourceRange subresource_range;
+};
+
 struct CommandBuffer {
     vk::raii::CommandPool pool = {nullptr};
     vk::raii::CommandBuffer buffer = {nullptr};
@@ -77,6 +94,8 @@ struct Device {
         const std::string& name,
         vma::MemoryUsage usage
     );
+
+    Image create_image(const ImageDescriptor& desc);
 
     Queue& get_queue(QueueType ty);
 

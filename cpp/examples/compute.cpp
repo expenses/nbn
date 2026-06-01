@@ -12,6 +12,17 @@ int main() {
     for (uint i = 0; i < 64; i++) {
         ptr[i] = float(i) * 1.5;
     }
+
+    auto image = device.create_image({
+        .name = "image",
+        .format = vk::Format::eR32Sfloat,
+        .extent = vk::Extent3D {.width=64,.height=64,.depth=1},
+        .usage = vk::ImageUsageFlagBits::eStorage,
+        .aspect_mask = vk::ImageAspectFlagBits::eColor,
+        .mip_levels=1,
+        .view_type = vk::ImageViewType::e2D
+    });
+
     auto command_buffer = device.create_command_buffer(QueueType::Compute);
 
     auto fence = device->createFence({});

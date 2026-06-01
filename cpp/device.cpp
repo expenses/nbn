@@ -315,6 +315,74 @@ Buffer Device::create_buffer(
     };
 }
 
+static vk::ImageType view_type_to_image_type(vk::ImageViewType ty) {
+    switch (ty) {
+        case vk::ImageViewType::e1D:
+        case vk::ImageViewType::e1DArray:
+            return vk::ImageType::e1D;
+        case vk::ImageViewType::e2D:
+        case vk::ImageViewType::eCube:
+        case vk::ImageViewType::eCubeArray:
+            return vk::ImageType::e2D;
+        case vk::ImageViewType::e2DArray:
+        case vk::ImageViewType::e3D:
+            return vk::ImageType::e3D;
+    }
+}
+
+Image Device::create_image(const ImageDescriptor& desc) {
+    auto img = allocator.createImage(
+        vk::ImageCreateInfo {}
+            .setFormat(desc.format)
+            .setExtent(desc.extent)
+            .setSamples(vk::SampleCountFlagBits::e1)
+            .setImageType(view_type_to_image_type(desc.view_type))
+            .setArrayLayers(1)
+            .setMipLevels(desc.mip_levels)
+            .setUsage(desc.usage),
+        vma::AllocationCreateInfo {}.setUsage(vma::MemoryUsage::eGpuOnly)
+    );
+
+    device.setDebugUtilsObjectNameEXT(
+        vk::DebugUtilsObjectNameInfoEXT {}
+            .setObjectType(vk::ObjectType::eImage)
+            .setObjectHandle(
+                reinterpret_cast<uint64_t>(static_cast<VkImage>(*img))
+            )
+            .setPObjectName(desc.name.c_str())
+    );
+
+    auto subresource_range = vk::ImageSubresourceRange {}
+                                 .setAspectMask(desc.aspect_mask)
+                                 .setLevelCount(desc.mip_levels)
+                                 .setLayerCount(1);
+
+    auto view = vk::raii::ImageView(
+        device,
+        vk::ImageViewCreateInfo {}
+            .setImage(*img)
+            .setSubresourceRange(subresource_range)
+            .setFormat(desc.format)
+            .setViewType(desc.view_type)
+    );
+
+    device.setDebugUtilsObjectNameEXT(
+        vk::DebugUtilsObjectNameInfoEXT {}
+            .setObjectType(vk::ObjectType::eImageView)
+            .setObjectHandle(
+                reinterpret_cast<uint64_t>(static_cast<VkImageView>(*view))
+            )
+            .setPObjectName(desc.name.c_str())
+    );
+
+    return Image {
+        .image = std::move(img),
+        .view = std::move(view),
+        .extent = desc.extent,
+        .subresource_range = subresource_range,
+    };
+}
+
 Queue& Device::get_queue(QueueType ty) {
     switch (ty) {
         case QueueType::Graphics:
