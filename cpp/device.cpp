@@ -196,11 +196,11 @@ Device::Device() {
             .setPNext(&ray_query_features)
     );
 
-    graphics_queue.handle = *device.getQueue(graphics_queue_family, 0);
+    graphics_queue.handle = device.getQueue(graphics_queue_family, 0);
     graphics_queue.index = graphics_queue_family;
-    compute_queue.handle = *device.getQueue(compute_queue_family, 0);
+    compute_queue.handle = device.getQueue(compute_queue_family, 0);
     compute_queue.index = compute_queue_family;
-    transfer_queue.handle = *device.getQueue(transfer_queue_family, 0);
+    transfer_queue.handle = device.getQueue(transfer_queue_family, 0);
     transfer_queue.index = transfer_queue_family;
 
     descriptors = Descriptors(device);
@@ -290,7 +290,10 @@ Buffer Device::create_buffer(
             vk::BufferUsageFlagBits::eTransferSrc
             | vk::BufferUsageFlagBits::eShaderDeviceAddress
         ),
-        vma::AllocationCreateInfo {.usage = usage}
+        vma::AllocationCreateInfo {
+            .flags = vma::AllocationCreateFlagBits::eMapped,
+            .usage = usage
+        }
     );
 
     auto addr = device.getBufferAddress({.buffer = buffer});
@@ -303,7 +306,13 @@ Buffer Device::create_buffer(
             .setPObjectName(name.c_str())
     );
 
-    return {.buffer = std::move(buffer), .addr = addr};
+    auto buffer_info = buffer.getAllocation().getInfo();
+
+    return {
+        .buffer = std::move(buffer),
+        .addr = addr,
+        .ptr = buffer_info.pMappedData
+    };
 }
 
 Queue& Device::get_queue(QueueType ty) {
@@ -332,7 +341,7 @@ CommandBuffer Device::create_command_buffer(QueueType ty) {
 
     return CommandBuffer {
         .pool = std::move(pool),
-        .handle = std::move(cmd),
+        .buffer = std::move(cmd),
         .ty = ty,
     };
 }

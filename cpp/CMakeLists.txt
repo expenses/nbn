@@ -17,9 +17,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(vmahpp)
 
-add_executable(nbn main.cpp device.cpp descriptors.cpp allocator.cpp)
+add_library(nbn device.cpp descriptors.cpp allocator.cpp util.cpp)
 target_link_libraries(nbn Vulkan::Vulkan VulkanMemoryAllocator-Hpp::VulkanMemoryAllocator-Hpp)
 target_precompile_headers(nbn PRIVATE pch.h)
+
+add_executable(nbn_compute examples/compute.cpp)
+target_link_libraries(nbn_compute nbn)
+target_precompile_headers(nbn_compute REUSE_FROM nbn)
 
 # Use extra warnings when compiling with clang.
 target_compile_options(nbn PRIVATE

@@ -1,5 +1,6 @@
 rule slang
     command = slangc $in -o $out -O3 -warnings-as-errors all -I shaders  -experimental-feature
+build shaders/compiled/compute_ex.spv: slang shaders/compute_ex.slang | shaders/compute_ex_structs.slang
 build shaders/compiled/egui.spv: slang shaders/egui.slang | shaders/shared/colour.slang shaders/shared/hdr10.slang
 build shaders/compiled/compute_example.spv: slang shaders/examples/compute_example.slang
 build shaders/compiled/rt_triangle.spv: slang shaders/examples/rt_triangle.slang | shaders/shared/colour.slang shaders/shared/util.slang shaders/shared/derivatives.slang shaders/fallback_bindings.slang

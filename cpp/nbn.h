@@ -3,7 +3,7 @@
 enum class QueueType { Graphics, Compute, Transfer };
 
 struct Queue {
-    VkQueue handle = VK_NULL_HANDLE;
+    vk::raii::Queue handle = {nullptr};
     uint32_t index = 0;
 };
 
@@ -24,11 +24,12 @@ struct ShaderModule {
 struct Buffer {
     vma::raii::Buffer buffer;
     uint64_t addr;
+    void* ptr;
 };
 
 struct CommandBuffer {
     vk::raii::CommandPool pool = {nullptr};
-    vk::raii::CommandBuffer handle = {nullptr};
+    vk::raii::CommandBuffer buffer = {nullptr};
     QueueType ty;
 };
 
@@ -62,3 +63,5 @@ struct Device {
 
     CommandBuffer create_command_buffer(QueueType ty);
 };
+
+void check_vk_result(vk::Result err);
