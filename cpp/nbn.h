@@ -48,6 +48,14 @@ struct Image {
     vk::ImageSubresourceRange subresource_range;
 };
 
+
+struct Samplers {
+    vk::raii::Sampler repeat = {nullptr};
+    vk::raii::Sampler clamp = {nullptr};
+    vk::raii::Sampler nearest_clamp = {nullptr};
+    vk::raii::Sampler nearest_repeat = {nullptr};
+};
+
 struct CommandBuffer {
     vk::raii::CommandPool pool = {nullptr};
     vk::raii::CommandBuffer buffer = {nullptr};
@@ -81,6 +89,7 @@ struct Device {
     vma::raii::Allocator allocator = {nullptr};
     Descriptors descriptors {};
     vk::raii::PipelineLayout pipeline_layout = {nullptr};
+    Samplers samplers {};
 
     Device();
     ShaderModule load_shader(const std::string& path);

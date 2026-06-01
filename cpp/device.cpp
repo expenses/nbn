@@ -228,6 +228,45 @@ Device::Device() {
             .physicalDevice = physical_device
         }
     };
+
+    auto make_sampler =
+        [&](vk::Filter mag, vk::Filter min, vk::SamplerAddressMode addr) {
+            return vk::raii::Sampler(
+                device,
+                vk::SamplerCreateInfo {}
+                    .setMagFilter(mag)
+                    .setMinFilter(min)
+                    .setMipmapMode(vk::SamplerMipmapMode::eLinear)
+                    .setAddressModeU(addr)
+                    .setAddressModeV(addr)
+                    .setAddressModeW(addr)
+                    .setMinLod(0)
+                    .setMaxLod(VK_LOD_CLAMP_NONE)
+            );
+        };
+
+    samplers = Samplers {
+        .repeat = make_sampler(
+            vk::Filter::eLinear,
+            vk::Filter::eLinear,
+            vk::SamplerAddressMode::eRepeat
+        ),
+        .clamp = make_sampler(
+            vk::Filter::eLinear,
+            vk::Filter::eLinear,
+            vk::SamplerAddressMode::eClampToEdge
+        ),
+        .nearest_clamp = make_sampler(
+            vk::Filter::eNearest,
+            vk::Filter::eNearest,
+            vk::SamplerAddressMode::eClampToEdge
+        ),
+        .nearest_repeat = make_sampler(
+            vk::Filter::eNearest,
+            vk::Filter::eNearest,
+            vk::SamplerAddressMode::eRepeat
+        ),
+    };
 }
 
 ShaderModule Device::load_shader(const std::string& path) {
