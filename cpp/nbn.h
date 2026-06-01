@@ -1,5 +1,5 @@
-#include "pch.h"
 #include "descriptors.h"
+#include "pch.h"
 
 enum class QueueType { Graphics, Compute, Transfer };
 
@@ -67,6 +67,28 @@ struct Samplers {
     vk::raii::Sampler nearest_repeat = {nullptr};
 };
 
+using GraphicsPipelineFlags = uint32_t;
+inline constexpr GraphicsPipelineFlags
+    GRAPHICS_PIPELINE_CONSERVATIVE_RASTERIZATION = 1;
+inline constexpr GraphicsPipelineFlags GRAPHICS_PIPELINE_POINTS = 2;
+inline constexpr GraphicsPipelineFlags GRAPHICS_PIPELINE_BACKFACE_CULLING = 4;
+
+struct GraphicsPipelineDepthDesc {
+    bool write_enable = false;
+    bool test_enable = false;
+    vk::CompareOp compare_op = vk::CompareOp::eLess;
+    vk::Format format = vk::Format::eUndefined;
+};
+
+struct GraphicsPipelineDesc {
+    std::string name;
+    std::span<const vk::PipelineShaderStageCreateInfo> stages;
+    std::span<const vk::Format> color_attachment_formats;
+    std::span<const vk::PipelineColorBlendAttachmentState> blend_attachments;
+    GraphicsPipelineFlags flags = 0;
+    GraphicsPipelineDepthDesc depth;
+};
+
 struct CommandBuffer {
     vk::raii::CommandPool pool = {nullptr};
     vk::raii::CommandBuffer buffer = {nullptr};
@@ -116,6 +138,9 @@ struct Device {
     );
 
     Image create_image(const ImageDescriptor& desc);
+
+    vk::raii::Pipeline
+    create_graphics_pipeline(const GraphicsPipelineDesc& desc);
 
     ImageIndex register_image(vk::ImageView view, bool is_storage);
     ImageIndex register_image_with_sampler(

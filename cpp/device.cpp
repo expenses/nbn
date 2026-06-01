@@ -182,7 +182,8 @@ Device::Device() {
         "VK_KHR_ray_query",
         "VK_KHR_acceleration_structure",
         "VK_KHR_deferred_host_operations",
-        "VK_EXT_mutable_descriptor_type"
+        "VK_EXT_mutable_descriptor_type",
+        "VK_EXT_conservative_rasterization"
     };
 
     device = vk::raii::Device(
@@ -314,6 +315,89 @@ vk::raii::Pipeline Device::create_compute_pipeline(
             .setObjectType(vk::ObjectType::ePipeline)
             .setObjectHandle(reinterpret_cast<uint64_t>(vk_pipeline))
             .setPObjectName((module.path + " - " + entry_point).c_str())
+    );
+
+    return pipeline;
+}
+
+vk::raii::Pipeline
+Device::create_graphics_pipeline(const GraphicsPipelineDesc& desc) {
+    auto dynamic_rendering =
+        vk::PipelineRenderingCreateInfo {}
+            .setColorAttachmentFormats(desc.color_attachment_formats)
+            .setDepthAttachmentFormat(desc.depth.format);
+
+    auto conservative_rasterization =
+        vk::PipelineRasterizationConservativeStateCreateInfoEXT {}
+            .setConservativeRasterizationMode(
+                desc.flags & GRAPHICS_PIPELINE_CONSERVATIVE_RASTERIZATION
+                    ? vk::ConservativeRasterizationModeEXT::eOverestimate
+                    : vk::ConservativeRasterizationModeEXT::eDisabled
+            );
+
+    auto dynamic_states = std::array {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor,
+    };
+
+    auto vertex_input_state = vk::PipelineVertexInputStateCreateInfo {};
+    auto input_assembly_state =
+        vk::PipelineInputAssemblyStateCreateInfo {}.setTopology(
+            desc.flags & GRAPHICS_PIPELINE_POINTS
+                ? vk::PrimitiveTopology::ePointList
+                : vk::PrimitiveTopology::eTriangleList
+        );
+    auto multisample_state =
+        vk::PipelineMultisampleStateCreateInfo {}.setRasterizationSamples(
+            vk::SampleCountFlagBits::e1
+        );
+    auto rasterization_state =
+        vk::PipelineRasterizationStateCreateInfo {}
+            .setLineWidth(1.0f)
+            .setPolygonMode(vk::PolygonMode::eFill)
+            .setCullMode(
+                desc.flags & GRAPHICS_PIPELINE_BACKFACE_CULLING
+                    ? vk::CullModeFlagBits::eBack
+                    : vk::CullModeFlagBits::eNone
+            );
+    rasterization_state.setPNext(&conservative_rasterization);
+    auto viewport_state = vk::PipelineViewportStateCreateInfo {}
+                              .setScissorCount(1)
+                              .setViewportCount(1);
+    auto dynamic_state =
+        vk::PipelineDynamicStateCreateInfo {}.setDynamicStates(dynamic_states);
+    auto color_blend_state =
+        vk::PipelineColorBlendStateCreateInfo {}.setAttachments(
+            desc.blend_attachments
+        );
+    auto depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {}
+                                   .setDepthCompareOp(desc.depth.compare_op)
+                                   .setDepthWriteEnable(desc.depth.write_enable)
+                                   .setDepthTestEnable(desc.depth.test_enable);
+
+    auto pipeline = device.createGraphicsPipeline(
+        VK_NULL_HANDLE,
+        vk::GraphicsPipelineCreateInfo {}
+            .setStageCount(static_cast<uint32_t>(desc.stages.size()))
+            .setPStages(desc.stages.data())
+            .setPVertexInputState(&vertex_input_state)
+            .setPInputAssemblyState(&input_assembly_state)
+            .setPMultisampleState(&multisample_state)
+            .setPRasterizationState(&rasterization_state)
+            .setPViewportState(&viewport_state)
+            .setPDynamicState(&dynamic_state)
+            .setPColorBlendState(&color_blend_state)
+            .setPDepthStencilState(&depth_stencil_state)
+            .setLayout(*pipeline_layout)
+            .setPNext(&dynamic_rendering)
+    );
+
+    auto vk_pipeline = static_cast<VkPipeline>(*pipeline);
+    device.setDebugUtilsObjectNameEXT(
+        vk::DebugUtilsObjectNameInfoEXT {}
+            .setObjectType(vk::ObjectType::ePipeline)
+            .setObjectHandle(reinterpret_cast<uint64_t>(vk_pipeline))
+            .setPObjectName(desc.name.c_str())
     );
 
     return pipeline;
