@@ -253,7 +253,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
            instance.normals[indices.z]
         ).val);
 
-        let light_dir = SphericalDirectionalLightRayDirection(rng.rand2(), normalize(float3(1,5,1)), 0.1);
+        let light_dir = SphericalDirectionalLightRayDirection(rng.rand2(), normalize(float3(2,1,2)), 0.1);
 
         if (instance.image != MAX_UINT_VALUE) {
             color = sample(instance.image, uv).rgb;
@@ -308,7 +308,7 @@ void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    Texture2D<float4> denoised = storage_images[pc.uniforms.denoised];
+    Texture2D<float4> denoised = storage_images[pc.uniforms.radiance];
 
     let val = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz;
 

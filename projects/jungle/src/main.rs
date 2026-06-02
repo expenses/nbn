@@ -63,7 +63,7 @@ struct State {
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
-    swapchain_image_heap_indices: Vec<(nbn::ImageIndex, nrd::Texture)>,
+    swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
     render_pipeline: nbn::Pipeline,
     reset: nbn::Pipeline,
     resolve: nbn::Pipeline,
@@ -90,7 +90,6 @@ struct Resizables {
     depth: nbn::Image,
     vis: nbn::IndexedImage,
     radiance: NrdTexture,
-    denoised: NrdTexture,
     normal_roughness: NrdTexture,
     linear_depth: NrdTexture,
     motion: NrdTexture,
@@ -132,20 +131,6 @@ impl Resizables {
                 true,
             ),
             nrd_integration,
-            denoised: NrdTexture::new(
-                device,
-                nrd_device,
-                nbn::ImageDescriptor {
-                    name: "denoised",
-                    format: vk::Format::R16G16B16A16_SFLOAT,
-                    extent: nbn::ImageExtent::D2 { width, height },
-                    usage: vk::ImageUsageFlags::STORAGE
-                        | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_levels: 1,
-                },
-            ),
             radiance: NrdTexture::new(
                 device,
                 nrd_device,
@@ -259,9 +244,7 @@ impl winit::application::ApplicationHandler for App {
 
         let swapchain = device.create_swapchain(
             &window,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT
-                | vk::ImageUsageFlags::STORAGE
-                | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
             nbn::SurfaceSelectionCriteria {
                 force_8_bit: false,
                 desire_hdr: false,
@@ -350,29 +333,7 @@ impl winit::application::ApplicationHandler for App {
             swapchain_image_heap_indices: swapchain
                 .images
                 .iter()
-                .map(|image| {
-                    (
-                        device.register_image(*image.view, true),
-                        unsafe {
-                            nrd::Texture::create_vk(
-                                &mut nrd_device,
-                                &nrd::NrdTextureVKDesc {
-                                    vkImage: image.image.as_raw(),
-                                    vkFormat: swapchain.create_info.image_format.as_raw(),
-                                    vkImageType: vk::ImageType::TYPE_2D.as_raw(),
-                                    vkImageUsageFlags: swapchain.create_info.image_usage.as_raw(),
-                                    width: swapchain.create_info.image_extent.width as _,
-                                    height: swapchain.create_info.image_extent.height as _,
-                                    depth: 1,
-                                    mipNum: 1,
-                                    layerNum: 1,
-                                    sampleNum: 1,
-                                },
-                            )
-                        }
-                        .unwrap(),
-                    )
-                })
+                .map(|image| device.register_image(*image.view, true))
                 .collect(),
             nrd_device,
             device,
@@ -423,36 +384,13 @@ impl winit::application::ApplicationHandler for App {
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
                 device.recreate_swapchain(&mut state.swapchain);
                 state.swapchain_image_heap_indices.clear();
-                state
-                    .swapchain_image_heap_indices
-                    .extend(state.swapchain.images.iter().map(|image| {
-                        (
-                            device.register_image(*image.view, true),
-                            unsafe {
-                                nrd::Texture::create_vk(
-                                    &mut state.nrd_device,
-                                    &nrd::NrdTextureVKDesc {
-                                        vkImage: image.image.as_raw(),
-                                        vkFormat: state.swapchain.create_info.image_format.as_raw(),
-                                        vkImageType: vk::ImageType::TYPE_2D.as_raw(),
-                                        vkImageUsageFlags: state
-                                            .swapchain
-                                            .create_info
-                                            .image_usage
-                                            .as_raw(),
-                                        width: state.swapchain.create_info.image_extent.width as _,
-                                        height: state.swapchain.create_info.image_extent.height
-                                            as _,
-                                        depth: 1,
-                                        mipNum: 1,
-                                        layerNum: 1,
-                                        sampleNum: 1,
-                                    },
-                                )
-                            }
-                            .unwrap(),
-                        )
-                    }));
+                state.swapchain_image_heap_indices.extend(
+                    state
+                        .swapchain
+                        .images
+                        .iter()
+                        .map(|image| device.register_image(*image.view, true)),
+                );
                 state.images = Resizables::new(
                     device,
                     &mut state.nrd_device,
@@ -510,7 +448,6 @@ impl winit::application::ApplicationHandler for App {
                     linear_depth: *state.images.linear_depth,
                     normal_roughness: *state.images.normal_roughness,
                     motion: *state.images.motion,
-                    denoised: *state.images.denoised,
                     radiance: *state.images.radiance,
                 };
 
@@ -540,7 +477,6 @@ impl winit::application::ApplicationHandler for App {
                 cs.rectSize = [extent.width as _, extent.height as _];
                 cs.resourceSizePrev = [extent.width as _, extent.height as _];
                 cs.rectSizePrev = [extent.width as _, extent.height as _];
-                //cs.enableValidation = true;
                 state.images.nrd_integration.set_common_settings(&cs);
 
                 state.images.nrd_integration.set_reblur_settings(
@@ -556,8 +492,6 @@ impl winit::application::ApplicationHandler for App {
                     },
                 )
                 .unwrap();
-
-                let (_, nrd_image) = &state.swapchain_image_heap_indices[next_image as usize];
 
                 let mut snapshot = nrd::ResourceSnapshot::default();
                 snapshot.set_resource(
@@ -590,8 +524,7 @@ impl winit::application::ApplicationHandler for App {
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,
-                    //nrd_image,
-                    &state.images.denoised.texture,
+                    &state.images.radiance.texture,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
@@ -711,7 +644,7 @@ impl winit::application::ApplicationHandler for App {
 //                 uniforms: *state.uniform_buffers[current_frame],
 //                 instances: *state._data.instances,
 //                 prefix_sum_data: *state.prefix_sum_data,
-//                 swapchain: *state.images.nrd_input, //*state.swapchain_image_heap_indices[next_image as usize].0,
+//                 swapchain: *state.swapchain_image_heap_indices[next_image as usize],
 //                 visible_meshlets: *state.visible_meshlets,
 //                 dispatch: *state.dispatch,
 //             },
@@ -852,7 +785,7 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
                 prefix_sum_data: *state.prefix_sum_data,
-                swapchain: *state.swapchain_image_heap_indices[next_image as usize].0,
+                swapchain: *state.swapchain_image_heap_indices[next_image as usize],
                 visible_meshlets: *state.visible_meshlets,
                 dispatch: *state.dispatch,
             },
@@ -868,11 +801,6 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 ),
                 (
                     (&state.images.normal_roughness.image).into(),
-                    None, //Some(nbn::BarrierOp::Acquire),
-                    nbn::BarrierOp::ComputeStorageWrite,
-                ),
-                (
-                    (&state.images.denoised.image).into(),
                     None, //Some(nbn::BarrierOp::Acquire),
                     nbn::BarrierOp::ComputeStorageWrite,
                 ),

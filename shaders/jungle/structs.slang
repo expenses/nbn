@@ -49,7 +49,6 @@ struct Uniforms {
     uint normal_roughness;
     uint motion;
     uint radiance;
-    uint denoised;
 }
 
 struct PushConstants {
