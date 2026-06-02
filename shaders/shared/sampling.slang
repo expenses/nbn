@@ -40,3 +40,27 @@ float3 sample_sphere(float2 rand) {
 float3 sample_sphere<R : Rng>(R* rng) {
     return sample_sphere(rng.rand2());
 }
+
+// The following is taken from ray tracing gems II
+
+// rect.x and rect.y are between 0 and 1.
+float2 MapRectToCircle(float2 rect) {
+    let radius = sqrt(rect.x);
+    let angle = rect.y * 2.0 * PI;
+    return float2(radius * cos(angle), radius * sin(angle));
+}
+
+// rect.x and rect.y are between 0 and 1. direction is normalized direction light. radius could be ~0.1.
+float3 SphericalDirectionalLightRayDirection(
+    float2 rect,
+    float3 direction,
+    float radius
+) {
+    let point = MapRectToCircle(rect) * radius;
+
+    let cross_dir = direction.y > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+    
+    let tangent = normalize(cross(direction, cross_dir));
+    let bitangent = normalize(cross(tangent, direction));
+    return normalize(direction + point.x * tangent + point.y * bitangent);
+}
