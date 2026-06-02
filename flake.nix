@@ -38,6 +38,9 @@
               ninja
               eog
               tev
+              libclang
+              rustPlatform.bindgenHook
+              directx-shader-compiler
               (writeShellScriptBin "format-shaders" ''
                 ${clang-tools}/bin/clang-format -i shaders/**/*.slang shaders/*.slang
               '')
