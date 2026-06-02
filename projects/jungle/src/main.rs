@@ -1,4 +1,5 @@
 use nbn::vk;
+use nbn::vk::Handle;
 use nbn::winit::{self, event::ElementState, keyboard::KeyCode};
 
 slang_struct::slang_include!("shaders/jungle/structs.slang");
@@ -16,6 +17,36 @@ fn main() {
 }
 
 const NEAR_PLANE: f32 = 0.001;
+
+struct NrdTexture {
+    _image: nbn::Image,
+    texture: nrd::Texture
+}
+
+impl NrdTexture {
+    fn new(device: &nbn::Device, nrd_device: &mut nrd::Device, desc: nbn::ImageDescriptor) -> Self {
+        let image = device.create_image(desc);
+        let extent = vk::Extent3D::from(desc.extent);
+        let texture = unsafe {
+            nrd::Texture::create_vk(nrd_device, &nrd::NrdTextureVKDesc {
+                vkImage: image.image.as_raw(),
+                vkFormat: desc.format.as_raw(),
+                vkImageType: vk::ImageType::TYPE_2D.as_raw(),
+                vkImageUsageFlags: desc.usage.as_raw(),
+                width: extent.width as _,
+                height: extent.height as _,
+                depth: 1,
+                mipNum: desc.mip_levels as _,
+                layerNum: 1,
+                sampleNum: 1
+            })
+        }.unwrap();
+        Self {
+            _image: image,
+            texture
+        }
+    }
+}
 
 struct State {
     device: nbn::Device,
@@ -35,20 +66,42 @@ struct State {
     _data: LoadedData,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
-    images: Images,
+    images: Resizables,
+    nrd_device: nrd::Device,
     view: [f32; 16],
     update_view: bool,
     camera_pos: [f32; 3],
     uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
 }
 
-struct Images {
+struct Resizables {
     depth: nbn::Image,
     vis: nbn::IndexedImage,
+    nrd_input: NrdTexture,
+    nrd_output: NrdTexture,
+    normal_roughness: NrdTexture,
+    nrd_integration: nrd::Integration
 }
 
-impl Images {
-    fn new(device: &nbn::Device, width: u32, height: u32) -> Self {
+impl Resizables {
+    fn new(device: &nbn::Device, nrd_device: &mut nrd::Device, width: u32, height: u32) -> Self {
+
+        let mut integration_desc = nrd::IntegrationCreationDesc::default();
+        integration_desc.resourceWidth = width as u16;
+        integration_desc.resourceHeight = height as u16;
+
+        let denoiser_desc = nrd::ffi::nrd::DenoiserDesc {
+            identifier: nrd::ffi::nrd::Denoiser::REFERENCE as u32,
+            denoiser: nrd::ffi::nrd::Denoiser::REFERENCE,
+        };
+
+        let nrd_integration = nrd::Integration::new(
+            &integration_desc,
+            &[denoiser_desc],
+            nrd_device,
+        )
+        .expect("NRD integration creation failed");
+
         Self {
             depth: device.create_image(nbn::ImageDescriptor {
                 name: "depth attachment",
@@ -69,6 +122,37 @@ impl Images {
                 }),
                 true,
             ),
+            nrd_integration,
+            nrd_input: NrdTexture::new(device, nrd_device, nbn::ImageDescriptor {
+                name: "nrd_input",
+                format: vk::Format::R16_SFLOAT,
+                extent: nbn::ImageExtent::D2 { width, height },
+                usage: vk::ImageUsageFlags::STORAGE
+                    | vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_levels: 1,
+            }),
+            nrd_output: NrdTexture::new(device, nrd_device, nbn::ImageDescriptor {
+                name: "nrd_output",
+                format: vk::Format::R16_SFLOAT,
+                extent: nbn::ImageExtent::D2 { width, height },
+                usage: vk::ImageUsageFlags::STORAGE
+                    | vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_levels: 1,
+            }),
+            normal_roughness: NrdTexture::new(device, nrd_device, nbn::ImageDescriptor {
+                name: "normal_roughness",
+                format: vk::Format::R16_SFLOAT,
+                extent: nbn::ImageExtent::D2 { width, height },
+                usage: vk::ImageUsageFlags::STORAGE
+                    | vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_DST,
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_levels: 1,
+            }),
         }
     }
 }
@@ -84,6 +168,45 @@ impl winit::application::ApplicationHandler for App {
             .create_window(winit::window::WindowAttributes::default().with_resizable(true))
             .unwrap();
         let device = nbn::Device::new(Some(&window));
+
+        let mut nrd_device = {
+            let mut unique_queue_families = Vec::new();
+            unique_queue_families.push(nrd::ffi::nri::QueueFamilyVKDesc {
+                queueNum: 1,
+                familyIndex: device.graphics_queue.index,
+                queueType: nrd::ffi::nri::QueueType::GRAPHICS,
+            });
+            if device.compute_queue.index != device.graphics_queue.index {
+                unique_queue_families.push(nrd::ffi::nri::QueueFamilyVKDesc {
+                    queueNum: 1,
+                    familyIndex: device.compute_queue.index,
+                    queueType: nrd::ffi::nri::QueueType::COMPUTE,
+                });
+            }
+            if device.transfer_queue.index != device.graphics_queue.index
+                && device.transfer_queue.index != device.compute_queue.index
+            {
+                unique_queue_families.push(nrd::ffi::nri::QueueFamilyVKDesc {
+                    queueNum: 1,
+                    familyIndex: device.transfer_queue.index,
+                    queueType: nrd::ffi::nri::QueueType::COPY,
+                });
+            }
+
+            unsafe {
+                nrd::Device::create_vk(
+                    device.instance.handle().as_raw(),
+                    device.physical_device.as_raw(),
+                    device.device.handle().as_raw(),
+                    &unique_queue_families,
+                    true,
+                    3,
+                    nbn::DEVICE_EXTENSIONS,
+                    nrd::ffi::nri::VKBindingOffsets::default(),
+                )
+            }
+            .expect("NRI device creation failed")
+        };
 
         let swapchain = device.create_swapchain(
             &window,
@@ -162,7 +285,8 @@ impl winit::application::ApplicationHandler for App {
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
             raytrace: device.create_compute_pipeline(&shader, c"raytrace"),
-            images: Images::new(&device, width, height),
+            images: Resizables::new(&device, &mut nrd_device, width, height),
+            nrd_device,
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -228,7 +352,7 @@ impl winit::application::ApplicationHandler for App {
                         .iter()
                         .map(|image| device.register_image(*image.view, true)),
                 );
-                state.images = Images::new(device, new_size.width, new_size.height);
+                state.images = Resizables::new(device, &mut state.nrd_device, new_size.width, new_size.height);
             }
             winit::event::WindowEvent::RedrawRequested => unsafe {
                 let extent = state.swapchain.create_info.image_extent;
@@ -285,6 +409,65 @@ impl winit::application::ApplicationHandler for App {
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
 
                 raytrace(state, next_image, frame_index);
+
+                state.images.nrd_integration.new_frame();
+
+                let mut cs = nrd::CommonSettings::default();
+                cs.frameIndex = state.frame_index;
+                cs.viewToClipMatrix = proj.to_cols_array();
+                cs.worldToViewMatrix = view.to_cols_array();
+                cs.resourceSize = [extent.width as _, extent.height as _];
+                cs.rectSize = [extent.width as _, extent.height as _];
+                cs.resourceSizePrev = [extent.width as _, extent.height as _];
+                cs.rectSizePrev = [extent.width as _, extent.height as _];
+
+                state.images.nrd_integration.set_common_settings(&cs);
+
+                let ref_settings = nrd::ReferenceSettings {
+                    maxAccumulatedFrameNum: 120,
+                };
+                state.images.nrd_integration.set_reference_settings(
+                    nrd::ffi::nrd::Denoiser::REFERENCE,
+                    &ref_settings,
+                );
+
+                let mut nrd_cmd_buf = nrd::CommandBuffer::create_vk(
+                    &mut state.nrd_device,
+                    &nrd::ffi::NrdCommandBufferVKDesc {
+                        vkCommandBuffer: (**command_buffer).as_raw(),
+                        queueType: nrd::ffi::nri::QueueType::GRAPHICS,
+                    },
+                )
+                .unwrap();
+
+                let mut snapshot = nrd::ResourceSnapshot::new();
+                snapshot.set_resource(
+                    nrd::ffi::nrd::ResourceType::IN_SIGNAL,
+                    &mut state.images.nrd_input.texture,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::Layout::GENERAL,
+                    nrd::ffi::nri::StageBits::COMPUTE_SHADER,
+                );
+                snapshot.set_resource(
+                    nrd::ffi::nrd::ResourceType::IN_NORMAL_ROUGHNESS,
+                    &mut state.images.normal_roughness.texture,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::Layout::GENERAL,
+                    nrd::ffi::nri::StageBits::COMPUTE_SHADER,
+                );
+                snapshot.set_resource(
+                    nrd::ffi::nrd::ResourceType::OUT_SIGNAL,
+                    &mut state.images.nrd_output.texture,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::Layout::GENERAL,
+                    nrd::ffi::nri::StageBits::COMPUTE_SHADER,
+                );
+
+                state.images.nrd_integration.denoise(
+                    &[nrd::ffi::nrd::Denoiser::REFERENCE as u32],
+                    &mut nrd_cmd_buf,
+                    &mut snapshot,
+                );
 
                 device.end_command_buffer(**command_buffer).unwrap();
 
