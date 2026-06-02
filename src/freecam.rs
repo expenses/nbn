@@ -82,6 +82,23 @@ impl FreeCam {
         false
     }
 
+    pub fn current(&self, width: u32, height: u32) -> (glam::Mat4, glam::Mat4) {
+        let transform = self.camera_rig.final_transform;
+        let camera_pos = glam::Vec3::from_array(transform.position.into());
+
+        let view = glam::Mat4::look_to_rh(
+            camera_pos,
+            glam::Vec3::from_array(transform.forward()),
+            glam::Vec3::Y,
+        );
+        let proj = crate::perspective_reversed_infinite_z_vk(
+            59.0_f32.to_radians(),
+            width as f32 / height as f32,
+            self.near_plane,
+        );
+        (view, proj)
+    }
+
     pub fn update(
         &mut self,
         width: u32,
