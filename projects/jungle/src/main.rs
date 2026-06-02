@@ -68,6 +68,7 @@ struct State {
     reset: nbn::Pipeline,
     resolve: nbn::Pipeline,
     raytrace: nbn::Pipeline,
+    post_denoise: nbn::Pipeline,
     prefix_sum_instances: nbn::Pipeline,
     prefix_sum_data: nbn::Buffer,
     visible_meshlets: nbn::Buffer,
@@ -77,7 +78,9 @@ struct State {
     frame_index: u32,
     images: Resizables,
     nrd_device: nrd::Device,
-    view: [f32; 16],
+    view: nbn::glam::Mat4,
+    prev_view: nbn::glam::Mat4,
+    prev_proj: nbn::glam::Mat4,
     update_view: bool,
     camera_pos: [f32; 3],
     uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
@@ -86,7 +89,8 @@ struct State {
 struct Resizables {
     depth: nbn::Image,
     vis: nbn::IndexedImage,
-    nrd_input: NrdTexture,
+    radiance: NrdTexture,
+    denoised: NrdTexture,
     normal_roughness: NrdTexture,
     linear_depth: NrdTexture,
     motion: NrdTexture,
@@ -128,11 +132,25 @@ impl Resizables {
                 true,
             ),
             nrd_integration,
-            nrd_input: NrdTexture::new(
+            denoised: NrdTexture::new(
                 device,
                 nrd_device,
                 nbn::ImageDescriptor {
-                    name: "nrd_input",
+                    name: "denoised",
+                    format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
+            radiance: NrdTexture::new(
+                device,
+                nrd_device,
+                nbn::ImageDescriptor {
+                    name: "radiance",
                     format: vk::Format::R16G16B16A16_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE
@@ -147,7 +165,7 @@ impl Resizables {
                 nrd_device,
                 nbn::ImageDescriptor {
                     name: "normal_roughness",
-                    format: vk::Format::R8G8B8A8_UNORM,
+                    format: vk::Format::A2B10G10R10_UNORM_PACK32,
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE
                         | vk::ImageUsageFlags::SAMPLED
@@ -160,7 +178,7 @@ impl Resizables {
                 device,
                 nrd_device,
                 nbn::ImageDescriptor {
-                    name: "normal_roughness",
+                    name: "motion",
                     format: vk::Format::R32G32_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE
@@ -301,6 +319,9 @@ impl winit::application::ApplicationHandler for App {
                 .unwrap()
         };
 
+        let freecam = nbn::freecam::FreeCam::new([0.01; 3].into(), NEAR_PLANE);
+        let (view, proj) = freecam.current(width, height);
+
         self.state = Some(State {
             prefix_sum_data: create_buffer("prefix_sum_data", 8 + 8 * data.num_instances as u64),
             dispatch: create_buffer("dispatch", 12),
@@ -318,6 +339,7 @@ impl winit::application::ApplicationHandler for App {
             reset: device.create_compute_pipeline(&shader, c"reset"),
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
             raytrace: device.create_compute_pipeline(&shader, c"raytrace"),
+            post_denoise: device.create_compute_pipeline(&shader, c"post_denoise"),
             images: Resizables::new(&device, &mut nrd_device, width, height),
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -353,17 +375,18 @@ impl winit::application::ApplicationHandler for App {
                 })
                 .collect(),
             nrd_device,
-
             device,
             window,
             render_pipeline,
             swapchain,
             _data: data,
-            freecam: nbn::freecam::FreeCam::new([0.01; 3].into(), NEAR_PLANE),
             frame_index: 0,
-            view: [0.0; 16],
+            view,
+            prev_view: view,
+            prev_proj: proj,
             update_view: true,
             camera_pos: [0.0; 3],
+            freecam,
         })
     }
 
@@ -449,7 +472,7 @@ impl winit::application::ApplicationHandler for App {
                 let frustum_y = (proj.row(3).truncate() + proj.row(1).truncate()).normalize();
 
                 if state.update_view {
-                    state.view = view.to_cols_array();
+                    state.view = view;
                     state.camera_pos = state.freecam.camera_rig.final_transform.position.into();
                 }
 
@@ -473,17 +496,22 @@ impl winit::application::ApplicationHandler for App {
                     .try_as_slice_mut::<Uniforms>()
                     .unwrap()[0] = Uniforms {
                     camera: (proj * view).to_cols_array(),
+                    prev_camera: (state.prev_proj * state.prev_view).to_cols_array(),
                     num_instances: state._data.num_instances,
                     vis: *state.images.vis,
                     extent: [extent.width, extent.height],
                     camera_pos: state.camera_pos,
                     near_plane: NEAR_PLANE,
                     frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
-                    view: state.view,
+                    view: state.view.to_cols_array(),
                     view_inv: view.inverse().to_cols_array(),
                     proj_inv: proj.inverse().to_cols_array(),
                     frame_index: state.frame_index,
                     linear_depth: *state.images.linear_depth,
+                    normal_roughness: *state.images.normal_roughness,
+                    motion: *state.images.motion,
+                    denoised: *state.images.denoised,
+                    radiance: *state.images.radiance,
                 };
 
                 device.reset_command_buffer(command_buffer);
@@ -512,12 +540,9 @@ impl winit::application::ApplicationHandler for App {
                 cs.rectSize = [extent.width as _, extent.height as _];
                 cs.resourceSizePrev = [extent.width as _, extent.height as _];
                 cs.rectSizePrev = [extent.width as _, extent.height as _];
-
+                //cs.enableValidation = true;
                 state.images.nrd_integration.set_common_settings(&cs);
 
-                let ref_settings = nrd::ReferenceSettings {
-                    maxAccumulatedFrameNum: 120,
-                };
                 state.images.nrd_integration.set_reblur_settings(
                     nrd::ffi::nrd::Denoiser::REBLUR_DIFFUSE,
                     &Default::default(),
@@ -537,7 +562,7 @@ impl winit::application::ApplicationHandler for App {
                 let mut snapshot = nrd::ResourceSnapshot::default();
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST,
-                    &state.images.nrd_input.texture,
+                    &state.images.radiance.texture,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
@@ -565,16 +590,40 @@ impl winit::application::ApplicationHandler for App {
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,
-                    nrd_image,
+                    //nrd_image,
+                    &state.images.denoised.texture,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
                 );
+                //                 snapshot.set_resource(
+                //                     nrd::ffi::nrd::ResourceType::OUT_VALIDATION,
+                // // nrd_image,
+                //                     &state.images.nrd_output.texture,
+                //                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
+                //                     nrd::ffi::nri::Layout::GENERAL,
+                //                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
+                //                 );
 
                 state.images.nrd_integration.denoise(
                     &[nrd::ffi::nrd::Denoiser::REBLUR_DIFFUSE as u32],
                     &mut nrd_cmd_buf,
                     &mut snapshot,
+                );
+
+                device.bind_internal_descriptor_sets_to_all(command_buffer);
+
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.post_denoise,
+                );
+
+                device.cmd_dispatch(
+                    **command_buffer,
+                    extent.width.div_ceil(8),
+                    extent.height.div_ceil(8),
+                    1,
                 );
 
                 device.insert_image_pipeline_barrier(
@@ -603,6 +652,8 @@ impl winit::application::ApplicationHandler for App {
                     .unwrap();
 
                 state.frame_index += 1;
+                state.prev_view = view;
+                state.prev_proj = proj;
             },
             winit::event::WindowEvent::KeyboardInput {
                 event:
@@ -646,146 +697,146 @@ impl winit::application::ApplicationHandler for App {
     }
 }
 
-fn raster(state: &State, next_image: u32, current_frame: usize) {
-    let device = &state.device;
-    let command_buffer = &state.per_frame_command_buffers[current_frame];
-    let extent = state.swapchain.create_info.image_extent;
-    let image = &state.swapchain.images[next_image as usize];
+// fn raster(state: &State, next_image: u32, current_frame: usize) {
+//     let device = &state.device;
+//     let command_buffer = &state.per_frame_command_buffers[current_frame];
+//     let extent = state.swapchain.create_info.image_extent;
+//     let image = &state.swapchain.images[next_image as usize];
 
-    unsafe {
-        device.push_constants::<PushConstants>(
-            command_buffer,
-            PushConstants {
-                tlas: *state._data.tlas.tlas,
-                uniforms: *state.uniform_buffers[current_frame],
-                instances: *state._data.instances,
-                prefix_sum_data: *state.prefix_sum_data,
-                swapchain: *state.images.nrd_input, //*state.swapchain_image_heap_indices[next_image as usize].0,
-                visible_meshlets: *state.visible_meshlets,
-                dispatch: *state.dispatch,
-            },
-        );
+//     unsafe {
+//         device.push_constants::<PushConstants>(
+//             command_buffer,
+//             PushConstants {
+//                 tlas: *state._data.tlas.tlas,
+//                 uniforms: *state.uniform_buffers[current_frame],
+//                 instances: *state._data.instances,
+//                 prefix_sum_data: *state.prefix_sum_data,
+//                 swapchain: *state.images.nrd_input, //*state.swapchain_image_heap_indices[next_image as usize].0,
+//                 visible_meshlets: *state.visible_meshlets,
+//                 dispatch: *state.dispatch,
+//             },
+//         );
 
-        device.cmd_bind_pipeline(
-            **command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            *state.reset,
-        );
+//         device.cmd_bind_pipeline(
+//             **command_buffer,
+//             vk::PipelineBindPoint::COMPUTE,
+//             *state.reset,
+//         );
 
-        device.cmd_dispatch(**command_buffer, 1, 1, 1);
+//         device.cmd_dispatch(**command_buffer, 1, 1, 1);
 
-        device.cmd_bind_pipeline(
-            **command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            *state.prefix_sum_instances,
-        );
+//         device.cmd_bind_pipeline(
+//             **command_buffer,
+//             vk::PipelineBindPoint::COMPUTE,
+//             *state.prefix_sum_instances,
+//         );
 
-        device.cmd_dispatch(
-            **command_buffer,
-            state._data.num_instances.div_ceil(64),
-            1,
-            1,
-        );
+//         device.cmd_dispatch(
+//             **command_buffer,
+//             state._data.num_instances.div_ceil(64),
+//             1,
+//             1,
+//         );
 
-        device.insert_pipeline_barriers(
-            command_buffer,
-            [
-                (
-                    image.into(),
-                    Some(nbn::BarrierOp::Acquire),
-                    nbn::BarrierOp::ComputeStorageWrite,
-                ),
-                (
-                    (&state.images.depth).into(),
-                    None,
-                    nbn::BarrierOp::DepthStencilAttachmentReadWrite,
-                ),
-                (
-                    (&state.images.vis).into(),
-                    None,
-                    nbn::BarrierOp::ColorAttachmentWrite,
-                ),
-            ],
-            [(
-                &state.dispatch,
-                nbn::BarrierOp::ComputeStorageWrite,
-                nbn::BarrierOp::IndirectParamRead,
-            )],
-        );
+//         device.insert_pipeline_barriers(
+//             command_buffer,
+//             [
+//                 (
+//                     image.into(),
+//                     Some(nbn::BarrierOp::Acquire),
+//                     nbn::BarrierOp::ComputeStorageWrite,
+//                 ),
+//                 (
+//                     (&state.images.depth).into(),
+//                     None,
+//                     nbn::BarrierOp::DepthStencilAttachmentReadWrite,
+//                 ),
+//                 (
+//                     (&state.images.vis).into(),
+//                     None,
+//                     nbn::BarrierOp::ColorAttachmentWrite,
+//                 ),
+//             ],
+//             [(
+//                 &state.dispatch,
+//                 nbn::BarrierOp::ComputeStorageWrite,
+//                 nbn::BarrierOp::IndirectParamRead,
+//             )],
+//         );
 
-        device.begin_rendering(
-            command_buffer,
-            extent.width,
-            extent.height,
-            &[vk::RenderingAttachmentInfo::default()
-                .image_view(*state.images.vis.image.view)
-                .image_layout(vk::ImageLayout::GENERAL)
-                .clear_value(vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        uint32: [u32::max_value(); 4],
-                    },
-                })
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)],
-            Some(
-                &vk::RenderingAttachmentInfo::default()
-                    .clear_value(vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue {
-                            depth: 0.0,
-                            stencil: 0,
-                        },
-                    })
-                    .load_op(vk::AttachmentLoadOp::CLEAR)
-                    .store_op(vk::AttachmentStoreOp::STORE)
-                    .image_view(*state.images.depth.view)
-                    .image_layout(vk::ImageLayout::GENERAL),
-            ),
-        );
+//         device.begin_rendering(
+//             command_buffer,
+//             extent.width,
+//             extent.height,
+//             &[vk::RenderingAttachmentInfo::default()
+//                 .image_view(*state.images.vis.image.view)
+//                 .image_layout(vk::ImageLayout::GENERAL)
+//                 .clear_value(vk::ClearValue {
+//                     color: vk::ClearColorValue {
+//                         uint32: [u32::max_value(); 4],
+//                     },
+//                 })
+//                 .load_op(vk::AttachmentLoadOp::CLEAR)
+//                 .store_op(vk::AttachmentStoreOp::STORE)],
+//             Some(
+//                 &vk::RenderingAttachmentInfo::default()
+//                     .clear_value(vk::ClearValue {
+//                         depth_stencil: vk::ClearDepthStencilValue {
+//                             depth: 0.0,
+//                             stencil: 0,
+//                         },
+//                     })
+//                     .load_op(vk::AttachmentLoadOp::CLEAR)
+//                     .store_op(vk::AttachmentStoreOp::STORE)
+//                     .image_view(*state.images.depth.view)
+//                     .image_layout(vk::ImageLayout::GENERAL),
+//             ),
+//         );
 
-        device.cmd_bind_pipeline(
-            **command_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            *state.render_pipeline,
-        );
+//         device.cmd_bind_pipeline(
+//             **command_buffer,
+//             vk::PipelineBindPoint::GRAPHICS,
+//             *state.render_pipeline,
+//         );
 
-        device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
-            **command_buffer,
-            *state.dispatch.buffer,
-            0,
-            1,
-            16,
-        );
+//         device.mesh_shader_loader.cmd_draw_mesh_tasks_indirect(
+//             **command_buffer,
+//             *state.dispatch.buffer,
+//             0,
+//             1,
+//             16,
+//         );
 
-        device.cmd_end_rendering(**command_buffer);
+//         device.cmd_end_rendering(**command_buffer);
 
-        device.insert_image_pipeline_barrier(
-            command_buffer,
-            &state.images.vis,
-            Some(nbn::BarrierOp::ColorAttachmentWrite),
-            nbn::BarrierOp::ComputeStorageRead,
-        );
+//         device.insert_image_pipeline_barrier(
+//             command_buffer,
+//             &state.images.vis,
+//             Some(nbn::BarrierOp::ColorAttachmentWrite),
+//             nbn::BarrierOp::ComputeStorageRead,
+//         );
 
-        device.cmd_bind_pipeline(
-            **command_buffer,
-            vk::PipelineBindPoint::COMPUTE,
-            *state.resolve,
-        );
+//         device.cmd_bind_pipeline(
+//             **command_buffer,
+//             vk::PipelineBindPoint::COMPUTE,
+//             *state.resolve,
+//         );
 
-        device.cmd_dispatch(
-            **command_buffer,
-            extent.width.div_ceil(8),
-            extent.height.div_ceil(8),
-            1,
-        );
+//         device.cmd_dispatch(
+//             **command_buffer,
+//             extent.width.div_ceil(8),
+//             extent.height.div_ceil(8),
+//             1,
+//         );
 
-        device.insert_image_pipeline_barrier(
-            command_buffer,
-            image,
-            Some(nbn::BarrierOp::ComputeStorageWrite),
-            nbn::BarrierOp::Present,
-        );
-    }
-}
+//         device.insert_image_pipeline_barrier(
+//             command_buffer,
+//             image,
+//             Some(nbn::BarrierOp::ComputeStorageWrite),
+//             nbn::BarrierOp::Present,
+//         );
+//     }
+// }
 
 fn raytrace(state: &State, next_image: u32, current_frame: usize) {
     let device = &state.device;
@@ -801,7 +852,7 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
                 prefix_sum_data: *state.prefix_sum_data,
-                swapchain: *state.images.nrd_input, //*state.swapchain_image_heap_indices[next_image as usize].0,
+                swapchain: *state.swapchain_image_heap_indices[next_image as usize].0,
                 visible_meshlets: *state.visible_meshlets,
                 dispatch: *state.dispatch,
             },
@@ -809,11 +860,33 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
 
         device.insert_pipeline_barriers(
             command_buffer,
-            [(
-                (&state.images.nrd_input.image).into(),
-                None, //Some(nbn::BarrierOp::Acquire),
-                nbn::BarrierOp::ComputeStorageWrite,
-            )],
+            [
+                (
+                    (&state.images.radiance.image).into(),
+                    None, //Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                ),
+                (
+                    (&state.images.normal_roughness.image).into(),
+                    None, //Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                ),
+                (
+                    (&state.images.denoised.image).into(),
+                    None, //Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                ),
+                (
+                    (&state.images.linear_depth.image).into(),
+                    None, //Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                ),
+                (
+                    (&state.images.motion.image).into(),
+                    None, //Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                ),
+            ],
             [],
         );
 
@@ -973,7 +1046,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     num_indices: indices.count as _,
                 });
 
-                let image_index = if let Some(info) =
+                let image_index = /*if let Some(info) =
                     material.pbr_metallic_roughness.base_color_texture.as_ref()
                 {
                     let texture = &gltf.textures[info.index];
@@ -999,7 +1072,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     images.push(image);
 
                     index
-                } else {
+                } else*/ {
                     u32::max_value()
                 };
 

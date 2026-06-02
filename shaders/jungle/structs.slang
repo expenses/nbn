@@ -37,6 +37,7 @@ struct Uniforms {
     float4x4 view;
     float4x4 view_inv;
     float4x4 proj_inv;
+    float4x4 prev_camera;
     float4 frustum;
     float3 camera_pos;
     float near_plane;
@@ -45,6 +46,10 @@ struct Uniforms {
     uint vis;
     uint frame_index;
     uint linear_depth;
+    uint normal_roughness;
+    uint motion;
+    uint radiance;
+    uint denoised;
 }
 
 struct PushConstants {

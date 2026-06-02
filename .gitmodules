@@ -1,0 +1,3 @@
+[submodule "shaders/NRD"]
+	path = shaders/NRD
+	url = https://github.com/NVIDIA-RTX/NRD

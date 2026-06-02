@@ -9,6 +9,7 @@ import shared.barycentrics;
 import shared.culling;
 import shared.sampling;
 import shared.noise;
+#include "NRD/Shaders/NRD.hlsli"
 
 [shader("compute")]
 [NumThreads(1, 1, 1)]
@@ -176,9 +177,9 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
 
     var rng = SobolRng(thread, pc.uniforms.frame_index);
 
-    let d = thread_to_clip(thread, pc.uniforms.extent);
+    let thread_clip = thread_to_clip(thread, pc.uniforms.extent);
     let origin = mul(pc.uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
-    let temp = mul(pc.uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
+    let temp = mul(pc.uniforms.proj_inv, float4(thread_clip, 1.0, 1.0));
     let direction =
         mul(pc.uniforms.view_inv, float4(normalize(temp.xyz), 0.0)).xyz;
 
@@ -198,11 +199,18 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     query.Proceed();
 
     var color = float3(0);
+    var view_z = 1.0/0.0;
     var depth = 1.0/0.0;
+    var normal = float3(0);
+    uint material_id = 0;
+
+    var prev_thread_clip = thread_clip;
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
         depth = query.CommittedRayT();
-        let instance = pc.instances[query.CommittedRayInstanceCustomIndex() + query.CommittedRayGeometryIndex()];
+        let instance_index = query.CommittedRayInstanceCustomIndex() + query.CommittedRayGeometryIndex();
+        material_id = instance_index;
+        let instance = pc.instances[instance_index];
         let prim = query.CommittedPrimitiveIndex();
         let mat = query.CommittedObjectToWorld3x4();
         let indices = uint3(
@@ -226,6 +234,11 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
             position
         );
 
+        let prev_clip = mul(pc.uniforms.prev_camera, float4(position.val, 1.0));
+        prev_thread_clip = (prev_clip.xy / prev_clip.w);
+
+        view_z = mul(pc.uniforms.view, float4(position.val, 1.0)).z;
+
         let uv = interpolate(
            barycentrics,
            instance.uvs[indices.x],
@@ -233,7 +246,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
            instance.uvs[indices.z]
         );
 
-        let normal = normalize(interpolate(
+        normal = normalize(interpolate(
            barycentrics,
            instance.normals[indices.x],
            instance.normals[indices.y],
@@ -269,11 +282,39 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         color *= (lighting);
     }
 
-    WTexture2D<float3> swapchain = storage_images[pc.swapchain];
-    swapchain.Store(thread, color);
+    let roughness = 1.0;
 
-    WTexture2D<float> depth_tex = storage_images[pc.uniforms.linear_depth];
-    depth_tex.Store(thread, depth);
+    let normHitDist = REBLUR_FrontEnd_GetNormHitDist(depth, view_z, float3(3.0, 0.1, 20.0), roughness);
+    let packed = REBLUR_FrontEnd_PackRadianceAndNormHitDist(color, normHitDist, false);
+
+    WTexture2D<float4> radiance = storage_images[pc.uniforms.radiance];
+    radiance.Store(thread, packed);
+
+    WTexture2D<float> view_z_tex = storage_images[pc.uniforms.linear_depth];
+    view_z_tex.Store(thread, view_z);
+
+    WTexture2D<float4> normal_roughness_tex = storage_images[pc.uniforms.normal_roughness];
+    normal_roughness_tex.Store(thread, NRD_FrontEnd_PackNormalAndRoughness(normal, roughness, material_id));
+
+    WTexture2D<float2> motion_tex = storage_images[pc.uniforms.motion];
+    motion_tex.Store(thread, (thread_clip - prev_thread_clip)*-0.5);
+}
+
+
+[shader("compute")]
+[NumThreads(8, 8, 1)]
+void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
+    if (any(thread >= pc.uniforms.extent)) {
+        return;
+    }
+
+    Texture2D<float4> denoised = storage_images[pc.uniforms.denoised];
+
+    let val = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz;
+
+    WTexture2D<float3> swapchain = storage_images[pc.swapchain];
+
+    swapchain.Store(thread,val);
 }
 
 groupshared uint[64] gs_global_meshlet_indices;
