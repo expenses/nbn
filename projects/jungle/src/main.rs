@@ -19,31 +19,35 @@ fn main() {
 const NEAR_PLANE: f32 = 0.001;
 
 struct NrdTexture {
-    _image: nbn::Image,
-    texture: nrd::Texture
+    _image: nbn::IndexedImage,
+    texture: nrd::Texture,
 }
 
 impl NrdTexture {
     fn new(device: &nbn::Device, nrd_device: &mut nrd::Device, desc: nbn::ImageDescriptor) -> Self {
-        let image = device.create_image(desc);
+        let image = device.register_owned_image(device.create_image(desc), true);
         let extent = vk::Extent3D::from(desc.extent);
         let texture = unsafe {
-            nrd::Texture::create_vk(nrd_device, &nrd::NrdTextureVKDesc {
-                vkImage: image.image.as_raw(),
-                vkFormat: desc.format.as_raw(),
-                vkImageType: vk::ImageType::TYPE_2D.as_raw(),
-                vkImageUsageFlags: desc.usage.as_raw(),
-                width: extent.width as _,
-                height: extent.height as _,
-                depth: 1,
-                mipNum: desc.mip_levels as _,
-                layerNum: 1,
-                sampleNum: 1
-            })
-        }.unwrap();
+            nrd::Texture::create_vk(
+                nrd_device,
+                &nrd::NrdTextureVKDesc {
+                    vkImage: image.image.as_raw(),
+                    vkFormat: desc.format.as_raw(),
+                    vkImageType: vk::ImageType::TYPE_2D.as_raw(),
+                    vkImageUsageFlags: desc.usage.as_raw(),
+                    width: extent.width as _,
+                    height: extent.height as _,
+                    depth: 1,
+                    mipNum: desc.mip_levels as _,
+                    layerNum: 1,
+                    sampleNum: 1,
+                },
+            )
+        }
+        .unwrap();
         Self {
             _image: image,
-            texture
+            texture,
         }
     }
 }
@@ -54,7 +58,7 @@ struct State {
     swapchain: nbn::Swapchain,
     sync_resources: nbn::SyncResources,
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
-    swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
+    swapchain_image_heap_indices: Vec<(nbn::ImageIndex, nrd::Texture)>,
     render_pipeline: nbn::Pipeline,
     reset: nbn::Pipeline,
     resolve: nbn::Pipeline,
@@ -78,14 +82,12 @@ struct Resizables {
     depth: nbn::Image,
     vis: nbn::IndexedImage,
     nrd_input: NrdTexture,
-    nrd_output: NrdTexture,
     normal_roughness: NrdTexture,
-    nrd_integration: nrd::Integration
+    nrd_integration: nrd::Integration,
 }
 
 impl Resizables {
     fn new(device: &nbn::Device, nrd_device: &mut nrd::Device, width: u32, height: u32) -> Self {
-
         let mut integration_desc = nrd::IntegrationCreationDesc::default();
         integration_desc.resourceWidth = width as u16;
         integration_desc.resourceHeight = height as u16;
@@ -95,12 +97,9 @@ impl Resizables {
             denoiser: nrd::ffi::nrd::Denoiser::REFERENCE,
         };
 
-        let nrd_integration = nrd::Integration::new(
-            &integration_desc,
-            &[denoiser_desc],
-            nrd_device,
-        )
-        .expect("NRD integration creation failed");
+        let nrd_integration =
+            nrd::Integration::new(&integration_desc, &[denoiser_desc], nrd_device)
+                .expect("NRD integration creation failed");
 
         Self {
             depth: device.create_image(nbn::ImageDescriptor {
@@ -123,36 +122,34 @@ impl Resizables {
                 true,
             ),
             nrd_integration,
-            nrd_input: NrdTexture::new(device, nrd_device, nbn::ImageDescriptor {
-                name: "nrd_input",
-                format: vk::Format::R16_SFLOAT,
-                extent: nbn::ImageExtent::D2 { width, height },
-                usage: vk::ImageUsageFlags::STORAGE
-                    | vk::ImageUsageFlags::SAMPLED
-                    | vk::ImageUsageFlags::TRANSFER_DST,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_levels: 1,
-            }),
-            nrd_output: NrdTexture::new(device, nrd_device, nbn::ImageDescriptor {
-                name: "nrd_output",
-                format: vk::Format::R16_SFLOAT,
-                extent: nbn::ImageExtent::D2 { width, height },
-                usage: vk::ImageUsageFlags::STORAGE
-                    | vk::ImageUsageFlags::SAMPLED
-                    | vk::ImageUsageFlags::TRANSFER_DST,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_levels: 1,
-            }),
-            normal_roughness: NrdTexture::new(device, nrd_device, nbn::ImageDescriptor {
-                name: "normal_roughness",
-                format: vk::Format::R16_SFLOAT,
-                extent: nbn::ImageExtent::D2 { width, height },
-                usage: vk::ImageUsageFlags::STORAGE
-                    | vk::ImageUsageFlags::SAMPLED
-                    | vk::ImageUsageFlags::TRANSFER_DST,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_levels: 1,
-            }),
+            nrd_input: NrdTexture::new(
+                device,
+                nrd_device,
+                nbn::ImageDescriptor {
+                    name: "nrd_input",
+                    format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::TRANSFER_DST,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
+            normal_roughness: NrdTexture::new(
+                device,
+                nrd_device,
+                nbn::ImageDescriptor {
+                    name: "normal_roughness",
+                    format: vk::Format::R16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::TRANSFER_DST,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
         }
     }
 }
@@ -286,7 +283,6 @@ impl winit::application::ApplicationHandler for App {
             resolve: device.create_compute_pipeline(&shader, c"resolve"),
             raytrace: device.create_compute_pipeline(&shader, c"raytrace"),
             images: Resizables::new(&device, &mut nrd_device, width, height),
-            nrd_device,
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
@@ -296,8 +292,31 @@ impl winit::application::ApplicationHandler for App {
             swapchain_image_heap_indices: swapchain
                 .images
                 .iter()
-                .map(|image| device.register_image(*image.view, true))
+                .map(|image| {
+                    (
+                        device.register_image(*image.view, true),
+                        unsafe {
+                            nrd::Texture::create_vk(
+                                &mut nrd_device,
+                                &nrd::NrdTextureVKDesc {
+                                    vkImage: image.image.as_raw(),
+                                    vkFormat: swapchain.create_info.image_format.as_raw(),
+                                    vkImageType: vk::ImageType::TYPE_2D.as_raw(),
+                                    vkImageUsageFlags: swapchain.create_info.image_usage.as_raw(),
+                                    width: swapchain.create_info.image_extent.width as _,
+                                    height: swapchain.create_info.image_extent.height as _,
+                                    depth: 1,
+                                    mipNum: 1,
+                                    layerNum: 1,
+                                    sampleNum: 1,
+                                },
+                            )
+                        }
+                        .unwrap(),
+                    )
+                })
                 .collect(),
+            nrd_device,
 
             device,
             window,
@@ -345,14 +364,42 @@ impl winit::application::ApplicationHandler for App {
                 unsafe { device.queue_wait_idle(*device.graphics_queue).unwrap() };
                 device.recreate_swapchain(&mut state.swapchain);
                 state.swapchain_image_heap_indices.clear();
-                state.swapchain_image_heap_indices.extend(
-                    state
-                        .swapchain
-                        .images
-                        .iter()
-                        .map(|image| device.register_image(*image.view, true)),
+                state
+                    .swapchain_image_heap_indices
+                    .extend(state.swapchain.images.iter().map(|image| {
+                        (
+                            device.register_image(*image.view, true),
+                            unsafe {
+                                nrd::Texture::create_vk(
+                                    &mut state.nrd_device,
+                                    &nrd::NrdTextureVKDesc {
+                                        vkImage: image.image.as_raw(),
+                                        vkFormat: state.swapchain.create_info.image_format.as_raw(),
+                                        vkImageType: vk::ImageType::TYPE_2D.as_raw(),
+                                        vkImageUsageFlags: state
+                                            .swapchain
+                                            .create_info
+                                            .image_usage
+                                            .as_raw(),
+                                        width: state.swapchain.create_info.image_extent.width as _,
+                                        height: state.swapchain.create_info.image_extent.height
+                                            as _,
+                                        depth: 1,
+                                        mipNum: 1,
+                                        layerNum: 1,
+                                        sampleNum: 1,
+                                    },
+                                )
+                            }
+                            .unwrap(),
+                        )
+                    }));
+                state.images = Resizables::new(
+                    device,
+                    &mut state.nrd_device,
+                    new_size.width,
+                    new_size.height,
                 );
-                state.images = Resizables::new(device, &mut state.nrd_device, new_size.width, new_size.height);
             }
             winit::event::WindowEvent::RedrawRequested => unsafe {
                 let extent = state.swapchain.create_info.image_extent;
@@ -426,10 +473,10 @@ impl winit::application::ApplicationHandler for App {
                 let ref_settings = nrd::ReferenceSettings {
                     maxAccumulatedFrameNum: 120,
                 };
-                state.images.nrd_integration.set_reference_settings(
-                    nrd::ffi::nrd::Denoiser::REFERENCE,
-                    &ref_settings,
-                );
+                state
+                    .images
+                    .nrd_integration
+                    .set_reference_settings(nrd::ffi::nrd::Denoiser::REFERENCE, &ref_settings);
 
                 let mut nrd_cmd_buf = nrd::CommandBuffer::create_vk(
                     &mut state.nrd_device,
@@ -439,6 +486,8 @@ impl winit::application::ApplicationHandler for App {
                     },
                 )
                 .unwrap();
+
+                let (_, nrd_image) = &mut state.swapchain_image_heap_indices[next_image as usize];
 
                 let mut snapshot = nrd::ResourceSnapshot::new();
                 snapshot.set_resource(
@@ -457,7 +506,7 @@ impl winit::application::ApplicationHandler for App {
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::OUT_SIGNAL,
-                    &mut state.images.nrd_output.texture,
+                    nrd_image,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
@@ -545,7 +594,7 @@ fn raster(state: &State, next_image: u32, current_frame: usize) {
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
                 prefix_sum_data: *state.prefix_sum_data,
-                swapchain: *state.swapchain_image_heap_indices[next_image as usize],
+                swapchain: *state.images.nrd_input._image, //*state.swapchain_image_heap_indices[next_image as usize].0,
                 visible_meshlets: *state.visible_meshlets,
                 dispatch: *state.dispatch,
             },
@@ -686,7 +735,7 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
                 prefix_sum_data: *state.prefix_sum_data,
-                swapchain: *state.swapchain_image_heap_indices[next_image as usize],
+                swapchain: *state.images.nrd_input._image, //*state.swapchain_image_heap_indices[next_image as usize].0,
                 visible_meshlets: *state.visible_meshlets,
                 dispatch: *state.dispatch,
             },
