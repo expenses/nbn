@@ -173,6 +173,7 @@ impl From<ImageExtent> for vk::Extent3D {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ImageDescriptor<'a> {
     pub name: &'a str,
     pub format: vk::Format,
