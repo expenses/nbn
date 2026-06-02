@@ -194,9 +194,27 @@ pub struct Samplers {
     pub nearest_repeat: Sampler,
 }
 
+pub const DEVICE_EXTENSIONS: &'static [*const i8] = &[
+    ash::khr::swapchain::NAME.as_ptr(),
+    ash::ext::conservative_rasterization::NAME.as_ptr(),
+    // ;)
+    ash::khr::push_descriptor::NAME.as_ptr(),
+    ash::ext::mesh_shader::NAME.as_ptr(),
+    ash::ext::mutable_descriptor_type::NAME.as_ptr(),
+    // Ray tracing
+    ash::khr::acceleration_structure::NAME.as_ptr(),
+    ash::khr::deferred_host_operations::NAME.as_ptr(),
+    ash::khr::ray_tracing_pipeline::NAME.as_ptr(),
+    ash::khr::ray_tracing_maintenance1::NAME.as_ptr(),
+    ash::khr::ray_query::NAME.as_ptr(),
+    // Machine learning
+    ash::khr::cooperative_matrix::NAME.as_ptr(),
+    ash::ext::shader_atomic_float::NAME.as_ptr(),
+];
+
 pub struct Device {
     entry: ash::Entry,
-    instance: ash::Instance,
+    pub instance: ash::Instance,
     surface_loader: ash::khr::surface::Instance,
     pub device: ash::Device,
     pub physical_device: vk::PhysicalDevice,
@@ -461,21 +479,7 @@ impl Device {
                     pdevice,
                     &vk::DeviceCreateInfo::default()
                         .queue_create_infos(&queue_infos)
-                        .enabled_extension_names(&[
-                            ash::khr::swapchain::NAME.as_ptr(),
-                            ash::ext::conservative_rasterization::NAME.as_ptr(),
-                            // ;)
-                            ash::ext::mesh_shader::NAME.as_ptr(),
-                            ash::ext::mutable_descriptor_type::NAME.as_ptr(),
-                            // Ray tracing
-                            ash::khr::acceleration_structure::NAME.as_ptr(),
-                            ash::khr::deferred_host_operations::NAME.as_ptr(),
-                            ash::khr::ray_tracing_pipeline::NAME.as_ptr(),
-                            ash::khr::ray_query::NAME.as_ptr(),
-                            // Machine learning
-                            ash::khr::cooperative_matrix::NAME.as_ptr(),
-                            ash::ext::shader_atomic_float::NAME.as_ptr(),
-                        ])
+                        .enabled_extension_names(DEVICE_EXTENSIONS)
                         .enabled_features(&vulkan_1_0_features)
                         .push_next(&mut vulkan_1_1_features)
                         .push_next(&mut vulkan_1_2_features)
