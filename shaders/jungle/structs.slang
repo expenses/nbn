@@ -43,6 +43,8 @@ struct Uniforms {
     uint2 extent;
     uint num_instances;
     uint vis;
+    uint frame_index;
+    uint linear_depth;
 }
 
 struct PushConstants {

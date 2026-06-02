@@ -19,12 +19,12 @@ fn main() {
 const NEAR_PLANE: f32 = 0.001;
 
 struct NrdTexture {
-    _image: nbn::IndexedImage,
+    image: nbn::IndexedImage,
     texture: nrd::Texture,
 }
 
 impl NrdTexture {
-    fn new(device: &nbn::Device, nrd_device: &mut nrd::Device, desc: nbn::ImageDescriptor) -> Self {
+    fn new(device: &nbn::Device, nrd_device: &nrd::Device, desc: nbn::ImageDescriptor) -> Self {
         let image = device.register_owned_image(device.create_image(desc), true);
         let extent = vk::Extent3D::from(desc.extent);
         let texture = unsafe {
@@ -45,10 +45,15 @@ impl NrdTexture {
             )
         }
         .unwrap();
-        Self {
-            _image: image,
-            texture,
-        }
+        Self { image, texture }
+    }
+}
+
+impl std::ops::Deref for NrdTexture {
+    type Target = u32;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.image
     }
 }
 
@@ -83,11 +88,12 @@ struct Resizables {
     vis: nbn::IndexedImage,
     nrd_input: NrdTexture,
     normal_roughness: NrdTexture,
+    linear_depth: NrdTexture,
     nrd_integration: nrd::Integration,
 }
 
 impl Resizables {
-    fn new(device: &nbn::Device, nrd_device: &mut nrd::Device, width: u32, height: u32) -> Self {
+    fn new(device: &nbn::Device, nrd_device: &nrd::Device, width: u32, height: u32) -> Self {
         let mut integration_desc = nrd::IntegrationCreationDesc::default();
         integration_desc.resourceWidth = width as u16;
         integration_desc.resourceHeight = height as u16;
@@ -97,9 +103,8 @@ impl Resizables {
             denoiser: nrd::ffi::nrd::Denoiser::REFERENCE,
         };
 
-        let nrd_integration =
-            nrd::Integration::new(&integration_desc, &[denoiser_desc], nrd_device)
-                .expect("NRD integration creation failed");
+        let mut nrd_integration = nrd::Integration::default();
+        unsafe { nrd_integration.recreate(&integration_desc, &[denoiser_desc], nrd_device) };
 
         Self {
             depth: device.create_image(nbn::ImageDescriptor {
@@ -141,6 +146,20 @@ impl Resizables {
                 nrd_device,
                 nbn::ImageDescriptor {
                     name: "normal_roughness",
+                    format: vk::Format::R16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::TRANSFER_DST,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
+            linear_depth: NrdTexture::new(
+                device,
+                nrd_device,
+                nbn::ImageDescriptor {
+                    name: "linear_depth",
                     format: vk::Format::R16_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE
@@ -446,6 +465,8 @@ impl winit::application::ApplicationHandler for App {
                     view: state.view,
                     view_inv: view.inverse().to_cols_array(),
                     proj_inv: proj.inverse().to_cols_array(),
+                    frame_index: state.frame_index,
+                    linear_depth: *state.images.linear_depth,
                 };
 
                 device.reset_command_buffer(command_buffer);
@@ -454,6 +475,13 @@ impl winit::application::ApplicationHandler for App {
                     .unwrap();
 
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                );
 
                 raytrace(state, next_image, frame_index);
 
@@ -487,19 +515,26 @@ impl winit::application::ApplicationHandler for App {
                 )
                 .unwrap();
 
-                let (_, nrd_image) = &mut state.swapchain_image_heap_indices[next_image as usize];
+                let (_, nrd_image) = &state.swapchain_image_heap_indices[next_image as usize];
 
-                let mut snapshot = nrd::ResourceSnapshot::new();
+                let mut snapshot = nrd::ResourceSnapshot::default();
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::IN_SIGNAL,
-                    &mut state.images.nrd_input.texture,
+                    &state.images.nrd_input.texture,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::IN_NORMAL_ROUGHNESS,
-                    &mut state.images.normal_roughness.texture,
+                    &state.images.normal_roughness.texture,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::Layout::GENERAL,
+                    nrd::ffi::nri::StageBits::COMPUTE_SHADER,
+                );
+                snapshot.set_resource(
+                    nrd::ffi::nrd::ResourceType::IN_VIEWZ,
+                    &state.images.linear_depth.texture,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
@@ -516,6 +551,13 @@ impl winit::application::ApplicationHandler for App {
                     &[nrd::ffi::nrd::Denoiser::REFERENCE as u32],
                     &mut nrd_cmd_buf,
                     &mut snapshot,
+                );
+
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::ComputeStorageWrite),
+                    nbn::BarrierOp::Present,
                 );
 
                 device.end_command_buffer(**command_buffer).unwrap();
@@ -594,7 +636,7 @@ fn raster(state: &State, next_image: u32, current_frame: usize) {
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
                 prefix_sum_data: *state.prefix_sum_data,
-                swapchain: *state.images.nrd_input._image, //*state.swapchain_image_heap_indices[next_image as usize].0,
+                swapchain: *state.images.nrd_input, //*state.swapchain_image_heap_indices[next_image as usize].0,
                 visible_meshlets: *state.visible_meshlets,
                 dispatch: *state.dispatch,
             },
@@ -735,7 +777,7 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
                 prefix_sum_data: *state.prefix_sum_data,
-                swapchain: *state.images.nrd_input._image, //*state.swapchain_image_heap_indices[next_image as usize].0,
+                swapchain: *state.images.nrd_input, //*state.swapchain_image_heap_indices[next_image as usize].0,
                 visible_meshlets: *state.visible_meshlets,
                 dispatch: *state.dispatch,
             },
@@ -744,8 +786,8 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
         device.insert_pipeline_barriers(
             command_buffer,
             [(
-                image.into(),
-                Some(nbn::BarrierOp::Acquire),
+                (&state.images.nrd_input.image).into(),
+                None, //Some(nbn::BarrierOp::Acquire),
                 nbn::BarrierOp::ComputeStorageWrite,
             )],
             [],
@@ -762,13 +804,6 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
             extent.width.div_ceil(8),
             extent.height.div_ceil(8),
             1,
-        );
-
-        device.insert_image_pipeline_barrier(
-            command_buffer,
-            image,
-            Some(nbn::BarrierOp::ComputeStorageWrite),
-            nbn::BarrierOp::Present,
         );
     }
 }

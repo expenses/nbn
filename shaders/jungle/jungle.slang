@@ -7,6 +7,8 @@ import shared.constants;
 import shared.derivatives;
 import shared.barycentrics;
 import shared.culling;
+import shared.sampling;
+import shared.noise;
 
 [shader("compute")]
 [NumThreads(1, 1, 1)]
@@ -172,6 +174,8 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
+    var rng = SobolRng(thread, pc.uniforms.frame_index);
+
     let d = thread_to_clip(thread, pc.uniforms.extent);
     let origin = mul(pc.uniforms.view_inv, float4(0.0, 0.0, 0.0, 1.0)).xyz;
     let temp = mul(pc.uniforms.proj_inv, float4(d.x, d.y, 1.0, 1.0));
@@ -194,8 +198,10 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     query.Proceed();
 
     var color = float3(0);
+    var depth = 1.0/0.0;
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        depth = query.CommittedRayT();
         let instance = pc.instances[query.CommittedRayInstanceCustomIndex() + query.CommittedRayGeometryIndex()];
         let prim = query.CommittedPrimitiveIndex();
         let mat = query.CommittedObjectToWorld3x4();
@@ -234,7 +240,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
            instance.normals[indices.z]
         ).val);
 
-        let light_dir = normalize(float3(1,5,1));
+        let light_dir = SphericalDirectionalLightRayDirection(rng.rand2(), normalize(float3(1,5,1)), 0.1);
 
         if (instance.image != MAX_UINT_VALUE) {
             color = sample(instance.image, uv).rgb;
@@ -259,12 +265,15 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         );
         query.Proceed();
 
-        let lighting = max(dot(normal, light_dir), 0.0) * float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-        color *= (lighting * 0.75 + 0.25);
+        let lighting = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
+        color *= (lighting);
     }
 
     WTexture2D<float3> swapchain = storage_images[pc.swapchain];
-    swapchain.Store(thread, srgb_lin2encoded(color));
+    swapchain.Store(thread, color);
+
+    WTexture2D<float> depth_tex = storage_images[pc.uniforms.linear_depth];
+    depth_tex.Store(thread, depth);
 }
 
 groupshared uint[64] gs_global_meshlet_indices;
