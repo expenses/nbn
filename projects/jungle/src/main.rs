@@ -89,6 +89,7 @@ struct Resizables {
     nrd_input: NrdTexture,
     normal_roughness: NrdTexture,
     linear_depth: NrdTexture,
+    motion: NrdTexture,
     nrd_integration: nrd::Integration,
 }
 
@@ -99,8 +100,8 @@ impl Resizables {
         integration_desc.resourceHeight = height as u16;
 
         let denoiser_desc = nrd::ffi::nrd::DenoiserDesc {
-            identifier: nrd::ffi::nrd::Denoiser::REFERENCE as u32,
-            denoiser: nrd::ffi::nrd::Denoiser::REFERENCE,
+            identifier: nrd::ffi::nrd::Denoiser::REBLUR_DIFFUSE as _,
+            denoiser: nrd::ffi::nrd::Denoiser::REBLUR_DIFFUSE,
         };
 
         let mut nrd_integration = nrd::Integration::default();
@@ -136,7 +137,7 @@ impl Resizables {
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE
                         | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_DST,
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
@@ -146,11 +147,25 @@ impl Resizables {
                 nrd_device,
                 nbn::ImageDescriptor {
                     name: "normal_roughness",
-                    format: vk::Format::R16_SFLOAT,
+                    format: vk::Format::R8G8B8A8_UNORM,
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE
                         | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_DST,
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
+            motion: NrdTexture::new(
+                device,
+                nrd_device,
+                nbn::ImageDescriptor {
+                    name: "normal_roughness",
+                    format: vk::Format::R32G32_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
@@ -164,7 +179,7 @@ impl Resizables {
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE
                         | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_DST,
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
@@ -226,7 +241,9 @@ impl winit::application::ApplicationHandler for App {
 
         let swapchain = device.create_swapchain(
             &window,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT
+                | vk::ImageUsageFlags::STORAGE
+                | vk::ImageUsageFlags::SAMPLED,
             nbn::SurfaceSelectionCriteria {
                 force_8_bit: false,
                 desire_hdr: false,
@@ -501,10 +518,10 @@ impl winit::application::ApplicationHandler for App {
                 let ref_settings = nrd::ReferenceSettings {
                     maxAccumulatedFrameNum: 120,
                 };
-                state
-                    .images
-                    .nrd_integration
-                    .set_reference_settings(nrd::ffi::nrd::Denoiser::REFERENCE, &ref_settings);
+                state.images.nrd_integration.set_reblur_settings(
+                    nrd::ffi::nrd::Denoiser::REBLUR_DIFFUSE,
+                    &Default::default(),
+                );
 
                 let mut nrd_cmd_buf = nrd::CommandBuffer::create_vk(
                     &mut state.nrd_device,
@@ -519,36 +536,43 @@ impl winit::application::ApplicationHandler for App {
 
                 let mut snapshot = nrd::ResourceSnapshot::default();
                 snapshot.set_resource(
-                    nrd::ffi::nrd::ResourceType::IN_SIGNAL,
+                    nrd::ffi::nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST,
                     &state.images.nrd_input.texture,
-                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::IN_NORMAL_ROUGHNESS,
                     &state.images.normal_roughness.texture,
-                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
+                    nrd::ffi::nri::Layout::GENERAL,
+                    nrd::ffi::nri::StageBits::COMPUTE_SHADER,
+                );
+                snapshot.set_resource(
+                    nrd::ffi::nrd::ResourceType::IN_MV,
+                    &state.images.motion.texture,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::IN_VIEWZ,
                     &state.images.linear_depth.texture,
-                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
                 );
                 snapshot.set_resource(
-                    nrd::ffi::nrd::ResourceType::OUT_SIGNAL,
+                    nrd::ffi::nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,
                     nrd_image,
-                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE_STORAGE,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
                 );
 
                 state.images.nrd_integration.denoise(
-                    &[nrd::ffi::nrd::Denoiser::REFERENCE as u32],
+                    &[nrd::ffi::nrd::Denoiser::REBLUR_DIFFUSE as u32],
                     &mut nrd_cmd_buf,
                     &mut snapshot,
                 );
