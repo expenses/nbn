@@ -90,6 +90,8 @@ struct Resizables {
     depth: nbn::Image,
     vis: nbn::IndexedImage,
     radiance: NrdTexture,
+    // denoised: NrdTexture,
+    albedo: nbn::IndexedImage,
     normal_roughness: NrdTexture,
     linear_depth: NrdTexture,
     motion: NrdTexture,
@@ -144,6 +146,33 @@ impl Resizables {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
+            ),
+            // denoised: NrdTexture::new(
+            //     device,
+            //     nrd_device,
+            //     nbn::ImageDescriptor {
+            //         name: "denoised",
+            //         format: vk::Format::R16G16B16A16_SFLOAT,
+            //         extent: nbn::ImageExtent::D2 { width, height },
+            //         usage: vk::ImageUsageFlags::STORAGE
+            //             | vk::ImageUsageFlags::SAMPLED
+            //             | vk::ImageUsageFlags::TRANSFER_SRC,
+            //         aspect_mask: vk::ImageAspectFlags::COLOR,
+            //         mip_levels: 1,
+            //     },
+            // ),
+            albedo: device.register_owned_image(
+                device.create_image(nbn::ImageDescriptor {
+                    name: "albedo",
+                    format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::SAMPLED
+                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                }),
+                true,
             ),
             normal_roughness: NrdTexture::new(
                 device,
@@ -233,7 +262,7 @@ impl winit::application::ApplicationHandler for App {
                     device.physical_device.as_raw(),
                     device.device.handle().as_raw(),
                     &unique_queue_families,
-                    true,
+                    false,
                     3,
                     nbn::DEVICE_EXTENSIONS,
                     nrd::ffi::nri::VKBindingOffsets::default(),
@@ -449,6 +478,8 @@ impl winit::application::ApplicationHandler for App {
                     normal_roughness: *state.images.normal_roughness,
                     motion: *state.images.motion,
                     radiance: *state.images.radiance,
+                    denoised: *state.images.radiance,
+                    albedo: *state.images.albedo,
                 };
 
                 device.reset_command_buffer(command_buffer);
@@ -477,6 +508,9 @@ impl winit::application::ApplicationHandler for App {
                 cs.rectSize = [extent.width as _, extent.height as _];
                 cs.resourceSizePrev = [extent.width as _, extent.height as _];
                 cs.rectSizePrev = [extent.width as _, extent.height as _];
+                // required for any kind of temporal accum
+                cs.viewToClipMatrixPrev = state.prev_proj.to_cols_array();
+                cs.worldToViewMatrixPrev = state.prev_view.to_cols_array();
                 state.images.nrd_integration.set_common_settings(&cs);
 
                 state.images.nrd_integration.set_reblur_settings(
@@ -974,7 +1008,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     num_indices: indices.count as _,
                 });
 
-                let image_index = /*if let Some(info) =
+                let image_index = if let Some(info) =
                     material.pbr_metallic_roughness.base_color_texture.as_ref()
                 {
                     let texture = &gltf.textures[info.index];
@@ -1000,7 +1034,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                     images.push(image);
 
                     index
-                } else*/ {
+                } else {
                     u32::max_value()
                 };
 

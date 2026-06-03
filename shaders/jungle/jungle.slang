@@ -200,14 +200,14 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
 
     var color = float3(0);
     var view_z = 1.0/0.0;
-    var depth = 1.0/0.0;
+    var depth = 0.0;
     var normal = float3(0);
     uint material_id = 0;
+    var albedo = float3(0);
 
     var prev_thread_clip = thread_clip;
 
     if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-        depth = query.CommittedRayT();
         let instance_index = query.CommittedRayInstanceCustomIndex() + query.CommittedRayGeometryIndex();
         material_id = instance_index;
         let instance = pc.instances[instance_index];
@@ -253,7 +253,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
            instance.normals[indices.z]
         ).val);
 
-        let light_dir = SphericalDirectionalLightRayDirection(rng.rand2(), normalize(float3(2,1,2)), 0.1);
+        let light_dir = SphericalDirectionalLightRayDirection(rng.rand2(), normalize(float3(2,10,2)), 0.1);
 
         if (instance.image != MAX_UINT_VALUE) {
             color = sample(instance.image, uv).rgb;
@@ -278,8 +278,14 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         );
         query.Proceed();
 
+        albedo = color;
+
         let lighting = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-        color *= (lighting);
+        color = lighting;
+
+        if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+            depth = query.CommittedRayT();
+        }
     }
 
     let roughness = 1.0;
@@ -289,6 +295,9 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
 
     WTexture2D<float4> radiance = storage_images[pc.uniforms.radiance];
     radiance.Store(thread, packed);
+
+    WTexture2D<float3> albedo_tex = storage_images[pc.uniforms.albedo];
+    albedo_tex.Store(thread, albedo);
 
     WTexture2D<float> view_z_tex = storage_images[pc.uniforms.linear_depth];
     view_z_tex.Store(thread, view_z);
@@ -308,13 +317,15 @@ void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    Texture2D<float4> denoised = storage_images[pc.uniforms.radiance];
+    Texture2D<float4> denoised = storage_images[pc.uniforms.denoised];
 
-    let val = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz;
+    Texture2D<float3> albedo = storage_images[pc.uniforms.albedo];
+
+    let val = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz * albedo[thread];
 
     WTexture2D<float3> swapchain = storage_images[pc.swapchain];
 
-    swapchain.Store(thread,val);
+    swapchain.Store(thread,srgb_lin2encoded(val));
 }
 
 groupshared uint[64] gs_global_meshlet_indices;
