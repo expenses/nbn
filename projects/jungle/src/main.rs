@@ -103,7 +103,7 @@ struct State {
 
 struct Resizables {
     radiance: NrdTexture,
-    // denoised: NrdTexture,
+    denoised: NrdTexture,
     albedo: nbn::IndexedImage,
     normal_roughness: NrdTexture,
     view_z: NrdTexture,
@@ -139,19 +139,19 @@ impl Resizables {
                     mip_levels: 1,
                 },
             ),
-            // denoised: NrdTexture::new(
-            //     device,
-            //     nrd_device,
-            //     nbn::ImageDescriptor {
-            //         name: "denoised",
-            //         format: vk::Format::R16G16B16A16_SFLOAT,
-            //         extent: nbn::ImageExtent::D2 { width, height },
-            //         usage: vk::ImageUsageFlags::STORAGE
-            //             | vk::ImageUsageFlags::SAMPLED,
-            //         aspect_mask: vk::ImageAspectFlags::COLOR,
-            //         mip_levels: 1,
-            //     },
-            // ),
+            denoised: NrdTexture::new(
+                device,
+                nrd_device,
+                nbn::ImageDescriptor {
+                    name: "denoised",
+                    format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::SAMPLED,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
             albedo: device.register_owned_image(
                 device.create_image(nbn::ImageDescriptor {
                     name: "albedo",
@@ -445,7 +445,7 @@ impl winit::application::ApplicationHandler for App {
                     normal_roughness: *state.images.normal_roughness,
                     motion: *state.images.motion,
                     radiance: *state.images.radiance,
-                    denoised: *state.images.radiance,
+                    denoised: *state.images.denoised,
                     albedo: *state.images.albedo,
                     envmap: *state.envmap,
                     envmap_size: state.envmap_size,
@@ -484,6 +484,7 @@ impl winit::application::ApplicationHandler for App {
                 cs.splitScreen = 0.5;
                 cs.cameraJitter = [jx, jy];
                 cs.cameraJitterPrev = state.prev_jitter;
+                cs.splitScreen = 0.5;
                 state.images.nrd_integration.set_common_settings(&cs);
 
                 state.images.nrd_integration.set_reblur_settings(
@@ -531,7 +532,7 @@ impl winit::application::ApplicationHandler for App {
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST,
-                    &state.images.radiance.texture,
+                    &state.images.denoised.texture,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
