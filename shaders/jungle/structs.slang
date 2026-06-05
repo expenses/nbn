@@ -35,6 +35,7 @@ struct Uniforms {
     uint radiance;
     uint denoised;
     uint albedo;
+    uint validation;
 }
 
 struct PushConstants {

@@ -78,6 +78,7 @@ struct State {
 
 struct Resizables {
     radiance: NrdTexture,
+    validation: NrdTexture,
     // denoised: NrdTexture,
     albedo: nbn::IndexedImage,
     normal_roughness: NrdTexture,
@@ -108,6 +109,18 @@ impl Resizables {
                 nbn::ImageDescriptor {
                     name: "radiance",
                     format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                },
+            ),
+            validation: NrdTexture::new(
+                device,
+                nrd_device,
+                nbn::ImageDescriptor {
+                    name: "validation",
+                    format: vk::Format::R8G8B8A8_UNORM,
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -378,6 +391,7 @@ impl winit::application::ApplicationHandler for App {
                     radiance: *state.images.radiance,
                     denoised: *state.images.radiance,
                     albedo: *state.images.albedo,
+                    validation: *state.images.validation,
                 };
 
                 device.reset_command_buffer(command_buffer);
@@ -409,6 +423,7 @@ impl winit::application::ApplicationHandler for App {
                 // required for any kind of temporal accum
                 cs.viewToClipMatrixPrev = state.prev_proj.to_cols_array();
                 cs.worldToViewMatrixPrev = state.prev_view.to_cols_array();
+                cs.enableValidation = true;
                 state.images.nrd_integration.set_common_settings(&cs);
 
                 state.images.nrd_integration.set_reblur_settings(
@@ -461,14 +476,13 @@ impl winit::application::ApplicationHandler for App {
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
                 );
-                //                 snapshot.set_resource(
-                //                     nrd::ffi::nrd::ResourceType::OUT_VALIDATION,
-                // // nrd_image,
-                //                     &state.images.nrd_output.texture,
-                //                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
-                //                     nrd::ffi::nri::Layout::GENERAL,
-                //                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
-                //                 );
+                snapshot.set_resource(
+                    nrd::ffi::nrd::ResourceType::OUT_VALIDATION,
+                    &state.images.validation.texture,
+                    nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
+                    nrd::ffi::nri::Layout::GENERAL,
+                    nrd::ffi::nri::StageBits::COMPUTE_SHADER,
+                );
 
                 state.images.nrd_integration.denoise(
                     &[nrd::ffi::nrd::Denoiser::REBLUR_DIFFUSE as u32],

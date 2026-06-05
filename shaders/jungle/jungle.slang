@@ -166,7 +166,15 @@ void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
 
     Texture2D<float3> albedo = storage_images[pc.uniforms.albedo];
 
-    let val = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz * albedo[thread];
+    Texture2D<float4> validation_tex = storage_images[pc.uniforms.validation];
+
+    var val = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz * albedo[thread];
+
+    let validation = validation_tex[thread];
+
+    if (validation.a > 0.5) {
+        val = validation.xyz;
+    }
 
     WTexture2D<float3> swapchain = storage_images[pc.swapchain];
 
