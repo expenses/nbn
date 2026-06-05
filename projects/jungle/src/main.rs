@@ -71,11 +71,8 @@ struct State {
     frame_index: u32,
     images: Resizables,
     nrd_device: nrd::Device,
-    view: nbn::glam::Mat4,
     prev_view: nbn::glam::Mat4,
     prev_proj: nbn::glam::Mat4,
-    update_view: bool,
-    camera_pos: [f32; 3],
     uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
 }
 
@@ -112,9 +109,7 @@ impl Resizables {
                     name: "radiance",
                     format: vk::Format::R16G16B16A16_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
-                    usage: vk::ImageUsageFlags::STORAGE
-                        | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
@@ -127,8 +122,7 @@ impl Resizables {
             //         format: vk::Format::R16G16B16A16_SFLOAT,
             //         extent: nbn::ImageExtent::D2 { width, height },
             //         usage: vk::ImageUsageFlags::STORAGE
-            //             | vk::ImageUsageFlags::SAMPLED
-            //             | vk::ImageUsageFlags::TRANSFER_SRC,
+            //             | vk::ImageUsageFlags::SAMPLED,
             //         aspect_mask: vk::ImageAspectFlags::COLOR,
             //         mip_levels: 1,
             //     },
@@ -138,9 +132,7 @@ impl Resizables {
                     name: "albedo",
                     format: vk::Format::R16G16B16A16_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
-                    usage: vk::ImageUsageFlags::STORAGE
-                        | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 }),
@@ -153,9 +145,7 @@ impl Resizables {
                     name: "normal_roughness",
                     format: vk::Format::A2B10G10R10_UNORM_PACK32,
                     extent: nbn::ImageExtent::D2 { width, height },
-                    usage: vk::ImageUsageFlags::STORAGE
-                        | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
@@ -167,9 +157,7 @@ impl Resizables {
                     name: "motion",
                     format: vk::Format::R32G32_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
-                    usage: vk::ImageUsageFlags::STORAGE
-                        | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
@@ -181,9 +169,7 @@ impl Resizables {
                     name: "linear_depth",
                     format: vk::Format::R16_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
-                    usage: vk::ImageUsageFlags::STORAGE
-                        | vk::ImageUsageFlags::SAMPLED
-                        | vk::ImageUsageFlags::TRANSFER_SRC,
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     mip_levels: 1,
                 },
@@ -298,11 +284,8 @@ impl winit::application::ApplicationHandler for App {
             swapchain,
             _data: data,
             frame_index: 0,
-            view,
             prev_view: view,
             prev_proj: proj,
-            update_view: true,
-            camera_pos: [0.0; 3],
             freecam,
         })
     }
@@ -362,14 +345,6 @@ impl winit::application::ApplicationHandler for App {
                         .freecam
                         .update(extent.width, extent.height, 1.0 / 60.0, 2.0);
 
-                let frustum_x = (proj.row(3).truncate() + proj.row(0).truncate()).normalize();
-                let frustum_y = (proj.row(3).truncate() + proj.row(1).truncate()).normalize();
-
-                if state.update_view {
-                    state.view = view;
-                    state.camera_pos = state.freecam.camera_rig.final_transform.position.into();
-                }
-
                 let (frame, frame_index) = state.sync_resources.wait_for_frame(device);
 
                 let (next_image, _suboptimal) = device
@@ -391,13 +366,9 @@ impl winit::application::ApplicationHandler for App {
                     .unwrap()[0] = Uniforms {
                     camera: (proj * view).to_cols_array(),
                     prev_camera: (state.prev_proj * state.prev_view).to_cols_array(),
-                    num_instances: state._data.num_instances,
                     vis: 0,
                     extent: [extent.width, extent.height],
-                    camera_pos: state.camera_pos,
-                    near_plane: NEAR_PLANE,
-                    frustum: [frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z],
-                    view: state.view.to_cols_array(),
+                    view: view.to_cols_array(),
                     view_inv: view.inverse().to_cols_array(),
                     proj_inv: proj.inverse().to_cols_array(),
                     frame_index: state.frame_index,
@@ -561,9 +532,6 @@ impl winit::application::ApplicationHandler for App {
                 let pressed = element_state == ElementState::Pressed;
 
                 match code {
-                    KeyCode::KeyV if pressed => {
-                        state.update_view = !state.update_view;
-                    }
                     KeyCode::Escape if pressed => {
                         event_loop.exit();
                     }
@@ -603,10 +571,7 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 tlas: *state._data.tlas.tlas,
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
-                prefix_sum_data: 0,
                 swapchain: *state.swapchain_image_heap_indices[next_image as usize],
-                visible_meshlets: 0,
-                dispatch: 0,
             },
         );
 
@@ -678,9 +643,6 @@ fn load_gltf<P: AsRef<std::path::Path>>(
         &buffer_data,
     );
 
-    let meshlets =
-        read_meshlets_file(&device, staging_buffer, &path.with_extension("meshlets")).unwrap();
-
     let get_buffer_data = |accessor: &goth_gltf::Accessor| {
         let bv = &gltf.buffer_views[accessor.buffer_view.unwrap()];
         &buffer_data[bv.byte_offset + accessor.byte_offset..]
@@ -694,8 +656,6 @@ fn load_gltf<P: AsRef<std::path::Path>>(
 
     let mut instances = Vec::new();
     let mut images = Vec::new();
-
-    let mut num_indices = 0;
 
     let mut parent_mappings = vec![None; gltf.nodes.len()];
 
@@ -714,7 +674,6 @@ fn load_gltf<P: AsRef<std::path::Path>>(
         .filter_map(|(i, node)| node.mesh.map(|mesh_index| (i, node, mesh_index)))
         .for_each(|(i, node, mesh_index)| {
             let mesh = &gltf.meshes[mesh_index];
-            let mesh_meshlets = &meshlets.metadata[mesh_index];
 
             let (mut translation, scale, rotation) = match node.transform() {
                 goth_gltf::NodeTransform::Set {
@@ -744,16 +703,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
             let name = mesh.name.as_ref().unwrap();
             let model_offset = instances.len() as u32;
 
-            for (
-                primitive,
-                &[
-                    num_meshlets,
-                    vertices_offset,
-                    triangles_offset,
-                    meshlets_offset,
-                ],
-            ) in mesh.primitives.iter().zip(mesh_meshlets)
-            {
+            for primitive in mesh.primitives.iter() {
                 let get = |accessor_index: Option<usize>| {
                     let accessor = &gltf.accessors[accessor_index.unwrap()];
                     assert_eq!(accessor.component_type, goth_gltf::ComponentType::Float);
@@ -770,15 +720,6 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 let material = &gltf.materials[primitive.material.unwrap_or(0)];
 
                 let positions_accessor = &gltf.accessors[primitive.attributes.position.unwrap()];
-                let positions =
-                    &nbn::cast_slice::<_, [f32; 3]>(get_buffer_data(positions_accessor))
-                        [..positions_accessor.count];
-                let radius = positions
-                    .iter()
-                    .map(|&p| p[0] * p[0] + p[1] * p[1] + p[2] * p[2])
-                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                    .unwrap()
-                    .sqrt();
 
                 geos.push(nbn::AccelerationStructureTriangles {
                     index_type: if is_32_bit {
@@ -824,20 +765,12 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                 };
 
                 let instance = Instance {
-                    translation,
-                    scale,
-                    rotation,
                     indices: get_buffer_offset(indices),
                     positions: get(primitive.attributes.position),
                     uvs: get(primitive.attributes.texcoord_0),
                     normals: get(primitive.attributes.normal),
                     flags: is_32_bit as _,
                     image: image_index,
-                    radius,
-                    meshlets: *meshlets.buffer + meshlets_offset as u64,
-                    triangles: *meshlets.buffer + triangles_offset as u64,
-                    vertices: *meshlets.buffer + vertices_offset as u64,
-                    num_meshlets,
                 };
 
                 instances.push(instance);
@@ -973,7 +906,6 @@ fn load_gltf<P: AsRef<std::path::Path>>(
     LoadedData {
         _buffer: buffer,
         _images: images,
-        _meshlets: meshlets.buffer,
         instances: staging_buffer.create_buffer_from_slice(
             device,
             &format!("{} instances", path.display()),
@@ -983,10 +915,6 @@ fn load_gltf<P: AsRef<std::path::Path>>(
         tlas: device.create_tlas_from_instances(staging_buffer, "tlas", &tlas_instances),
         blases,
     }
-
-    // for [num_meshlets, vertices_offset, triangles_offset, meshlets_offset] in meshlets.metadata.iter().flat_map(|x| x) {
-    //     dbg!(num_meshlets, vertices_offset, triangles_offset, meshlets_offset);
-    // }
 }
 
 fn load_dds<P: AsRef<std::path::Path>>(
@@ -1048,7 +976,6 @@ fn load_dds<P: AsRef<std::path::Path>>(
 
 struct LoadedData {
     _buffer: nbn::Buffer,
-    _meshlets: nbn::Buffer,
     _images: Vec<nbn::IndexedImage>,
     instances: nbn::Buffer,
     num_instances: u32,
@@ -1056,6 +983,7 @@ struct LoadedData {
     blases: Vec<nbn::AccelerationStructure>,
 }
 
+/*
 struct Meshlets {
     buffer: nbn::Buffer,
     metadata: Vec<Vec<[u32; 4]>>,
@@ -1103,3 +1031,4 @@ fn read_meshlets_file<P: AsRef<std::path::Path>>(
         metadata: meshes,
     })
 }
+*/
