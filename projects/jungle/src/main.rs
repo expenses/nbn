@@ -289,7 +289,7 @@ impl winit::application::ApplicationHandler for App {
         let width = size.width;
         let height = size.height;
 
-        let freecam = nbn::freecam::FreeCam::new([0.01; 3].into(), NEAR_PLANE);
+        let freecam = nbn::freecam::FreeCam::new([564.5, 19.6, -811.8].into(), NEAR_PLANE);
         let (view, proj) = freecam.current(width, height);
 
         self.state = Some(State {
