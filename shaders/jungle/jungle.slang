@@ -138,6 +138,8 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
             }
         }
     } else {
+        let prev_clip = mul(pc.uniforms.prev_camera, float4(direction, 0.0));
+        prev_thread_clip = (prev_clip.xy / prev_clip.w);
         albedo = float4(sample_envmap_by_direction(pc.alias_table, sampled_images[pc.uniforms.envmap], pc.uniforms.envmap_size, direction).radiance, 0);
     }
 
@@ -152,7 +154,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         )
     );
     pc.albedo.Store(thread, albedo);
-    pc.view_z.Store(thread, view_z);
+    pc.view_z[thread] = view_z;
     pc.normal_roughness.Store(thread, NRD_FrontEnd_PackNormalAndRoughness(normal, roughness, material_id));
     pc.motion.Store(thread, (thread_clip - prev_thread_clip)*-0.5);
 }
@@ -169,12 +171,18 @@ void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     var val = albedo.rgb;
     if (albedo.a > 0.5) {
         val *= REBLUR_BackEnd_UnpackRadianceAndNormHitDist(pc.denoised[thread]).xyz;
-
-        let uv = (float2(thread)+0.5)/pc.uniforms.extent;
-
-        val = pc.accum_read.SampleLevel(uv+pc.motion[thread], 0).rgb * 0.9 + val * 0.1;
-        pc.accum_write.Store(thread, val);
     }
+
+    let depth = pc.view_z[thread];
+
+    let uv = (float2(thread)+0.5)/pc.uniforms.extent;
+    let prev_uv = uv + pc.motion[thread];
+
+    if (all(prev_uv >= 0) && all(prev_uv <= 1)) {
+        let prev = pc.accum_read.SampleLevel(prev_uv, 0);
+        val = lerp(val, prev.rgb, 0.9);
+    }
+    pc.accum_write.Store(thread, float4(val, depth));
 
     pc.swapchain.Store(thread,srgb_lin2encoded(val));
 }
