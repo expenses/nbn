@@ -198,7 +198,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     );
     query.Proceed();
 
-    var color = float3(0);
+    var radiance = float3(0);
     var view_z = 1.0/0.0;
     var depth = 0.0;
     var normal = float3(0);
@@ -256,9 +256,9 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         let light_dir = SphericalDirectionalLightRayDirection(rng.rand2(), normalize(float3(2,10,2)), 0.1);
 
         if (instance.image != MAX_UINT_VALUE) {
-            color = sample(instance.image, uv).rgb;
+            albedo = sample(instance.image, uv).rgb;
         } else {
-            color = float3(1);
+            albedo = float3(1);
         }
 
         let geom_normal = normalize(cross(b - a, c - a));
@@ -278,23 +278,21 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         );
         query.Proceed();
 
-        albedo = color;
-
-        let lighting = float(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT);
-        color = lighting;
+        radiance = max(dot(normal, light_dir), 0.0);
 
         if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
             depth = query.CommittedRayT();
+            radiance = 0.0;
         }
     }
 
     let roughness = 1.0;
 
     let normHitDist = REBLUR_FrontEnd_GetNormHitDist(depth, view_z, float3(3.0, 0.1, 20.0), roughness);
-    let packed = REBLUR_FrontEnd_PackRadianceAndNormHitDist(color, normHitDist, false);
+    let packed = REBLUR_FrontEnd_PackRadianceAndNormHitDist(radiance, normHitDist, false);
 
-    WTexture2D<float4> radiance = storage_images[pc.uniforms.radiance];
-    radiance.Store(thread, packed);
+    WTexture2D<float4> radiance_tex = storage_images[pc.uniforms.radiance];
+    radiance_tex.Store(thread, packed);
 
     WTexture2D<float3> albedo_tex = storage_images[pc.uniforms.albedo];
     albedo_tex.Store(thread, albedo);
