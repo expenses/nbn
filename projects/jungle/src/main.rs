@@ -104,6 +104,7 @@ struct State {
 struct Resizables {
     radiance: NrdTexture,
     // denoised: NrdTexture,
+    taa_accum: [(nbn::Image, nbn::ImageIndex, nbn::ImageIndex); 2],
     albedo: nbn::IndexedImage,
     normal_roughness: NrdTexture,
     view_z: NrdTexture,
@@ -163,6 +164,24 @@ impl Resizables {
                 }),
                 true,
             ),
+            taa_accum: std::array::from_fn(|i| {
+                let image = device.create_image(nbn::ImageDescriptor {
+                    name: &format!("accum_{}", i),
+                    format: vk::Format::R16G16B16A16_SFLOAT,
+                    extent: nbn::ImageExtent::D2 { width, height },
+                    usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_levels: 1,
+                });
+
+                let view = *image.view;
+
+                (
+                    image,
+                    device.register_image_with_sampler(view, &device.samplers.clamp, false),
+                    device.register_image(view, true),
+                )
+            }),
             normal_roughness: NrdTexture::new(
                 device,
                 nrd_device,
@@ -430,6 +449,10 @@ impl winit::application::ApplicationHandler for App {
 
                 let image = &state.swapchain.images[next_image as usize];
 
+                let (_, accum_read, _) = &state.images.taa_accum[state.frame_index as usize % 2];
+                let (_, _, accum_write) =
+                    &state.images.taa_accum[(state.frame_index as usize + 1) % 2];
+
                 state.uniform_buffers[frame_index]
                     .try_as_slice_mut::<Uniforms>()
                     .unwrap()[0] = Uniforms {
@@ -450,6 +473,8 @@ impl winit::application::ApplicationHandler for App {
                     envmap: *state.envmap,
                     envmap_size: state.envmap_size,
                     swapchain: *state.swapchain_image_heap_indices[next_image as usize],
+                    accum_read: **accum_read,
+                    accum_write: **accum_write,
                 };
 
                 device.reset_command_buffer(command_buffer);
