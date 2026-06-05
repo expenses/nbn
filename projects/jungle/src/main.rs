@@ -106,7 +106,7 @@ struct Resizables {
     // denoised: NrdTexture,
     albedo: nbn::IndexedImage,
     normal_roughness: NrdTexture,
-    linear_depth: NrdTexture,
+    view_z: NrdTexture,
     motion: NrdTexture,
     nrd_integration: nrd::Integration,
 }
@@ -187,11 +187,11 @@ impl Resizables {
                     mip_levels: 1,
                 },
             ),
-            linear_depth: NrdTexture::new(
+            view_z: NrdTexture::new(
                 device,
                 nrd_device,
                 nbn::ImageDescriptor {
-                    name: "linear_depth",
+                    name: "view_z",
                     format: vk::Format::R16_SFLOAT,
                     extent: nbn::ImageExtent::D2 { width, height },
                     usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
@@ -441,7 +441,7 @@ impl winit::application::ApplicationHandler for App {
                     view_inv: view.inverse().to_cols_array(),
                     proj_inv: jittered_proj.inverse().to_cols_array(),
                     frame_index: state.frame_index,
-                    linear_depth: *state.images.linear_depth,
+                    view_z: *state.images.view_z,
                     normal_roughness: *state.images.normal_roughness,
                     motion: *state.images.motion,
                     radiance: *state.images.radiance,
@@ -449,6 +449,7 @@ impl winit::application::ApplicationHandler for App {
                     albedo: *state.images.albedo,
                     envmap: *state.envmap,
                     envmap_size: state.envmap_size,
+                    swapchain: *state.swapchain_image_heap_indices[next_image as usize],
                 };
 
                 device.reset_command_buffer(command_buffer);
@@ -523,7 +524,7 @@ impl winit::application::ApplicationHandler for App {
                 );
                 snapshot.set_resource(
                     nrd::ffi::nrd::ResourceType::IN_VIEWZ,
-                    &state.images.linear_depth.texture,
+                    &state.images.view_z.texture,
                     nrd::ffi::nri::AccessBits::SHADER_RESOURCE,
                     nrd::ffi::nri::Layout::GENERAL,
                     nrd::ffi::nri::StageBits::COMPUTE_SHADER,
@@ -646,7 +647,6 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 tlas: *state._data.tlas.tlas,
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
-                swapchain: *state.swapchain_image_heap_indices[next_image as usize],
                 alias_table: *state.alias_table,
             },
         );
@@ -665,7 +665,7 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                     nbn::BarrierOp::ComputeStorageWrite,
                 ),
                 (
-                    (&state.images.linear_depth.image).into(),
+                    (&state.images.view_z.image).into(),
                     None,
                     nbn::BarrierOp::ComputeStorageWrite,
                 ),

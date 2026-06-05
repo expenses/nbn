@@ -143,23 +143,18 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
 
     let roughness = 1.0;
 
-    let normHitDist = REBLUR_FrontEnd_GetNormHitDist(depth, view_z, float3(3.0, 0.1, 20.0), roughness);
-    let packed = REBLUR_FrontEnd_PackRadianceAndNormHitDist(radiance, normHitDist, false);
-
-    WTexture2D<float4> radiance_tex = storage_images[pc.uniforms.radiance];
-    radiance_tex.Store(thread, packed);
-
-    WTexture2D<float4> albedo_tex = storage_images[pc.uniforms.albedo];
-    albedo_tex.Store(thread, albedo);
-
-    WTexture2D<float> view_z_tex = storage_images[pc.uniforms.linear_depth];
-    view_z_tex.Store(thread, view_z);
-
-    WTexture2D<float4> normal_roughness_tex = storage_images[pc.uniforms.normal_roughness];
-    normal_roughness_tex.Store(thread, NRD_FrontEnd_PackNormalAndRoughness(normal, roughness, material_id));
-
-    WTexture2D<float2> motion_tex = storage_images[pc.uniforms.motion];
-    motion_tex.Store(thread, (thread_clip - prev_thread_clip)*-0.5);
+    pc.radiance.Store(
+        thread,
+        REBLUR_FrontEnd_PackRadianceAndNormHitDist(
+            radiance,
+            REBLUR_FrontEnd_GetNormHitDist(depth, view_z, float3(3.0, 0.1, 20.0), roughness),
+            false
+        )
+    );
+    pc.albedo.Store(thread, albedo);
+    pc.view_z.Store(thread, view_z);
+    pc.normal_roughness.Store(thread, NRD_FrontEnd_PackNormalAndRoughness(normal, roughness, material_id));
+    pc.motion.Store(thread, (thread_clip - prev_thread_clip)*-0.5);
 }
 
 [shader("compute")]
@@ -169,18 +164,12 @@ void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    Texture2D<float4> denoised = storage_images[pc.uniforms.denoised];
-
-    Texture2D<float4> albedo_tex = storage_images[pc.uniforms.albedo];
-
-    let albedo = albedo_tex[thread];
+    let albedo = pc.albedo[thread];
 
     var val = albedo.rgb;
     if (albedo.a > 0.5) {
-        val *= REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz;
+        val *= REBLUR_BackEnd_UnpackRadianceAndNormHitDist(pc.denoised[thread]).xyz;
     }
 
-    WTexture2D<float3> swapchain = storage_images[pc.swapchain];
-
-    swapchain.Store(thread,srgb_lin2encoded(val));
+    pc.swapchain.Store(thread,srgb_lin2encoded(val));
 }
