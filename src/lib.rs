@@ -211,7 +211,7 @@ pub const DEVICE_EXTENSIONS: &'static [*const i8] = &[
     // Machine learning
     ash::khr::cooperative_matrix::NAME.as_ptr(),
     ash::ext::shader_atomic_float::NAME.as_ptr(),
-    c"VK_KHR_compute_shader_derivatives".as_ptr()
+    c"VK_KHR_compute_shader_derivatives".as_ptr(),
 ];
 
 pub struct Device {
