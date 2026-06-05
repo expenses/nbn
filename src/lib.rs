@@ -1905,6 +1905,32 @@ impl Device {
                     staging_buffer,
                 )
             }
+            AccelerationStructureData::Aabbs {
+                buffer_address,
+                count,
+            } => {
+                let geometry = vk::AccelerationStructureGeometryKHR::default()
+                    .geometry_type(vk::GeometryTypeKHR::AABBS)
+                    .geometry(vk::AccelerationStructureGeometryDataKHR {
+                        aabbs: vk::AccelerationStructureGeometryAabbsDataKHR::default()
+                            .data(vk::DeviceOrHostAddressConstKHR {
+                                device_address: buffer_address,
+                            })
+                            .stride(std::mem::size_of::<vk::AabbPositionsKHR>() as _),
+                    });
+                self.create_acceleration_structure_detailed(
+                    name,
+                    vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+                    vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+                    &[geometry],
+                    &[count],
+                    &[
+                        vk::AccelerationStructureBuildRangeInfoKHR::default()
+                            .primitive_count(count),
+                    ],
+                    staging_buffer,
+                )
+            }
             AccelerationStructureData::Instances {
                 buffer_address,
                 count,
@@ -2634,6 +2660,7 @@ pub struct AccelerationStructureTriangles {
 pub enum AccelerationStructureData<'a> {
     Instances { buffer_address: u64, count: u32 },
     Triangles(&'a [AccelerationStructureTriangles]),
+    Aabbs { buffer_address: u64, count: u32 },
 }
 
 pub struct AccelerationStructure {
