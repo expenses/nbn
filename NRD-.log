@@ -1,0 +1,1775 @@
+Recreating with resource size = 800 x 600
+::P(0)
+	format=30 downsampleFactor=1
+::P(1)
+	format=40 downsampleFactor=1
+::P(2)
+	format=15 downsampleFactor=1
+::P(3)
+	format=27 downsampleFactor=1
+::P(4)
+	format=17 downsampleFactor=1
+::P(5)
+	format=17 downsampleFactor=1
+::P(6)
+	format=17 downsampleFactor=1
+::T(0)
+	format=0 downsampleFactor=1
+::T(1)
+	format=2 downsampleFactor=1
+::T(2)
+	format=27 downsampleFactor=1
+::T(3)
+	format=17 downsampleFactor=1
+::T(4)
+	format=0 downsampleFactor=16
+13.8 Mb (permanent), 7.1 Mb (transient)
+
+Frame 0 ==============================================================================
+
+Destroyed 0 cached descriptors (queued frame = 0, totalNum = 0)
+Added 1 cached descriptors (queued frame = 0, totalNum = 1)
+
+! Pipeline #12 : Clear (f)
+	T(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 2)
+
+  Pipeline #12 : Clear (f)
+	OUT_DIFF_RADIANCE_HITDIST 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 3)
+
+  Pipeline #12 : Clear (f)
+	T(2) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 4)
+
+  Pipeline #12 : Clear (f)
+	T(0) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 5)
+
+  Pipeline #12 : Clear (f)
+	T(3) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #13 : Clear (ui)
+	T(1) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 7)
+
+  Pipeline #12 : Clear (f)
+	P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 8)
+
+  Pipeline #12 : Clear (f)
+	P(0) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 9)
+
+  Pipeline #12 : Clear (f)
+	P(1) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 10)
+
+  Pipeline #12 : Clear (f)
+	P(3) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 11)
+
+  Pipeline #13 : Clear (ui)
+	P(2) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 12)
+
+  Pipeline #12 : Clear (f)
+	IN_MV 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 13)
+
+  Pipeline #12 : Clear (f)
+	P(6) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 14)
+
+  Pipeline #12 : Clear (f)
+	P(5) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 15)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 3 cached descriptors (queued frame = 0, totalNum = 18)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 6 cached descriptors (queued frame = 0, totalNum = 24)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 3 cached descriptors (queued frame = 0, totalNum = 27)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 29)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 1 ==============================================================================
+
+Destroyed 0 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 2 ==============================================================================
+
+Destroyed 0 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 3 ==============================================================================
+
+Destroyed 29 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 4 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 5 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 6 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 7 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 8 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 9 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 10 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 11 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 12 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 13 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 14 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 15 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 16 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 17 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 18 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 19 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 20 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 21 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 22 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 23 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 24 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 25 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 26 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 27 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 28 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 29 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 30 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 31 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 32 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 33 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 34 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 35 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 36 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 37 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 1, totalNum = 0)
+Added 2 cached descriptors (queued frame = 1, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 1, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 1, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 1, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 1, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 1, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 38 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 2, totalNum = 0)
+Added 2 cached descriptors (queued frame = 2, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 2, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 2, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 2, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 2, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 2, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Frame 39 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(5) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(6) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            Frame 96 ==============================================================================
+
+Destroyed 28 cached descriptors (queued frame = 0, totalNum = 0)
+Added 2 cached descriptors (queued frame = 0, totalNum = 2)
+
+! Pipeline #0 : REBLUR_Diffuse - Classify tiles
+	IN_VIEWZ T(4) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 6)
+
+  Pipeline #3 : REBLUR_Diffuse - Pre-pass
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Added 10 cached descriptors (queued frame = 0, totalNum = 16)
+
+  Pipeline #4 : REBLUR_Diffuse - Temporal accumulation
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ IN_MV P(0) P(1) P(2) IN_VIEWZ IN_VIEWZ OUT_DIFF_RADIANCE_HITDIST P(3) P(4) T(0) T(2) T(3) T(1) 
+
+Added 4 cached descriptors (queued frame = 0, totalNum = 20)
+
+  Pipeline #5 : REBLUR_Diffuse - History fix
+	T(4) IN_NORMAL_ROUGHNESS T(0) IN_VIEWZ T(2) T(3) OUT_DIFF_RADIANCE_HITDIST P(4) 
+
+Added 1 cached descriptors (queued frame = 0, totalNum = 21)
+
+  Pipeline #6 : REBLUR_Diffuse - Blur
+	T(4) IN_NORMAL_ROUGHNESS IN_VIEWZ T(0) OUT_DIFF_RADIANCE_HITDIST P(0) T(2) 
+
+Added 2 cached descriptors (queued frame = 0, totalNum = 23)
+
+  Pipeline #8 : REBLUR_Diffuse - Post-blur
+	T(4) IN_NORMAL_ROUGHNESS T(0) P(0) T(2) P(1) P(3) 
+
+Added 5 cached descriptors (queued frame = 0, totalNum = 28)
+
+  Pipeline #9 : REBLUR_Diffuse - Temporal stabilization
+	T(4) IN_NORMAL_ROUGHNESS P(0) T(0) T(1) P(3) P(6) IN_MV P(2) OUT_DIFF_RADIANCE_HITDIST P(5) 
+
+  Pipeline #10 : REBLUR_Diffuse - Split screen
+	IN_VIEWZ IN_SPEC_HITDIST OUT_DIFF_RADIANCE_HITDIST 
+
+Destroy

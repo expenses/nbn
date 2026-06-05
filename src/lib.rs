@@ -26,6 +26,7 @@ pub mod image_loading;
 pub mod descriptors;
 mod hot_reloading;
 mod surface;
+pub mod taa;
 mod util;
 
 pub use descriptors::ImageIndex;

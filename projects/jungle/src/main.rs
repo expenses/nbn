@@ -75,6 +75,7 @@ struct State {
     nrd_device: nrd::Device,
     prev_view: nbn::glam::Mat4,
     prev_proj: nbn::glam::Mat4,
+    prev_jitter: [f32; 2],
     uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
     envmap: nbn::IndexedImage,
     envmap_size: [u32; 2],
@@ -324,6 +325,7 @@ impl winit::application::ApplicationHandler for App {
             frame_index: 0,
             prev_view: view,
             prev_proj: proj,
+            prev_jitter: [0.0; 2],
             freecam,
             envmap,
             envmap_size,
@@ -385,6 +387,13 @@ impl winit::application::ApplicationHandler for App {
                     state
                         .freecam
                         .update(extent.width, extent.height, 1.0 / 60.0, 2.0);
+                let [jx, jy] = nbn::taa::jitter(state.frame_index);
+                let jitter_translation = nbn::glam::Mat4::from_translation(nbn::glam::Vec3::new(
+                    jx * 2.0 / extent.width as f32,
+                    jy * 2.0 / extent.height as f32,
+                    0.0,
+                ));
+                let jittered_proj = jitter_translation * proj;
 
                 let (frame, frame_index) = state.sync_resources.wait_for_frame(device);
 
@@ -405,13 +414,13 @@ impl winit::application::ApplicationHandler for App {
                 state.uniform_buffers[frame_index]
                     .try_as_slice_mut::<Uniforms>()
                     .unwrap()[0] = Uniforms {
-                    camera: (proj * view).to_cols_array(),
+                    camera: (jittered_proj * view).to_cols_array(),
                     prev_camera: (state.prev_proj * state.prev_view).to_cols_array(),
                     vis: 0,
                     extent: [extent.width, extent.height],
                     view: view.to_cols_array(),
                     view_inv: view.inverse().to_cols_array(),
-                    proj_inv: proj.inverse().to_cols_array(),
+                    proj_inv: jittered_proj.inverse().to_cols_array(),
                     frame_index: state.frame_index,
                     linear_depth: *state.images.linear_depth,
                     normal_roughness: *state.images.normal_roughness,
@@ -452,6 +461,9 @@ impl winit::application::ApplicationHandler for App {
                 // required for any kind of temporal accum
                 cs.viewToClipMatrixPrev = state.prev_proj.to_cols_array();
                 cs.worldToViewMatrixPrev = state.prev_view.to_cols_array();
+                cs.splitScreen = 0.5;
+                cs.cameraJitter = [jx, jy];
+                cs.cameraJitterPrev = state.prev_jitter;
                 state.images.nrd_integration.set_common_settings(&cs);
 
                 state.images.nrd_integration.set_reblur_settings(
@@ -562,6 +574,7 @@ impl winit::application::ApplicationHandler for App {
                 state.frame_index += 1;
                 state.prev_view = view;
                 state.prev_proj = proj;
+                state.prev_jitter = [jx, jy];
             },
             winit::event::WindowEvent::KeyboardInput {
                 event:
@@ -666,7 +679,8 @@ fn load_gltf<P: AsRef<std::path::Path>>(
     staging_buffer: &mut nbn::StagingBuffer,
     path: P,
 ) -> LoadedData {
-    let mut npz = ndarray_npy::NpzReader::new(std::fs::File::open("out.npz").unwrap()).expect("Missing out.npz");
+    let mut npz = ndarray_npy::NpzReader::new(std::fs::File::open("out.npz").unwrap())
+        .expect("Missing out.npz");
 
     let path = path.as_ref();
 
