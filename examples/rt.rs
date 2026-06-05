@@ -52,14 +52,14 @@ impl winit::application::ApplicationHandler for App {
 
         let accel = device.create_acceleration_structure(
             "triangles",
-            nbn::AccelerationStructureData::Triangles {
+            nbn::AccelerationStructureData::Triangles(&[nbn::AccelerationStructureTriangles {
                 index_type: vk::IndexType::UINT16,
                 num_vertices: 3,
                 indices_buffer_address: *data_buffer + 3 * 4 * 3,
                 vertices_buffer_address: *data_buffer,
                 opaque: true,
                 num_indices: 3,
-            },
+            }]),
             &mut staging_buffer,
         );
 
