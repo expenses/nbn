@@ -580,22 +580,22 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
             [
                 (
                     (&state.images.radiance.image).into(),
-                    None, //Some(nbn::BarrierOp::Acquire),
+                    None,
                     nbn::BarrierOp::ComputeStorageWrite,
                 ),
                 (
                     (&state.images.normal_roughness.image).into(),
-                    None, //Some(nbn::BarrierOp::Acquire),
+                    None,
                     nbn::BarrierOp::ComputeStorageWrite,
                 ),
                 (
                     (&state.images.linear_depth.image).into(),
-                    None, //Some(nbn::BarrierOp::Acquire),
+                    None,
                     nbn::BarrierOp::ComputeStorageWrite,
                 ),
                 (
                     (&state.images.motion.image).into(),
-                    None, //Some(nbn::BarrierOp::Acquire),
+                    None,
                     nbn::BarrierOp::ComputeStorageWrite,
                 ),
             ],
@@ -875,13 +875,6 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         }
                         .to_vk(),
                     );
-                    // instances.push(Instance {
-                    //     translation,
-                    //     scale,
-                    //     rotation,
-                    //     ..instance
-                    // });
-                    // num_indices += indices.count;
                 }
             } else {
                 if !is_instanced {
@@ -895,11 +888,8 @@ fn load_gltf<P: AsRef<std::path::Path>>(
                         .to_vk(),
                     );
                 }
-                //instances.push(instance);
-                // num_indices += indices.count;
             }
 
-            //dbg!(num_indices);
             blases.push(acceleration_structure);
         });
 
