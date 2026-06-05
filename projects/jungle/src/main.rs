@@ -666,7 +666,7 @@ fn load_gltf<P: AsRef<std::path::Path>>(
     staging_buffer: &mut nbn::StagingBuffer,
     path: P,
 ) -> LoadedData {
-    let mut npz = ndarray_npy::NpzReader::new(std::fs::File::open("out.npz").unwrap()).unwrap();
+    let mut npz = ndarray_npy::NpzReader::new(std::fs::File::open("out.npz").unwrap()).expect("Missing out.npz");
 
     let path = path.as_ref();
 
