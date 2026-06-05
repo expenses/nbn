@@ -1,6 +1,7 @@
 import shared.prefix_sum;
 import shared.util;
 import shared.structs;
+import shared.importance_sampling;
 
 struct Instance {
     float3* positions;
@@ -35,11 +36,14 @@ struct Uniforms {
     uint radiance;
     uint denoised;
     uint albedo;
+    uint envmap;
+    uint2 envmap_size;
 }
 
 struct PushConstants {
     Uniforms* uniforms;
     Instance* instances;
+    Alias* alias_table;
     uint swapchain;
     uint64_t tlas;
 }

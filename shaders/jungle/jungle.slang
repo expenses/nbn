@@ -9,6 +9,7 @@ import shared.barycentrics;
 import shared.culling;
 import shared.sampling;
 import shared.noise;
+import shared.importance_sampling;
 #include "NRD/Shaders/NRD.hlsli"
 
 float4 sample(uint image_index, WithDerivatives<float2> uv) {
@@ -51,7 +52,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     var depth = 0.0;
     var normal = float3(0);
     uint material_id = 0;
-    var albedo = float3(0);
+    var albedo = float4(0);
 
     var prev_thread_clip = thread_clip;
 
@@ -101,37 +102,43 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
            instance.normals[indices.z]
         ).val);
 
-        let light_dir = SphericalDirectionalLightRayDirection(rng.rand2(), normalize(float3(2,10,2)), 0.1);
-
         if (instance.image != MAX_UINT_VALUE) {
-            albedo = sample(instance.image, uv).rgb;
+            albedo = float4(sample(instance.image, uv).rgb, 1);
         } else {
-            albedo = float3(1);
+            albedo = float4(1);
         }
+
+        let envmap_sample = sample_envmap_by_rand(pc.alias_table, sampled_images[pc.uniforms.envmap], pc.uniforms.envmap_size, rng.rand2());
 
         let geom_normal = normalize(cross(b - a, c - a));
 
         RayDesc desc;
-        desc.Direction = light_dir;
+        desc.Direction = envmap_sample.direction;
         desc.Origin = offset_ray(position.val, geom_normal);
         desc.TMax = 10000.0;
         desc.TMin = 0.0;
 
-        var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
-        query.TraceRayInline(
-            RaytracingAccelerationStructure(pc.tlas),
-            RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-            0xff,
-            desc
-        );
-        query.Proceed();
+        let n_dot_l = dot(normal, desc.Direction);
 
-        radiance = max(dot(normal, light_dir), 0.0);
+        if (n_dot_l > 0) {
+            var query = RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+            query.TraceRayInline(
+                RaytracingAccelerationStructure(pc.tlas),
+                RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+                0xff,
+                desc
+            );
+            query.Proceed();
 
-        if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-            depth = query.CommittedRayT();
-            radiance = 0.0;
+
+            if (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+                depth = query.CommittedRayT();
+            } else {
+                radiance = (envmap_sample.radiance / envmap_sample.pdf) * n_dot_l;
+            }
         }
+    } else {
+        albedo = float4(sample_envmap_by_direction(pc.alias_table, sampled_images[pc.uniforms.envmap], pc.uniforms.envmap_size, direction).radiance, 0);
     }
 
     let roughness = 1.0;
@@ -142,7 +149,7 @@ void raytrace(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     WTexture2D<float4> radiance_tex = storage_images[pc.uniforms.radiance];
     radiance_tex.Store(thread, packed);
 
-    WTexture2D<float3> albedo_tex = storage_images[pc.uniforms.albedo];
+    WTexture2D<float4> albedo_tex = storage_images[pc.uniforms.albedo];
     albedo_tex.Store(thread, albedo);
 
     WTexture2D<float> view_z_tex = storage_images[pc.uniforms.linear_depth];
@@ -164,9 +171,14 @@ void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
 
     Texture2D<float4> denoised = storage_images[pc.uniforms.denoised];
 
-    Texture2D<float3> albedo = storage_images[pc.uniforms.albedo];
+    Texture2D<float4> albedo_tex = storage_images[pc.uniforms.albedo];
 
-    let val = REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz * albedo[thread];
+    let albedo = albedo_tex[thread];
+
+    var val = albedo.rgb;
+    if (albedo.a > 0.5) {
+        val *= REBLUR_BackEnd_UnpackRadianceAndNormHitDist(denoised[thread]).xyz;
+    }
 
     WTexture2D<float3> swapchain = storage_images[pc.swapchain];
 

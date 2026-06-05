@@ -2413,8 +2413,10 @@ dependencies = [
 name = "jungle"
 version = "0.1.0"
 dependencies = [
+ "alias-table",
  "ddsfile 0.6.0",
  "goth-gltf 0.3.0",
+ "image 0.25.10",
  "nbn",
  "ndarray",
  "ndarray-npy",

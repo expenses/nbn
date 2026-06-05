@@ -5,13 +5,15 @@ use nbn::winit::{self, event::ElementState, keyboard::KeyCode};
 slang_struct::slang_include!("shaders/jungle/structs.slang");
 
 fn main() {
-    let filename = std::env::args().nth(1).unwrap();
+    let filepath = std::env::args().nth(1).unwrap();
+    let envmap = std::env::args().nth(2).unwrap();
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     event_loop
         .run_app(&mut App {
             state: None,
-            filepath: filename,
+            filepath,
+            envmap,
         })
         .unwrap();
 }
@@ -74,6 +76,9 @@ struct State {
     prev_view: nbn::glam::Mat4,
     prev_proj: nbn::glam::Mat4,
     uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
+    envmap: nbn::IndexedImage,
+    envmap_size: [u32; 2],
+    alias_table: nbn::Buffer,
 }
 
 struct Resizables {
@@ -181,6 +186,7 @@ impl Resizables {
 struct App {
     state: Option<State>,
     filepath: String,
+    envmap: String,
 }
 
 impl winit::application::ApplicationHandler for App {
@@ -189,6 +195,22 @@ impl winit::application::ApplicationHandler for App {
             .create_window(winit::window::WindowAttributes::default().with_resizable(true))
             .unwrap();
         let device = nbn::Device::new(Some(&window));
+
+        let envmap = image::open(&self.envmap).unwrap().to_rgba32f();
+        let envmap_size = dbg!([envmap.width(), envmap.height()]);
+
+        let alias_table =
+            alias_table::construct(envmap.rows().enumerate().flat_map(|(row, pixels)| {
+                use std::f32::consts::PI;
+
+                let height = envmap.height() as usize;
+                let theta = PI * (row as f32 + 0.5) / height as f32;
+                let sin_theta = theta.sin();
+                pixels.map(move |p| {
+                    use image::Pixel;
+                    (p.to_luma()[0] * sin_theta, sin_theta * 2.0 * PI * PI)
+                })
+            }));
 
         let mut nrd_device = {
             let mut unique_queue_families = Vec::new();
@@ -241,6 +263,22 @@ impl winit::application::ApplicationHandler for App {
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 64 * 1024 * 1024, nbn::QueueType::Compute);
 
+        let alias_table =
+            staging_buffer.create_buffer_from_slice(&device, "alias_table", &alias_table);
+
+        let envmap = staging_buffer.create_sampled_image(
+            &device,
+            nbn::SampledImageDescriptor {
+                name: "envmap",
+                format: vk::Format::R32G32B32A32_SFLOAT,
+                extent: [envmap.width(), envmap.height()].into(),
+            },
+            nbn::cast_slice(&*envmap),
+            nbn::QueueType::Graphics,
+            nbn::ImageLods::Offsets(&[0]),
+        );
+        let envmap = device.register_owned_image(envmap, false);
+
         let data = load_gltf(&device, &mut staging_buffer, &self.filepath);
 
         staging_buffer.finish(&device);
@@ -287,6 +325,9 @@ impl winit::application::ApplicationHandler for App {
             prev_view: view,
             prev_proj: proj,
             freecam,
+            envmap,
+            envmap_size,
+            alias_table,
         })
     }
 
@@ -378,6 +419,8 @@ impl winit::application::ApplicationHandler for App {
                     radiance: *state.images.radiance,
                     denoised: *state.images.radiance,
                     albedo: *state.images.albedo,
+                    envmap: *state.envmap,
+                    envmap_size: state.envmap_size,
                 };
 
                 device.reset_command_buffer(command_buffer);
@@ -572,6 +615,7 @@ fn raytrace(state: &State, next_image: u32, current_frame: usize) {
                 uniforms: *state.uniform_buffers[current_frame],
                 instances: *state._data.instances,
                 swapchain: *state.swapchain_image_heap_indices[next_image as usize],
+                alias_table: *state.alias_table,
             },
         );
 
