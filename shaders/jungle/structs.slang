@@ -74,7 +74,7 @@ struct PushConstants {
         }
     }
 
-    property WTexture2D<float3> view_z {
+    property RWTexture2D<float> view_z {
         get {
              return storage_images[uniforms.view_z];
         }
@@ -98,7 +98,7 @@ struct PushConstants {
         }
     }
 
-    property WTexture2D<float3> accum_write {
+    property WTexture2D<float4> accum_write {
         get {
              return storage_images[uniforms.accum_write];
         }
