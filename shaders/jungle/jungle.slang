@@ -169,6 +169,11 @@ void post_denoise(uint2 thread: SV_DispatchThreadID, uniform PushConstants pc) {
     var val = albedo.rgb;
     if (albedo.a > 0.5) {
         val *= REBLUR_BackEnd_UnpackRadianceAndNormHitDist(pc.denoised[thread]).xyz;
+
+        let uv = (float2(thread)+0.5)/pc.uniforms.extent;
+
+        val = pc.accum_read.SampleLevel(uv+pc.motion[thread], 0).rgb * 0.9 + val * 0.1;
+        pc.accum_write.Store(thread, val);
     }
 
     pc.swapchain.Store(thread,srgb_lin2encoded(val));

@@ -40,6 +40,8 @@ struct Uniforms {
     uint swapchain;
     uint envmap;
     uint2 envmap_size;
+    uint accum_read;
+    uint accum_write;
 }
 
 struct PushConstants {
@@ -84,9 +86,21 @@ struct PushConstants {
         }
     }
 
-    property WTexture2D<float2> motion {
+    property RWTexture2D<float2> motion {
         get {
              return storage_images[uniforms.motion];
+        }
+    }
+
+    property Sampler2D accum_read {
+        get {
+             return sampled_images[uniforms.accum_read];
+        }
+    }
+
+    property WTexture2D<float3> accum_write {
+        get {
+             return storage_images[uniforms.accum_write];
         }
     }
 }
