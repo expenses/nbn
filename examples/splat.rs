@@ -18,9 +18,6 @@ struct State {
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
     pipeline: nbn::Pipeline,
     shader: nbn::ReloadableShader,
-    alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer,
-    _data_buffer: nbn::Buffer,
-    _instances_buffer: nbn::Buffer,
     tlas: nbn::AccelerationStructure,
     _accel: nbn::AccelerationStructure,
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
@@ -105,13 +102,9 @@ impl winit::application::ApplicationHandler for App {
             name: "aabbs",
             data: &aabbs,
         });
-        let colours = device.create_buffer_with_data(nbn::BufferInitDescriptor {
-            name: "colours",
-            data: &colours,
-        });
 
         let accel = device.create_acceleration_structure(
-            "splats",
+            "blas",
             nbn::AccelerationStructureData::Aabbs {
                 buffer_address: *aabbs,
                 count: aabbs_count,
@@ -158,6 +151,12 @@ impl winit::application::ApplicationHandler for App {
             &mut staging_buffer,
         );
 
+        
+        let colours = staging_buffer.create_buffer_from_slice(&device,
+            "colours",
+            &colours,
+        );
+
         staging_buffer.finish(&device);
 
         let swapchain = device.create_swapchain(
@@ -174,11 +173,8 @@ impl winit::application::ApplicationHandler for App {
 
         self.state = Some(State {
             _accel: accel,
-            _data_buffer: aabbs,
             colours,
             tlas,
-            _instances_buffer: instance_buffer,
-            alloc_vis: gpu_allocator::vulkan::AllocatorVisualizer::new(),
             per_frame_command_buffers: [
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
