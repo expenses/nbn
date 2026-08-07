@@ -5,9 +5,7 @@ import fallback_bindings;
 import splats.structs;
 import shared.prefix_sum;
 
-static const float SH_C0 = 0.28209479177387814;
-static const float SH_C1 = 0.4886025119029199;
-static const uint DEPTH_MAX = (1u << 28) - 1;
+static const uint DEPTH_MAX = (1u << 30) - 1;
 static const float GAUSSIAN_TRUNCATION_STD = 3.0;
 static const uint MAX_SPLATS = 20 * 1000 * 1000;
 static const uint MAX_POINTS = 100 * 1000 * 1000;
@@ -188,18 +186,14 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    let col = saturate((splat.dc * SH_C0) + 0.5);
-    let col_u = uint64_t3(col * 255);
     let depth_bits = uint64_t(proj_mean.z * float(DEPTH_MAX));
-    let packed = col_u.r | (col_u.g << 8) | (col_u.b << 16) | depth_bits << 36;
 
     PerSplatData data;
-    data.opacity = splat.opacity;
+    data.packed = splat.color_opacity | (depth_bits << 32);
     data.c0 = c0;
     data.c1 = c1;
     data.c2 = c2;
     data.center_px = center_px;
-    data.packed = packed;
     pc.splat_data[index] = data;
 
     uint offset = 0;

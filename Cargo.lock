@@ -2940,7 +2940,6 @@ dependencies = [
  "log",
  "notify",
  "parking_lot",
- "ply-rs",
  "presser",
  "slang_struct",
  "winit",
@@ -4518,6 +4517,9 @@ dependencies = [
 [[package]]
 name = "splat-compress"
 version = "0.1.0"
+dependencies = [
+ "ply-rs",
+]
 
 [[package]]
 name = "stable_deref_trait"

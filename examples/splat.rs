@@ -36,15 +36,8 @@ impl winit::application::ApplicationHandler for App {
 
         let freecam = nbn::freecam::FreeCam::new([2.0, 10.0, 10.0].into(), NEAR_PLANE);
 
-        let splats = {
-            let mut buf_read = std::io::BufReader::new(std::fs::File::open(&filename).unwrap());
-            let p = ply_rs::parser::Parser::<ply::DefaultElement>::new();
-            let header = p.read_header(&mut buf_read).unwrap();
-            dbg!(&header);
-            let mut remaining = Vec::new();
-            buf_read.read_to_end(&mut remaining).unwrap();
-            nbn::cast_slice::<_, PlySplat>(&remaining).to_vec()
-        };
+        let splats = std::fs::read(&filename).unwrap();
+        let splats = nbn::cast_slice::<_, Splat>(&splats);
 
         let window = event_loop
             .create_window(
@@ -58,16 +51,6 @@ impl winit::application::ApplicationHandler for App {
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 1024 * 1024 * 1024, nbn::QueueType::Compute);
 
-        let splats: Vec<_> = splats
-            .iter()
-            .map(|s| Splat {
-                center: s.xyz,
-                dc: s.f_dc,
-                scale: s.scale.map(f32::exp),
-                rot: [s.rot[1], s.rot[2], s.rot[3], s.rot[0]], // PLY (w,x,y,z) -> (x,y,z,w)
-                opacity: 1.0 / (1.0 + (-s.opacity).exp()),
-            })
-            .collect();
         let splats = &splats[..5_000_000];
 
         let num_splats = splats.len() as u32;
@@ -368,20 +351,6 @@ impl winit::application::ApplicationHandler for App {
             state.window.request_redraw();
         }
     }
-}
-
-use ply_rs::ply;
-use std::io::Read;
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-struct PlySplat {
-    xyz: [f32; 3],
-    f_dc: [f32; 3],
-    f_rest: [f32; 45],
-    opacity: f32,
-    scale: [f32; 3],
-    rot: [f32; 4],
 }
 
 fn main() {

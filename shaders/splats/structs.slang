@@ -1,14 +1,23 @@
 import shared.prefix_sum;
 
 struct Splat {
-    float3 dc;
     float3 center;
-    float3 scale;
+    uint32_t color_opacity;
+    uint32_t packed_scale;
     float4 rot;
-    float opacity;
-    //float3 sh1_0;
-    //float3 sh1_1;
-    //float3 sh1_2;
+
+    property float3 scale {
+        get {
+            let s = int3(packed_scale, packed_scale >> 10, packed_scale >> 20) & 1023;
+            return float3(s - 511) / 511;
+        }
+    }
+
+    property float opacity {
+        get {
+            return float(color_opacity >> 24)/255.0;
+        }
+    }
 }
 
 struct Dispatch {
@@ -18,12 +27,17 @@ struct Dispatch {
 }
 
 struct PerSplatData {
-    float opacity;
     float c0;
     float c1;
     float c2;
     float2 center_px;
     uint64_t packed;
+
+    property float opacity {
+        get {
+            return float((packed >> 24)&255)/255.0;
+        }
+    }
 }
 
 struct PushConstants {
