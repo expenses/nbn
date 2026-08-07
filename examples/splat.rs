@@ -68,6 +68,7 @@ impl winit::application::ApplicationHandler for App {
                 opacity: 1.0 / (1.0 + (-s.opacity).exp()),
             })
             .collect();
+        let splats = &splats[..5_000_000];
 
         let num_splats = splats.len() as u32;
 
@@ -231,7 +232,7 @@ impl winit::application::ApplicationHandler for App {
                 let (view, proj) =
                     state
                         .freecam
-                        .update(extent.width, extent.height, 1.0 / 60.0, 1.0);
+                        .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
 
                 // must match FreeCam's fovy (59.0 deg)
                 let tan_y = (59.0_f32.to_radians() * 0.5).tan();
