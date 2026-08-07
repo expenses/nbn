@@ -52,4 +52,4 @@ members = [
     "projects/particles",
     "projects/ntc",
     "projects/voxelizer"
-, "tools/gltf-copy-materials"]
+, "tools/gltf-copy-materials", "tools/splat-compress"]
