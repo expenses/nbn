@@ -17,20 +17,25 @@ float3 rotatedBasis(float4 q, int i) {
 }
 
 // Jacobian of perspective projection: view-space vector -> screen-pixel delta (2x3)
-float2x3 screenJacobian(float3 t, float2 focal) {
+float2x3 screenJacobian(float3 t, float focal) {
     float invz = 1.0 / t.z;
     return float2x3(
-        float3(focal.x*invz, 0.0, -focal.x*t.x*invz*invz),
-        float3(0.0, focal.y*invz, -focal.y*t.y*invz*invz));
+        float3(focal*invz, 0.0, -focal*t.x*invz*invz),
+        float3(0.0, focal*invz, -focal*t.y*invz*invz));
 }
 
 // 2D screen covariance as (a,b,c) for [[a,b],[b,c]].
+// Camera intrinsics are derived from tan_y + the screen extent (symmetric perspective,
+// so focal is isotropic: focal = extent.y / (2*tan_y)).
 float3 computeCov2D(float4x4 view, float4 q, float3 scale, float3 t,
-                    float2 tan_fov, float2 focal) {
+                    float tan_y, float2 extent) {
+    float aspect = extent.x / extent.y;
+    float tan_x  = tan_y * aspect;
+    float focal  = extent.y / (2.0 * tan_y);
+
     // clamp the center's view angle to ~FOV (EWA stability near the edges)
-    float limx = 1.3*tan_fov.x, limy = 1.3*tan_fov.y;
-    t.x = clamp(t.x/t.z, -limx, limx)*t.z;
-    t.y = clamp(t.y/t.z, -limy, limy)*t.z;
+    t.x = clamp(t.x/t.z, -1.3*tan_x, 1.3*tan_x)*t.z;
+    t.y = clamp(t.y/t.z, -1.3*tan_y, 1.3*tan_y)*t.z;
 
     float3x3 W = float3x3(view[0].xyz, view[1].xyz, view[2].xyz);  // world -> view
     float2x3 P = mul(screenJacobian(t, focal), W);                 // world -> screen
@@ -62,10 +67,12 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
     let t = mul(pc.view, float4(splat.center * -100, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
-    let cov2d = computeCov2D(pc.view, splat.rot, splat.scale * 100.0, t, pc.tan_fov, pc.focal);
-    let det = cov2d.x * cov2d.z - cov2d.y * cov2d.y;
+    let cov2d = computeCov2D(pc.view, splat.rot, splat.scale * 100.0, t, pc.tan_y, float2(pc.extent));
 
-    printf("%f\n", det);
+    // check determinant in case of splats that have a dimension of size 0.
+    // Not strictly required for scenes with good splats.
+
+    let det = cov2d.x * cov2d.z - cov2d.y * cov2d.y;
 
     if (det <= 0.0) {
         return;
