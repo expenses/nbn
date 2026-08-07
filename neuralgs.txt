@@ -1,0 +1,564 @@
+                                                         NeuralGS: Bridging Neural Fields and 3D Gaussian Splatting for
+                                                                         Compact 3D Representations
+                                                         Zhenyu Tang1 * , Chaoran Feng1 * , Xinhua Cheng1 , Wangbo Yu1 , Junwu Zhang1
+                                                                  Yuan Liu2† , Xiaoxiao Long2 , Wenping Wang3 , Li Yuan1†
+                                                           1
+                                                               Peking University 2 Hong Kong University of Science and Technology 3 Texas A&M University
+
+
+                                                         Inference Speedup         ×1227 faster                              ×99.17 smaller      Storage Reduction
+
+                                                        Mip-NeRF 360                                         Ours                                 Gaussian Splatting
+
+
+
+
+arXiv:2503.23162v2 [cs.CV] 13 Aug 2025
+                                           PSNR=24.43dB, Size=8.9 MB, FPS= 0.11             PSNR=25.07 dB, Size=14.43 MB, FPS=135         PSNR=25.13dB, Size=1431MB, FPS=92
+
+
+                                         Figure 1: NeuralGS directly compresses original 3DGS with neural fields into a compact and rendering-efficient representa-
+                                         tion. NeRF-based methods typically require minimal storage with slow rendering speeds while 3D Gaussian Splatting (3DGS)
+                                         achieves fast rendering but demands hundreds of megabytes storage. NeuralGS combines compact neural fields with 3DGS by
+                                         encoding 3D Gaussian attributes with neural fields, achieving significant reduction in model size and real-time rendering speed.
+
+                                                                        Abstract                                    (NeRF) (Mildenhall et al. 2020) has gained significant at-
+                                                                                                                    tention as a 3D scene representation for its compact struc-
+                                           3D Gaussian Splatting (3DGS) achieves impressive quality                 ture and exceptional capability to reconstruct large-scale
+                                           and rendering speed, but with millions of 3D Gaussians and               scenes (Barron et al. 2021, 2022; Niemeyer et al. 2022; Tan-
+                                           significant storage and transmission costs. In this paper, we            cik et al. 2023). However, a persistent challenge hindering
+                                           aim to develop a simple yet effective method called Neu-
+                                           ralGS that compresses the original 3DGS into a compact rep-
+                                                                                                                    the widespread adoption of NeRF lies in the computational
+                                           resentation. Our observation is that neural fields like NeRF             bottlenecks imposed by volumetric rendering (Drebin, Car-
+                                           can represent complex 3D scenes with Multi-Layer Percep-                 penter, and Hanrahan 1988), which limit the utilization in
+                                           tron (MLP) neural networks using only a few megabytes.                   real scenes that require fast rendering speeds.
+                                           Thus, NeuralGS effectively adopts the neural field representa-              3D Gaussian Splatting (3DGS) (Kerbl et al. 2023) has
+                                           tion to encode the attributes of 3D Gaussians with MLPs, only
+                                           requiring a small storage size even for a large-scale scene. To
+                                                                                                                    emerged as an alternative representation, utilizing a ef-
+                                           achieve this, we adopt a clustering strategy and fit the Gaus-           ficient point-based representation associated with several
+                                           sians within each cluster using different tiny MLPs, based on            explicit attributes. Unlike the slow volume rendering of
+                                           importance scores of Gaussians as fitting weights. We exper-             NeRFs, 3DGS utilizes a fast differentiable splatting tech-
+                                           iment on multiple datasets, achieving a 91× average model                nique, achieving exceptionally fast rendering speeds and
+                                           size reduction without harming the visual quality.                       promising image quality. However, employing point-based
+                                                                                                                    representations inherently leads to substantial storage de-
+                                                                                                                    mands, as millions of points and their attributes are stored
+                                                                  1   Introduction                                  independently, which significantly hinders the compactness
+                                                                                                                    of 3DGS as a practical 3D representation.
+                                         Novel view synthesis (NVS) is a fundamental task in 3D
+                                         vision, with substantial applications across fields such as                   To address the above size issue, some 3DGS compression
+                                         virtual reality (Dai et al. 2019), augmented reality (Zhou                 methods (Fan et al. 2023; Xie et al. 2024; Niedermayr et al.
+                                         et al. 2018), and media generation (Poole et al. 2022).                    2024) mainly adopt pruning and quantization on Gaussian.
+                                         This task aims to render photo-realistic novel-view images,                Another noticeable direction of works (Liu et al. 2024; Chen
+                                         given limited multi-view input images. Neural radiance field               et al. 2024), achieves impressive compression ratio based
+                                                                                                                    on Scaffold-GS (Lu et al. 2024) which adopts anchors to
+                                            * These authors contributed equally.                                    predict local Gaussians by view-dependent neural networks.
+                                            †
+                                                Corresponding author.                                               These methods typically require per-view attribute predic-
+tion by neural networks for rendering and longer rendering        rendering quality than existing compression works. Mean-
+time compared to original 3DGS, which makes them less             while, NerualGS achieves an average 1.9× rendering speed
+suitable for applications demanding high-speed rendering.         than the state-of-the-art compresssion work HAC (Chen
+    In this paper, we explore how to achieve high compression     et al. 2024), while maintaining comparable performance.
+ratio and maintain rendering efficiency of original 3DGS.
+Our method is based on the observation that neural fields                           2    Related Works
+like NeRF are able to represent complex scenes with small
+sizes. Thus, rather than proposing complex quantization like      2.1   Novel View Synthesis
+previous works, our target is to combine the neural fields and    Neural radiance field (NeRF) (Mildenhall et al. 2020) pro-
+point-based representation for original 3DGS compression.         poses to use MLPs to represent a scene, and this compact
+    Adopting neural fields in compression is not trivial. A       representation has brought view synthesis quality to a new
+straightforward solution is to directly employ a multi-layer      stage. However, NeRF-based methods (Müller et al. 2022;
+perceptron (MLP) to map the positions of Gaussians to their       Barron et al. 2022; Niemeyer et al. 2022; Reiser et al. 2021;
+attributes, which could represent all attributes with a com-      Govindarajan et al. 2024; Lee et al. 2024b; Hu et al. 2023)
+pact neural field. However, only fitting a single MLP to          struggle to achieve real-time rendering speed in large-scale
+represent all Gaussian attributes leads to large fitting er-      scenes, limiting their practical use. The idea of utilizing
+rors, severely degenerating the rendering quality, because        multiple MLPs is also explored by KiloNeRF (Reiser et al.
+the Gaussians show strong spatial variations. Even nearby         2021) for efficient rendering. Recently, 3D Gaussian Splat-
+3D Gaussians have totally different attributes, resulting in a    ting (3DGS) (Kerbl et al. 2023) and its variants (Yu et al.
+significant difficulty in fitting with a single MLP.              2024; Lu et al. 2024; Liang et al. 2024; Liu and Banerjee
+    To address the aforementioned issues, we propose Neu-         2024; Sun et al. 2024; Zhang et al. 2024; Cao et al. 2024;
+ralGS, a novel framework designed for the post-training           Zhan et al. 2025; Salman Ali et al. 2025), offer state-of-the-
+compression of original 3DGS. We adopt three strategies to        art scene reconstruction by utilizing a set of optimized 3D
+facilitate the effective encoding of 3D Gaussian attributes       Gaussians that can be rendered efficiently.
+with neural fields as follows:
+    First, instead of fitting all Gaussians equally, we compute   2.2   Compression of 3D Gaussian Splatting
+the importance of each Gaussian according to their contribu-      Although 3DGS achieves superior performance and higher
+tions to the renderings. Gaussians with low importance are        rendering speed compared to NeRF-based methods, it typ-
+first pruned to reduce the Gaussian numbers. More impor-          ically requires hundreds of megabytes to store 3D Gaus-
+tantly, we introduce a novel use of these importance scores       sian attributes, posing challenges for its practical applica-
+as weighting factors in the fitting process, which ensures that   tion in large-scale scenes. Several existing works (Fan et al.
+important Gaussians are fitted with high accuracy.                2023; Xie et al. 2024; Lee et al. 2024a; Niedermayr et al.
+    Second, an important observation from us is that the at-      2024; Fan et al. 2024; Ali, Bae, and Tartaglione 2024) have
+tributes of Gaussians do not change smoothly with their po-       made initial attempts to compress 3DGS models, primarily
+sitions. For example, a Gaussian with a small scale factor        using pruning to reduce the number of 3D Gaussians, vec-
+could have a neighboring Gaussian with an extremely large         tor quantization to discretize Gaussian attributes into shared
+scale factor, which prevents the neural fields from accurately    codebooks, and context-aware entropy encoding. Specifi-
+fitting them due to the smoothness nature of neural fields.       cally, CompressGS (Niedermayr et al. 2024) utilizes vector
+To reduce attribute variability among Gaussians, we cluster       quantization to discretize Gaussian parameters into the code-
+3D Gaussians based on their attributes to preserve similar-       books through clustering and entropy coding to minimize
+ity among Gaussians within the same cluster. For different        statistical redundancies in the codebooks. LightGS (Fan
+clusters, we use different tiny neural fields (MLPs) to map       et al. 2023) reduces the number of Gaussians through prun-
+the positions of Gaussians to the remaining attributes, which     ing and lower Spherical Harmonics degree through distil-
+significantly reduces the fitting errors.                         lation. Compact3DGS (Lee et al. 2024a) employs a hash
+    Third, we further fine-tune the learned NeuralGS repre-       grid to encode view-adaptive colors and vector quantiza-
+sentation with training images and propose a frequency loss       tion for geometric attributes, achieving a remarkable com-
+to improve the reconstruction quality. We find that the MLPs      pression ratio for color but only 6× for geometric attributes.
+often have difficulty in learning the high-frequency signals      Moreover, SOG (Morgenstern et al. 2023) explore a image-
+of Gaussian attributes during fitting. Thus, we incorporate       codec-based compression to reduce the model size. Another
+a frequency loss, that puts emphasis on the high-frequency        line of work is anchor-based compression built upon Scaf-
+details of renderings, along with the original rendering loss     foldGS (Lu et al. 2024) which adopts anchor to predict local
+in the fine-tuning process to recover fine details.               Gaussians with attributes changing based on view directions.
+    In the end, our NeuralGS only needs to store the positions    CompGS (Liu et al. 2024) shares a similar anchor-based
+of important Gaussians and the weights of the corresponding       structure with entropy optimization and HAC (Chen et al.
+tiny MLPs for all clusters, substantially reducing the storage    2024) uses a hash grid to further compress anchors. These
+compared to the original 3DGS. NeuralGS achieves about            works achieves high rendering quality and compression ratio
+87× and 117× model size reduction compared to 3DGS on             but require slow per-view processing for rendering. In con-
+Mip-NeRF360 dataset (Barron et al. 2022) and Deep Blend-          trast, our method employ compact neural fields to encode all
+ing dataset (Hedman et al. 2018), while delivering superior       Gaussian attributes within each cluster with tiny MLPs and
+       3D Representation of Scenes              (A) Global Importance
+                                                                                                                                 Importance
+                                                                                                                                   Score
+
+
+
+                                                                                                                                                                                 Tiny MLP
+                                                                                                                                                                         ...
+                                                      Gaussian Point                                                                                  x y z
+                                                         Gorigin                                                                                                                 Tiny MLP
+
+                                                                                                                                                    only position        ...
+
+                                                                         Importance Computation                       Clustered Gaussian Points                                  Tiny MLP
+
+                                                                                                                                                                     Cluster-based Fitting
+
+                                                  Pruning Gaussian                                  Attribute-based
+                                                                                                      Clustering
+                                                     Point Gprun
+                                                                                                                                      (B) Cluster-based Neural Field Fitting
+
+ (C) Optimization & Fine-tuning
+                                                                               Z
+                                                                                                                                                                                 Attribute
+                       Frequency                                                        Rotation
+                                                                                                                                                                                 Prediction
+                          Loss                                                                                                        Rotation    Scale    Opacity
+                                                                                               le
+                                                              Volume                    Sc a                     Decomposition
+                                                                                                      X
+      Ground-truth   Photo-realistic       Rendered          Splatting                                                                               ...
+         Image           Loss               Image                                               Opacity
+                                                                         Y                                                                                                        Operation Flow
+                                                                             Position
+                                                                                                                                                      SH
+                                                                                                                                                                                  Functional Module
+
+Figure 2: Overview of NeuralGS. (A) In Sec. 3.2, for each Gaussian GSj in the scene, we first calculate its global importance
+score Sj (Eq.1) and prune unimportant Gaussians. (B) In Sec. 3.3, we cluster the retained Gaussians and use different tiny MLPs
+to map the positions to Gaussian attributes of different clusters with the loss (Eq.3) using the importance score as weights. (C)
+In Sec. 3.4, we fine-tune the tiny MLPs of all clusters with photorealistic loss (Eq.4) and frequency loss (Eq.5) to restore quality.
+
+integrates seamlessly the original 3DGS rendering pipeline                                     difficulty handling abrupt changes. Thus, in Sec. 3.3, we pro-
+with high rendering speed compared to anchor-based works.                                      pose to first cluster Gaussians based on attributes and then fit
+                                                                                               a neural field for each cluster instead of solely using a single
+                            3          Method                                                  neural field for each Gaussian. Third, in Sec. 3.4, we further
+                                                                                               improve the rendering quality of NeuralGS by fine-tuning
+3.1      Overview                                                                              on input images with photorealistic loss and frequency loss.
+General idea. The general idea of NeuralGS is to adopt
+compact neural fields to compress original 3DGS. Specif-                                       3.2            Global Importance
+ically, given 3D Gaussians reconstructed from multi-view                                       Importance Computation. Each Gaussian contributes dif-
+images, we learn MLP networks to map the 3D positions                                          ferently to the final renderings in 3DGS (Kerbl et al. 2023).
+of Gaussians to their attributes including opacities, spherical                                To quantify this, we define a global importance score for
+harmonic coefficients, scales, and rotations. These MLP net-                                   each Gaussian, representing its contribution to the rendering
+works can be regarded as a set of neural attribute fields. In                                  result. Inspired by (Fan et al. 2023; Xie et al. 2024), we can
+this case, we only need to store the 3D positions of all Gaus-                                 calculate the importance based on each Gaussian’s contribu-
+sians and the MLP parameters, which are highly compact                                         tion to every pixel pi across all training views. We use the
+thanks to the compactness of neural field representations.                                     criterion 1(GSj , pi ) to determine whether a Gaussian GSj
+When we need to render from NeuralGS, the attributes only                                      overlaps with pixel pi after projection onto the 2D plane. At
+need to be decoded once from the corresponding MLPs.                                           last, we can iterate over all training pixels and sum up the
+                                                                                                                                              Qk−1
+Challenges and solutions. However, fitting the neural field                                    accumulated opacity of GSj , denoted as αk l=1 (1 − αl ),
+is not a trivial task because naively fitting a compact MLP                                    to compute each Gaussian’s contribution to the rendering re-
+network on all Gaussian attributes leads to severe fitting er-                                 sult. Here, k is the index of the Gaussian GSj in the depth
+rors and inferior rendering quality. To improve the fitting                                    ordering for pixel pi and α is the opacity. This importance
+process, we propose three essential strategies, as shown in                                    score can be further refined by incorporating the 3D Gaus-
+Fig. 2. First, not all Gaussians contribute equally to the final                               sian’s normalized volume Vnorm . Finally, the global impor-
+renderings and some of them are entirely redundant without                                     tance score can be expressed as:
+any effects on the rendering quality. Thus, this motivates us                                                     MX
+                                                                                                                   HW                                                   k−1
+                                                                                                                                                                        Y
+to compute the importance of all 3D Gaussians in Sec. 3.2,                                             Sj =                   1(GSj , pi ) · (Vnorm )β · αk                    (1 − αl ),      (1)
+which is used in pruning and in a novel importance-aware                                                              i=1                                               l=1
+fitting process. Second, we find that the Gaussian attributes                                                                          
+                                                                                                                                 V
+do not distribute evenly or smoothly in the 3D space, where                                              Vnorm = min max              ,0 ,1 .        (2)
+a small-scale Gaussian could have a large-scale neighbor.                                                                      Vmax90
+This uneven distribution severely hinders the fitting process                                  Here, S, M , H, and W represent the importance score, the
+because the MLPs naturally fit into smooth fields but have                                     number of training views, the image height, and the image
+       Attribute-based Clustering
+
+
+                                                                                                                                                               ...
+                                               C1                              (x y z)1
+                                                                                          Tiny MLP
+                                                                                                     …            Rotation   Scale Opacity                SH
+                                          C2                            (x y z)2                     …
+                                                                                    Tiny MLP
+
+                                   ……                                                          …
+                                   CK-1                       (x y z)
+                                                                    K-1
+                                                                                               …
+                                                                            Tiny MLP
+                                                                                          …                                                     ...
+                              CK                       (x y z)K                           …
+                                                                  Tiny MLP
+                                                                                                      Rotation   Scale Opacity             SH
+
+      Gaussian Cluster    Position Extraction       Attribute Prediction                                 Gaussian Attributes                                         Gaussian
+                                                                                                                                                                     Ellipse
+
+                                                       Importance weighted loss                                                                                      Position
+               Ground-truth Attributes                                                                            Predicted Attributes                               (x,y,z)
+                                                                                                                                               Weighted
+
+
+
+Figure 3: Details of Cluster-based Neural Field Fitting. The positions of the 3D Gaussians within each cluster are fed into
+the corresponding tiny MLP to fit the attributes with the importance-weighted loss. During rendering, the predicted outputs are
+then split into the respective attributes of the Gaussians, i.e., rotation, scale, opacity, color, and SH coefficients.
+
+width, respectively. Vmax90 denotes the 90% largest volume                                         the renderings, we further propose a novel use of impor-
+of all sorted Gaussians, and β is the hyperparameter to en-                                        tance scores as per-Gaussian fitting weight, which ensures
+hance the score’s flexibility.                                                                     that Gaussians with higher importance are fitted more accu-
+Importance-based Pruning and Weighting. Thus, we rank                                              rately. Our loss function is defined as:
+each Gaussian based on its importance score, allowing us to
+                                                                                                                         1      X
+prune out redundant Gaussians, thereby reducing the total                                                   Loss = P                Sj · ∥F(xj ) − ŷj ∥2 . (3)
+number of Gaussians. Beyond pruning, we propose a novel                                                                j∈P Sj            j∈P
+use of the importance scores as weighting factors in the sub-
+sequent fitting process, which ensure that important Gaus-                                         Here, P represents the Gaussian index set of a cluster, S
+sians are fitted with higher accuracy.                                                             denotes the importance score, F(·) is the tiny MLP corre-
+                                                                                                   sponding to the cluster, x is the spatial position of the Gaus-
+3.3     Cluster-based Neural Field Fitting                                                         sian, and ŷ is the normalized Gaussian attributes.
+The original 3DGS does not ensure any attribute similarities
+                                                                                                   3.4    Fine-tuning
+between neighboring Gaussians. Two neighboring Gaus-
+sians could have totally different colors or scales, which                                         After fitting, there still remain some residuals which degrade
+poses challenges in the neural field fitting. To address this,                                     rendering quality. To address this, we incorporate a fine-
+we propose an attribute-based clustering strategy to ensure                                        tuning stage to restore the image quality. In this process, we
+attribute similarity within the same cluster and fit separate                                      fix spatial positions of the 3D Gaussians and only fine-tune
+neural fields for different clusters as shown in Fig. 3.                                           the tiny MLPs corresponding to each cluster. The photore-
+Attribute-based Clustering. Specifically, we employ K-                                             alistic loss Lrender , is then computed by combining the mean
+means (Likas et al. 2003) to cluster 3D Gaussians into K                                           absolute error (MAE) loss L1 and the SSIM loss LSSIM with
+clusters, denoted as C1 , C2 , . . . , CK . In this case, the at-                                  the weight λ as follows:
+tributes of Gaussians in the same cluster will be similar and                                                        Lrender = (1 − λ)L1 + λLSSIM .                             (4)
+easy to fit for neural fields. Given the significant distribu-
+tional differences across attributes, we first normalize each                                      Frequency Loss. We observe that the fitted attributes of-
+attribute to the range [−1, 1] by computing its maximum and                                        ten lose high-frequency details, such as dense grass. Thus,
+minimum values to unify the scales of different attributes                                         we introduce a frequency loss to emphasize these high-
+and avoid over-reliance on certain attributes for clustering.                                      frequency details for fine-tuning. Specifically, we use a
+Neural Fields. After assigning each 3D Gaussian to a clus-                                         fourier transform to convert the rendered image I and
+ter, we use different tiny MLPs for different clusters to map                                      the ground truth Igt into frequency representations F and
+Gaussian positions within each cluster to the normalized at-                                       Fgt . F (u, v) consists of amplitude F (u, v) and phase
+tributes of these Gaussians. Each tiny MLP consists of five                                        ∠F (u, v), where (u, v) denotes the coordinates in the fre-
+layers with positional encoding, followed by a tanh activa-                                        quency spectrum. We then introduce a high-pass filter with
+tion function (Fan 2000). The fitting processes for different                                      fixed bandwidth to extract high-frequency information, de-
+clusters are conducted in parallel for efficiency.
+                                                                                                   noted as F̂ (u, v) and F̂gt (u, v). We define ∆ F̂ (u, v) =
+Importance-Weighted Fitting Loss. We apply mean
+squared error (MSE) loss when fitting Gaussian attributes.                                          F̂ (u, v) − F̂gt (u, v) and ∆∠F̂ (u, v) = ∠F̂ (u, v) −
+Considering that each Gaussian contributes differently to                                          ∠F̂gt (u, v). Thus, the frequency loss Lfreq and the total loss
+                           Bonsai                            Room                         Tree Hill                  Playroom
+
+                 PSNR: 30.79 dB                    PSNR: 30.49 dB               PSNR: 22.59 dB               PSNR: 29.11 dB
+LightGS          Size: 24.84 MB                    Size: 20.45 MB               Size: 49.24 MB               Size: 28.91 MB
+(Fan et al.
+  2023)
+
+
+
+
+                 PSNR: 30.91 dB                    PSNR: 30.83 dB               PSNR: 22.54 dB               PSNR: 30.16 dB
+Compact3DGS      Size: 16.68 MB                    Size: 15.02 MB               Size: 38.20 MB               Size: 19.31 MB
+
+  (Lee et al.
+
+   2024a)
+
+
+                 PSNR: 31.29 dB                    PSNR: 31.40 dB               PSNR: 22.54 dB               PSNR: 30.11 dB
+ EALGES          Size: 28.66 MB                    Size: 29.80 MB               Size: 70.70 MB               Size: 35.26 MB
+
+(Girish et al.
+   2023)
+
+
+                 PSNR: 32.17 dB                    PSNR: 31.36 dB               PSNR: 23.04 dB               PSNR: 30.37 dB
+                 Size: 9.01 MB                     Size: 5.63 MB                Size: 23.65 MB               Size: 5.49 MB
+  HAC
+(Chen et al.
+  2024)
+
+
+                 PSNR: 32.26 dB                    PSNR: 31.49 dB               PSNR: 23.09
+                                                                                        22.75 dB             PSNR: 30.46 dB
+                 Size: 4.62 MB                     Size: 4.06 MB                Size: 10.45
+                                                                                      24.07 MB               Size: 5.21 MB
+NeuralGS
+
+ (Ours)
+
+
+
+                           Bonsai                            Room                         Tree Hill                  Playroom
+Ground
+ Truth
+
+
+
+                      Figure 4: Qualitative results of the proposed method compared to existing compression methods.
+
+LTotal can be formulated as follows:                                                               4   Experiments
+                      H−1
+                      XW  −1
+                          X                                               4.1      Experimental Settings
+            Lfreq =               ∆ F̂ (u, v) + ∆∠F̂ (u, v) ,       (5)
+                      u=0 v=0                                             Evaluation Datasets and Metrics. We adopt three datasets
+                          LTotal = Lrender + λfreq Lfreq .          (6)   for comparison. (1) Mip-NeRF360 (Barron et al. 2022)
+                                                                          offers scene-scale data for view synthesis, containing
+Here, H, W and λfreq denote the image height, width, and                  nine real-world large-scale scenes: five unbounded outdoor
+the hyperparameter to balance the loss.                                   scenes and four indoor scenes with complex backgrounds.
+Model Parameters. In the end, we only need to store the po-               (2) Tank and Temple (Knapitsch et al. 2017) is a unbounded
+sitions of the retained 3D Gaussians and the fine-tuned MLP               dataset that includes two scenes: train and truck. (3) Deep
+weights for each cluster, significantly reducing the model                Blending (Hedman et al. 2018) contains two indoor scenes:
+size. Min-max values for normalization are shared across all              drjohnson and playroom. For all datasets, we maintain the
+clusters with only negligible 116 floating numbers needed.                same train-test splits as the official setting of 3DGS (Kerbl
+ Dataset                                Mip-NeRF 360 (Barron et al. 2022)    Tanks&Temples (Knapitsch et al. 2017)           Deep Blending (Hedman et al. 2018)
+ Method                                PSNR↑   SSIM↑    LPIPS↓      Size↓    PSNR↑    SSIM↑     LPIPS↓        Size↓         PSNR↑    SSIM↑     LPIPS↓     Size↓
+ Mip-NeRF 360 (Barron et al. 2022)     27.69   0.795     0.238     8.5 MB    22.16    0.757     0.261     9.0 MB            29.01     0.895    0.255     8.6 MB
+ 3DGS (Kerbl et al. 2023)              27.51   0.813     0.222    754.6 MB   23.75    0.844     0.178    438.9 MB           29.42     0.900    0.247    672.8 MB
+ CompressGS (Niedermayr et al. 2024)   26.98   0.801     0.242    28.72 MB   23.32    0.835     0.194    17.73 MB           29.40     0.899    0.252    25.96 MB
+ Compact3DGS (Lee et al. 2024a)        27.01   0.797     0.248    48.80 MB   23.29    0.829     0.202    39.43 MB           29.71     0.900    0.257    43.21 MB
+ SOG (Morgenstern et al. 2023)         27.02   0.799     0.232    42.33 MB   23.54    0.833     0.188    19.70 MB           29.21     0.891    0.271    19.28 MB
+ MesonGS (Xie et al. 2024)             27.08   0.800     0.245    27.51 MB   23.31    0.836     0.195    17.47 MB           29.40     0.903    0.254    25.64 MB
+ EAGLES (Girish et al. 2023)           27.13   0.809     0.241    60.86 MB   23.27    0.839     0.201    31.05 MB           29.72     0.907    0.250    54.65 MB
+ LightGS (Fan et al. 2023)             26.95   0.800     0.243    48.71 MB   23.11    0.817     0.231    24.74 MB           29.12     0.892    0.264    45.45 MB
+ CompGS (Liu et al. 2024)              27.26   0.803     0.240    17.31 MB   23.70    0.837     0.208    10.10 MB           29.69     0.901    0.279     9.20 MB
+ HAC (Chen et al. 2024)                27.50   0.806     0.238     16.0 MB   24.04    0.846     0.187     8.51 MB           29.98     0.902    0.269    4.62 MB
+ NeuralGS (Ours)                       27.53   0.807     0.238    8.69 MB    23.95    0.847     0.186        6.33 MB        30.09     0.906    0.252    5.76 MB
+
+Table 1: Quantitative results evaluated on Mip-NeRF 360, Tanks&Temples, and Deep Blending datasets. We highlight the best-
+performing results in bold and the second-best results in underlined for all compression methods.
+
+et al. 2023) and utilize PSNR, SSIM, LPIPS, and model size                        FPS\Dataset                  Mip-NeRF 360         Tanks&Temples   Deep Blending
+to evaluate image quality and compression ratio.                                  3DGS (Kerbl et al. 2023)            112                162            118
+                                                                                  CompGS (Liu et al. 2024)             94                105            125
+Baselines. We use 3DGS (Kerbl et al. 2023) as our com-                            HAC (Chen et al. 2024)              102                117            159
+pression baseline and compare with other original 3DGS-                           NeuralGS(Ours)                      205                279            217
+based compression techniques (Girish et al. 2023; Morgen-
+stern et al. 2023; Lee et al. 2024a; Fan et al. 2023; Nieder-                   Table 2: Comparison of the rendering speed(FPS↑). The ren-
+mayr et al. 2024; Xie et al. 2024) along with anchor-based                      dering speed of all methods is measured on our machine.
+compression works (Liu et al. 2024; Chen et al. 2024). For a
+                                                                                tributes, leading to the limited compression ratio. Anchor-
+fair comparison of rendering quality and model size, we use
+                                                                                based works (Liu et al. 2024; Chen et al. 2024) achieves the
+the official code of each method with the default configura-
+                                                                                impressive rendering quality and compression ratios, but ex-
+tions for training and rendering.
+                                                                                hibit slower rendering speeds compared to our approach, as
+Implementation Details. We implement our NeuralGS                               shown in the following analysis of rendering time.
+based on the official codes of 3DGS (Kerbl et al. 2023)
+and conduct training on various scenes using NVIDIA RTX                         Qualitative Results. Figure 4 presents a qualitative com-
+6000 Ada GPUs. During pruning, we remove 40% of the re-                         parison between our proposed NeuralGS and other com-
+dundant 3D Gaussians. The number of clusters is determined                      pression methods (Fan et al. 2023; Girish et al. 2023; Lee
+adaptively, with each cluster containing 20k Gaussians on                       et al. 2024a; Chen et al. 2024), providing the specific details
+avarage. Notably, the total number of clusters does not need                    with zoomed-in views. By leveraging compact cluster-based
+to be predefined. Each cluster is assigned a lightweight MLP                    neural fields to encode the Gaussian attributes, our method
+to fit the corresponding Gaussian attributes for 60k itera-                     shows superior rendering quality with clearer textures and
+tions. All MLPs used in our method are 5-layer tiny MLPs                        sharper edges even using a significantly smaller model size.
+with Tanh activation function and positional encoding. To                       Rendering Time. In Table 2, we compare the rendering
+restore rendering quality, we fine-tuned the fitted MLPs for                    speed with the original 3DGS (Kerbl et al. 2023) and anchor-
+25k iterations, with λ and λfreq set to 0.2 and 0.01, respec-                   based works (Liu et al. 2024; Chen et al. 2024) which
+tively. Please refer to our supplementary materials for more                    achieve SoTA compression performance. Rendering speed
+videos and more details of implementation and storage.                          is measured in frames per second (FPS), computed based on
+                                                                                the total time taken to render all camera views in the dataset.
+4.2    Experimental Results                                                     In our approach, multiple neural fields are used to encode
+Quantitative Results. The comparison results for the ren-                       Gaussian attributes of different clusters. During rendering,
+dering quality and model size across different datasets are                     MLPs are used to decode the attributes of all 3D Gaussians
+presented in Tables 1. Specifically, compared to other com-                     in a single forward pass before testing FPS, which consti-
+pression works, NeuralGS achieves significant compression                       tutes a one-time amortized cost for attribute loading. From
+ratios while preserving rendering quality. Our method re-                       Table 2, it is observed that our method achieves an averaged
+duces the model size of original 3DGS (Kerbl et al. 2023)                       1.8x rendering speed compared to 3DGS and significantly
+by approximately 87×, 69× and 117× on the Mip-NeRF                              outperforms anchor-based works which need extra per-view
+360 dataset, Deep Blending dataset and Tanks&Templates                          attribute prediction based on view directions for rendering.
+dataset, respectively. The compression methods (Nieder-
+mayr et al. 2024; Girish et al. 2023; Xie et al. 2024; Fan                      4.3     Ablation Studies
+et al. 2023) employ the quantization techniques and suf-                        In this subsection, we conduct ablation studies on the Deep
+fer from relatively large storage cost as excessive quantiza-                   Blending dataset to demonstrate the effectiveness of each
+tion beyond a certain threshold significantly degrades ren-                     proposed component. Specifically, our core idea is to use
+dering quality. Compact3DGS (Lee et al. 2024a) uses a hash                      neural fields to encode all Gaussian attributes. Hence, the
+grid to only encode the color based on 3D positions and                         baseline variant, referred to as “vanilla NeuralGS” in Ta-
+view directions, while opting to quantize the geometric at-                     ble 3, employs a single tiny MLP to fit the attributes of all
+               85%                                      90%                        95%                             100%
+
+
+
+
+            85%                            90%                            95%                            100%
+Figure 5: NeuralGS allows progressive loading new clusters in the playroom scene to obtain more details and sharper texture.
+
+ Dataset                    Deep Blending Dataset (Hedman et al. 2018)
+ Method                     PSNR↑    SSIM↑     LPIPS↓          Size↓
+ 3DGS (Kerbl et al. 2023)   29.42     0.900     0.247     672.8 MB
+ Vanilla NeuralGS           23.71     0.798     0.519         2.69 MB
+ + Cluster-based fitting    28.98     0.893     0.283         5.79 MB
+ + Importance weighting     29.67     0.903     0.264         5.75 MB
+ + Frequency loss (Ours)    30.09     0.906     0.252         5.76 MB
+
+Table 3: Quantitative ablation study on the Deep Blending                           w/o IW                           w/ IW
+dataset by progressively adding our proposed improvement.
+
+Gaussians in the scene, followed by basic fine-tuning to re-
+store quality. As shown in Table 3, we incrementally incor-
+porate each improvement to validate the effectiveness of our
+approach. More ablations, including different integration or-
+ders, the impact of different cluster numbers and compar-
+isons of clustering algorithms are shown in the appendix.                           w/o FL                           w/ FL
+Effectiveness of Cluster-based Fitting. As shown in Ta-
+ble 3, the Vanilla NeuralGS results in significant degradation           Figure 6: Ablation study about importance weighting (IW)
+of rendering quality compared to the original 3DGS (Kerbl                and frequency loss (FL) in the bicycle and stump scenes.
+et al. 2023). This is primarily due to the substantial varia-
+tion among 3D Gaussians, where a single tiny MLP tends to
+produce substantial fitting errors. To mitigate this issue, we           4.4   JPEG-like Progressive Loading
+introduce a clustering strategy based on Gaussian attributes             Benefiting from our usage of different neural fields to fit the
+to ensure similarity within each cluster and assign a sepa-              Gaussians within different cluster, we can transmit and de-
+rate tiny MLP to fit the Gaussians of each cluster. As shown             code Gaussian attributes cluster by cluster in a streamable
+in Table 3, utilizing different tiny neural fields for different         manner like JPEG (Skodras et al. 2001). Specifically, we
+clusters significantly reduces fitting errors, leading to 5.3 dB         can sort clusters from the largest to the smallest based on
+improvement in PSNR and 10% increase in SSIM.                            the number of Gaussians and progressively transmit the po-
+Effectiveness of Importance Weighting. Notably, it is un-                sitions along with the corresponding MLP weights. During
+necessary to equally fit every Gaussian in the scene. Instead,           transmission, Gaussian attributes can be decoded simultane-
+we assign each Gaussian an importance score to represent                 ously, as shown in Figure 5, enabling a progressive loading
+its contribution to the renderings. These scores are applied             for the entire scene and making it suitable for streamable ap-
+as weighting factors for the tiny MLPs during the fitting                plications. From magnified images, it is evident that newly
+process, ensuring that important Gaussians are fitted by the             loaded clusters contribute additional details and shaper tex-
+neural fields with higher accuracy. As shown in Table 3 and              ture, allowing the scene to gradually become clearer.
+Figure 6, adding importance scores as fitting weights, with-
+out introducing additional parameters, can further enhance                                    5    Conclusion
+visual quality and provide detailed textures.                            In this paper, we introduce NeuralGS, a novel and effec-
+Effectiveness of Frequency Loss. During the fine-tuning                  tive post-training compression for original 3DGS. To this
+stage, we observed that within a limited number of training              end, we introduce a clustering strategy and fit all attibutes
+iterations, MLPs tend to be less sensitive to high-frequency             of Gaussians within each cluster using different tiny MLPs,
+details. As shown in the second row of Figure 6, incorpo-                based on importance scores of Gaussians as fitting weights.
+rating the frequency loss makes the blurry edges of leaves               Additionally, we introduce a frequency loss during the fine-
+sharper. The quantitative results in Table 3 further show the            tuning stage to better preserve high-frequency details. Ex-
+improvement in rendering quality by lastly introducing the               tensive experiments demonstrate that our method achieves
+frequency loss. We also provide results for only adding the              superior rendering quality compared to existing compres-
+frequency loss in the appendix.                                          sion methods while utilizing significantly less model size.
+                        References                                Kerbl, B.; Kopanas, G.; Leimkühler, T.; and Drettakis, G.
+Ali, M. S.; Bae, S.-H.; and Tartaglione, E. 2024. ELMGS:          2023. 3D Gaussian Splatting for Real-Time Radiance Field
+Enhancing memory and computation scaLability through              Rendering. ACM Transactions on Graphics (TOG).
+coMpression for 3D Gaussian Splatting. arXiv preprint             Knapitsch, A.; Park, J.; Zhou, Q.-Y.; and Koltun, V. 2017.
+arXiv:2410.23213.                                                 Tanks and temples: Benchmarking large-scale scene recon-
+                                                                  struction. ACM Transactions on Graphics (ToG), 36(4): 1–
+Barron, J. T.; Mildenhall, B.; Tancik, M.; Hedman, P.;            13.
+Martin-Brualla, R.; and Srinivasan, P. P. 2021. Mip-NeRF:
+A Multiscale Representation for Anti-Aliasing Neural Radi-        Lee, J. C.; Rho, D.; Sun, X.; Ko, J. H.; and Park, E. 2024a.
+ance Fields. In International Conference on Computer Vi-          Compact 3d gaussian representation for radiance field. In
+sion (ICCV).                                                      Proceedings of the IEEE/CVF Conference on Computer Vi-
+                                                                  sion and Pattern Recognition, 21719–21728.
+Barron, J. T.; Mildenhall, B.; Verbin, D.; Srinivasan, P. P.;
+                                                                  Lee, J. Y.; Wu, Y.; Zou, C.; Hoiem, D.; and Wang, S. 2024b.
+and Hedman, P. 2022. Mip-NeRF 360: Unbounded Anti-
+                                                                  Plenoptic PNG: Real-Time Neural Radiance Fields in 150
+Aliased Neural Radiance Fields. In Computer Vision and
+                                                                  KB. arXiv preprint arXiv:2409.15689.
+Pattern Recognition (CVPR).
+                                                                  Liang, Z.; Zhang, Q.; Hu, W.; Feng, Y.; Zhu, L.; and
+Cao, J.; Goel, V.; Wang, C.; Kag, A.; Hu, J.; Ko-                 Jia, K. 2024. Analytic-Splatting: Anti-Aliased 3D Gaus-
+rolev, S.; Jiang, C.; Tulyakov, S.; and Ren, J. 2024.             sian Splatting via Analytic Integration. arXiv preprint
+Lightweight Predictive 3D Gaussian Splats. arXiv preprint         arXiv:2403.11056.
+arXiv:2406.19434.
+                                                                  Likas, A.; Vlassis, N.; Verbeek, J. J.; and Verbeek, J. J. 2003.
+Chen, Y.; Wu, Q.; Lin, W.; Harandi, M.; and Cai, J. 2024.         The global k-means clustering algorithm. Pattern recogni-
+HAC: Hash-grid Assisted Context for 3D Gaussian Splatting         tion, 36(2): 451–461.
+Compression. In European Conference on Computer Vision.
+                                                                  Liu, B.; and Banerjee, S. 2024. SwinGS: Sliding Window
+Dai, J.; Zhang, Z.; Mao, S.; and Liu, D. 2019.     A              Gaussian Splatting for Volumetric Video Streaming with Ar-
+view synthesis-based 360° VR caching system over MEC-             bitrary Length. arXiv preprint arXiv:2409.07759.
+enabled C-RAN. IEEE Transactions on Circuits and Sys-             Liu, X.; Wu, X.; Zhang, P.; Wang, S.; Li, Z.; and Kwong, S.
+tems for Video Technology, 30(10): 3843–3855.                     2024. Compgs: Efficient 3d scene representation via com-
+Drebin, R. A.; Carpenter, L.; and Hanrahan, P. 1988. Volume       pressed gaussian splatting. In Proceedings of the 32nd ACM
+rendering. ACM Siggraph Computer Graphics, 22(4): 65–             International Conference on Multimedia, 2936–2944.
+74.                                                               Lu, T.; Yu, M.; Xu, L.; Xiangli, Y.; Wang, L.; Lin, D.;
+Fan, E. 2000. Extended tanh-function method and its appli-        and Dai, B. 2024. Scaffold-gs: Structured 3d gaussians for
+cations to nonlinear equations. Physics Letters A, 277(4-5):      view-adaptive rendering. In Proceedings of the IEEE/CVF
+212–218.                                                          Conference on Computer Vision and Pattern Recognition,
+                                                                  20654–20664.
+Fan, L.; Yang, Y.; Li, M.; Li, H.; and Zhang, Z. 2024. Trim
+3D Gaussian Splatting for Accurate Geometry Representa-           Mildenhall, B.; Srinivasan, P. P.; Tancik, M.; Barron, J. T.;
+tion. arXiv preprint arXiv:2406.07499.                            Ramamoorthi, R.; and Ng, R. 2020. NeRF: Representing
+                                                                  Scenes as Neural Radiance Fields for View Synthesis. In
+Fan, Z.; Wang, K.; Wen, K.; Zhu, Z.; Xu, D.; and Wang,            European Conference on Computer Vision (ECCV).
+Z. 2023. Lightgaussian: Unbounded 3d gaussian compres-
+sion with 15x reduction and 200+ fps. arXiv preprint              Morgenstern, W.; Barthel, F.; Hilsmann, A.; and Eisert, P.
+arXiv:2311.17245.                                                 2023. Compact 3d scene representation via self-organizing
+                                                                  gaussian grids. arXiv preprint arXiv:2312.13299.
+Girish, S.; Gupta, K.; Gupta, K.; and Shrivastava, A. 2023.       Müller, T.; Evans, A.; Schied, C.; and Keller, A. 2022.
+Eagles: Efficient accelerated 3d gaussians with lightweight       Instant Neural Graphics Primitives with a Multiresolution
+encodings. arXiv preprint arXiv:2312.04564.                       Hash Encoding. ACM Transactions on Graphics (TOG),
+Govindarajan, S.; Sambugaro, Z.; Takikawa, T.; Rebain, D.;        41(4): 102:1–102:15.
+Sun, W.; Conci, N.; Yi, K. M.; Tagliasacchi, A.; et al. 2024.     Niedermayr, S.; Stumpfegger, J.; Stumpfegger, J.; and West-
+Lagrangian Hashing for Compressed Neural Field Repre-             ermann, R. 2024. Compressed 3d gaussian splatting for
+sentations. arXiv preprint arXiv:2409.05334.                      accelerated novel view synthesis. In Proceedings of the
+Hedman, P.; Philip, J.; Price, T.; Frahm, J.-M.; Drettakis, G.;   IEEE/CVF Conference on Computer Vision and Pattern
+and Brostow, G. 2018. Deep blending for free-viewpoint            Recognition, 10349–10358.
+image-based rendering. ACM Transactions on Graphics               Niemeyer, M.; Barron, J. T.; Mildenhall, B.; Sajjadi, M. S.;
+(ToG), 37(6): 1–15.                                               Geiger, A.; and Radwan, N. 2022. RegNeRF: Regularizing
+Hu, W.; Wang, Y.; Ma, L.; Yang, B.; Gao, L.; Liu, X.; and         Neural Radiance Fields for View Synthesis from Sparse In-
+Ma, Y. 2023. Tri-miprf: Tri-mip representation for efficient      puts. In Computer Vision and Pattern Recognition (CVPR).
+anti-aliasing neural radiance fields. In Proceedings of the       Poole, B.; Jain, A.; Barron, J. T.; and Mildenhall, B. 2022.
+IEEE/CVF International Conference on Computer Vision,             Dreamfusion: Text-to-3d using 2d diffusion. arXiv preprint
+19774–19783.                                                      arXiv:2209.14988.
+Reiser, C.; Peng, S.; Liao, Y.; and Geiger, A. 2021. Kilo-
+nerf: Speeding up neural radiance fields with thousands of
+tiny mlps. In Proceedings of the IEEE/CVF international
+conference on computer vision, 14335–14345.
+Salman Ali, M.; Zhang, C.; Cagnazzo, M.; Valenzise, G.;
+Tartaglione, E.; and Bae, S.-H. 2025. Compression in 3D
+Gaussian Splatting: A Survey of Methods, Trends, and Fu-
+ture Directions. arXiv e-prints, arXiv–2502.
+Skodras, A.; Christopoulos, C.; Ebrahimi, T.; and Ebrahimi,
+T. 2001. The JPEG 2000 still image compression standard.
+IEEE Signal processing magazine, 18(5): 36–58.
+Sun, X.; Lee, J. C.; Rho, D.; Ko, J. H.; Ali, U.; and Park,
+E. 2024. F-3dgs: Factorized coordinates and representations
+for 3d gaussian splatting. In Proceedings of the 32nd ACM
+International Conference on Multimedia, 7957–7965.
+Tancik, M.; Weber, E.; Ng, E.; Li, R.; Yi, B.; Kerr, J.;
+Wang, T.; Kristoffersen, A.; Austin, J.; Salahi, K.; Ahuja,
+A.; McAllister, D.; and Kanazawa, A. 2023. Nerfstudio:
+A Modular Framework for Neural Radiance Field Develop-
+ment. In ACM SIGGRAPH 2023 Conference Proceedings,
+SIGGRAPH ’23.
+Xie, S.; Zhang, W.; Tang, C.; Bai, Y.; Lu, R.; Ge, S.; and
+Wang, Z. 2024. MesonGS: Post-training Compression of
+3D Gaussians via Efficient Attribute Transformation. arXiv
+preprint arXiv:2409.09756.
+Yu, Z.; Chen, A.; Huang, B.; Sattler, T.; and Geiger, A. 2024.
+Mip-splatting: Alias-free 3d gaussian splatting. In Proceed-
+ings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, 19447–19456.
+Zhan, Y.-T.; Ho, C.-Y.; Yang, H.; Chen, Y.-H.; Chiang, J. C.;
+Liu, Y.-L.; and Peng, W.-H. 2025. CAT-3DGS: A context-
+adaptive triplane approach to rate-distortion-optimized
+3DGS compression. arXiv preprint arXiv:2503.00357.
+Zhang, J.; Zhan, F.; Xu, M.; Lu, S.; and Xing, E. 2024.
+Fregs: 3d gaussian splatting with progressive frequency reg-
+ularization. In Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, 21424–21433.
+Zhou, T.; Tucker, R.; Flynn, J.; Fyffe, G.; and Snavely, N.
+2018. Stereo magnification: Learning view synthesis using
+multiplane images. arXiv preprint arXiv:1805.09817.
+

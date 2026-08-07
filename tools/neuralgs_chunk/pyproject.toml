@@ -1,0 +1,14 @@
+[project]
+name = "neuralgs-chunk"
+version = "0.0.1"
+description = "NeuralGS-style tiny-MLP compression of 3DGS chunks (architecture search)"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.3",
+    "numpy>=1.26",
+    "tqdm>=4.66",
+]
+
+[tool.uv]
+# Prefer the CUDA-enabled PyPI wheels (they bundle the CUDA 12 runtime).
+# On NixOS these run via nix-ld (programs.nix-ld.enable + NIX_LD_LIBRARY_PATH).
