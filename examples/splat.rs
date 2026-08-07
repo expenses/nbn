@@ -53,6 +53,7 @@ impl winit::application::ApplicationHandler for App {
             dc: s.f_dc,
             scale: s.scale.map(f32::exp),
             rot: [s.rot[1], s.rot[2], s.rot[3], s.rot[0]], // PLY (w,x,y,z) -> (x,y,z,w)
+            opacity: 1.0 / (1.0 + (-s.opacity).exp()),
         }).collect();
 
         let num_splats = splats.len() as u32;

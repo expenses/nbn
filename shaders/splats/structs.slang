@@ -3,6 +3,7 @@ struct Splat {
     float3 center;
     float3 scale;
     float4 rot;
+    float opacity;
     //float3 sh1_0;
     //float3 sh1_1;
     //float3 sh1_2;
