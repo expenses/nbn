@@ -7,6 +7,7 @@ import splats.structs;
 static const float SH_C0 = 0.28209479177387814;
 static const float SH_C1 = 0.4886025119029199;
 static const uint DEPTH_MAX = (1u << 28) - 1;
+static const float GAUSSIAN_TRUNCATION_STD = 3.0;
 
 
 // Dilogarithm Li2(x) = -integral_0^x ln(1-s)/s ds.
@@ -56,6 +57,7 @@ float2 correctedBoxMuller(float u1, float u2, float alpha) {
 
 // Poisson sampler: Giles (2016) Algorithm 955 QN3 asymptotic approximation.
 // Accurate for moderate-to-large means; the guard avoids div-by-zero for tiny means.
+// gaussian-point-splatting/src/core/random/poisson.cuh
 uint poisson(float u1, float u2, float lambda) {
     if (lambda < 1e-4)
         return 0;
@@ -121,7 +123,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     var proj_mean = mul(pc.camera, float4(splat.center * -100, 1.0));
     proj_mean.xyz /= proj_mean.w;
 
-    if (any(abs(proj_mean.xy) > 1) || proj_mean.z < 0) {
+    if (proj_mean.z < 0) {
         return;
     }
 
@@ -145,8 +147,16 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let c0 = sqrt(cov2d.x);
     let c1 = cov2d.y / c0;
     let c2 = sqrt(max(cov2d.z - c1 * c1, 0.0));
+    // inverse covariance (conic form) for evaluating the Gaussian falloff at a pixel
+    let inv_det = 1.0 / det;
+    let conic = float3(cov2d.z * inv_det, -cov2d.y * inv_det, cov2d.x * inv_det);
 
     let center_px = (proj_mean.xy + 1) * 0.5 * pc.extent;
+
+    let half_ext = GAUSSIAN_TRUNCATION_STD * sqrt(float2(cov2d.x, cov2d.z));
+    if (any(center_px + half_ext < 0.0) || any(center_px - half_ext >= pc.extent)) {
+        return;
+    }
 
     // opacity-corrected expected point count: lambda = 2*pi*sqrt(det)*Li2(splat.opacity)
     let lambda = 6.2831853 * sqrt(det) * dilog(splat.opacity);
@@ -170,6 +180,15 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
             continue;
         }
         let coord = uint2(floor(sample_px));
+
+        // reject points whose contribution is below the 8-bit floor (Mahalanobis test)
+        let delta = center_px - float2(coord);
+        let maha = -0.5 * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y)
+                         - conic.y * delta.x * delta.y;
+        let weight = (maha > 0.0) ? 0.0 : exp(maha);
+        if (splat.opacity * weight < 1.0 / 255.0) {
+            continue;
+        }
 
         InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], packed);
     }
