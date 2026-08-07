@@ -3,6 +3,7 @@ import shared.util;
 import shared.noise;
 import fallback_bindings;
 import splats.structs;
+import shared.prefix_sum;
 
 static const float SH_C0 = 0.28209479177387814;
 static const float SH_C1 = 0.4886025119029199;
@@ -112,6 +113,13 @@ float3 computeCov2D(float4x4 view, float4 q, float3 scale, float3 t,
 }
 
 [shader("compute")]
+[NumThreads(1, 1, 1)]
+void reset(uniform PushConstants pc) {
+    pc.dispatch.surviving_splats = 0;
+    prefix_sum_reset(pc.prefix_sum);
+}
+
+[shader("compute")]
 [NumThreads(64, 1, 1)]
 void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     if (thread >= pc.num_splats) {
@@ -141,15 +149,10 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    var rng = SobolRng(thread, pc.frame_index);
-
     // Cholesky factor of cov2d: maps a standard normal into a sample from this Gaussian
     let c0 = sqrt(cov2d.x);
     let c1 = cov2d.y / c0;
     let c2 = sqrt(max(cov2d.z - c1 * c1, 0.0));
-    // inverse covariance (conic form) for evaluating the Gaussian falloff at a pixel
-    let inv_det = 1.0 / det;
-    let conic = float3(cov2d.z * inv_det, -cov2d.y * inv_det, cov2d.x * inv_det);
 
     let center_px = (proj_mean.xy + 1) * 0.5 * pc.extent;
 
@@ -158,10 +161,18 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
+    var rng = SobolRng(thread, pc.frame_index);
+
     // opacity-corrected expected point count: lambda = 2*pi*sqrt(det)*Li2(splat.opacity)
     let lambda = 6.2831853 * sqrt(det) * dilog(splat.opacity);
     let pu = rng.rand2();
-    let count = poisson(pu.x, pu.y, lambda);
+    var count = poisson(pu.x, pu.y, lambda);
+
+    count = min(count, 1000);
+
+    if (count == 0) {
+        return;
+    }
 
     // per-splat constants: SH base color + reversed-Z depth, packed for nearest-wins InterlockedMax
     let col = (splat.dc * SH_C0) + 0.5;
@@ -177,29 +188,53 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     data.center_px = center_px;
     data.packed = packed;
 
-    // throw `count` opacity-corrected points; nearest wins per pixel
-    for (uint k = 0; k < count; k++) {
-        let su = rng.rand2();
-        let n = correctedBoxMuller(su.x, su.y, data.opacity);
-        let offset = float2(data.c0 * n.x, data.c1 * n.x + data.c2 * n.y);
+    uint index = 0;
+    InterlockedAdd(pc.dispatch.surviving_splats, 1, index);
+    pc.splat_data[index] = data;
 
-        let sample_px = data.center_px + offset;
-        if (any(sample_px < 0.0) || any(sample_px >= pc.extent)) {
-            continue;
-        }
-        let coord = uint2(floor(sample_px));
+    prefix_sum_inclusive_append(pc.prefix_sum, index, count);
+}
 
-        // reject points whose contribution is below the 8-bit floor (Mahalanobis test)
-        let delta = center_px - float2(coord);
-        let z0 = offset.x / c0;
-        let z1 = (offset.y - c1 * z0) / c2;
-        let weight = exp(-0.5 * (z0*z0 + z1*z1));
-        if (data.opacity * weight < 1.0 / 255.0) {
-            continue;
-        }
+[shader("compute")]
+[NumThreads(1,1,1)]
+void setup_dispatch(uniform PushConstants pc) {
+    let total = prefix_sum_total(pc.prefix_sum);
+    pc.dispatch.dispatch_size = uint3(div_ceil(total, 64), 1, 1);
+}
 
-        InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], data.packed);
+[shader("compute")]
+[NumThreads(64, 1, 1)]
+void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
+    if (thread >= prefix_sum_total(pc.prefix_sum)) {
+        return;
     }
+
+    let value = prefix_sum_binary_search(pc.prefix_sum, thread);
+
+    let data = pc.splat_data[value.index];
+
+    var rng = SobolRng(thread, pc.frame_index);
+
+    let su = rng.rand2();
+    let n = correctedBoxMuller(su.x, su.y, data.opacity);
+    let offset = float2(data.c0 * n.x, data.c1 * n.x + data.c2 * n.y);
+
+    let sample_px = data.center_px + offset;
+    if (any(sample_px < 0.0) || any(sample_px >= pc.extent)) {
+        return;
+    }
+    let coord = uint2(floor(sample_px));
+
+    // reject points whose contribution is below the 8-bit floor (Mahalanobis test)
+    let delta = data.center_px - float2(coord);
+    let z0 = delta.x / data.c0;
+    let z1 = (delta.y - data.c1 * z0) / data.c2;
+    let weight = exp(-0.5 * (z0*z0 + z1*z1));
+    if (data.opacity * weight < 1.0 / 255.0) {
+        return;
+    }
+
+    InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], data.packed);
 }
 
 [shader("compute")]

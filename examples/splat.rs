@@ -9,12 +9,18 @@ struct State {
     per_frame_command_buffers: [nbn::CommandBuffer; nbn::FRAMES_IN_FLIGHT],
     splat: nbn::Pipeline,
     output: nbn::Pipeline,
+    reset: nbn::Pipeline,
+    point: nbn::Pipeline,
+    setup_dispatch: nbn::Pipeline,
     swapchain_image_heap_indices: Vec<nbn::ImageIndex>,
     device: nbn::Device,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
     buffer: nbn::Buffer,
     splats: nbn::Buffer,
+    dispatch: nbn::Buffer,
+    splat_data: nbn::Buffer,
+    prefix_sum: nbn::Buffer,
     num_splats: u32,
 }
 
@@ -48,20 +54,20 @@ impl winit::application::ApplicationHandler for App {
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 1024 * 1024 * 1024, nbn::QueueType::Compute);
 
-        let splats: Vec<_> = splats.iter().map(|s| Splat {
-            center: s.xyz,
-            dc: s.f_dc,
-            scale: s.scale.map(f32::exp),
-            rot: [s.rot[1], s.rot[2], s.rot[3], s.rot[0]], // PLY (w,x,y,z) -> (x,y,z,w)
-            opacity: 1.0 / (1.0 + (-s.opacity).exp()),
-        }).collect();
+        let splats: Vec<_> = splats
+            .iter()
+            .map(|s| Splat {
+                center: s.xyz,
+                dc: s.f_dc,
+                scale: s.scale.map(f32::exp),
+                rot: [s.rot[1], s.rot[2], s.rot[3], s.rot[0]], // PLY (w,x,y,z) -> (x,y,z,w)
+                opacity: 1.0 / (1.0 + (-s.opacity).exp()),
+            })
+            .collect();
 
         let num_splats = splats.len() as u32;
 
-        let splats = staging_buffer.create_buffer_from_slice(&device,
-            "splats",
-            &splats,
-        );
+        let splats = staging_buffer.create_buffer_from_slice(&device, "splats", &splats);
 
         staging_buffer.finish(&device);
 
@@ -91,8 +97,11 @@ impl winit::application::ApplicationHandler for App {
                 .collect(),
             freecam,
             swapchain,
+            reset: device.create_compute_pipeline(&shader, c"reset"),
             splat: device.create_compute_pipeline(&shader, c"splat"),
+            point: device.create_compute_pipeline(&shader, c"point"),
             output: device.create_compute_pipeline(&shader, c"output"),
+            setup_dispatch: device.create_compute_pipeline(&shader, c"setup_dispatch"),
             window,
             buffer: device
                 .create_buffer(nbn::BufferDescriptor {
@@ -101,10 +110,31 @@ impl winit::application::ApplicationHandler for App {
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
+            splat_data: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "splat_data",
+                    size: 10_000_000 * std::mem::size_of::<PerSplatData>() as u64,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
+            prefix_sum: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "prefix_sum",
+                    size: 10_000_000 * 8,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
+            dispatch: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "dispatch",
+                    size: std::mem::size_of::<Dispatch>() as _,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
             device,
             splats,
             frame_index: 0,
-num_splats,
+            num_splats,
         });
     }
 
@@ -176,7 +206,13 @@ num_splats,
                     .begin_command_buffer(**command_buffer, &vk::CommandBufferBeginInfo::default())
                     .unwrap();
 
-                device.cmd_fill_buffer(**command_buffer, *state.buffer.buffer, 0, vk::WHOLE_SIZE, 0);
+                device.cmd_fill_buffer(
+                    **command_buffer,
+                    *state.buffer.buffer,
+                    0,
+                    vk::WHOLE_SIZE,
+                    0,
+                );
 
                 device.insert_image_pipeline_barrier(
                     command_buffer,
@@ -208,8 +244,19 @@ num_splats,
                         bitmasks: *state.buffer,
                         splats: *state.splats,
                         num_splats: state.num_splats,
+                        dispatch: *state.dispatch,
+                        splat_data: *state.splat_data,
+                        prefix_sum_values: *state.prefix_sum,
                     },
                 );
+
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.reset,
+                );
+
+                device.cmd_dispatch(**command_buffer, 1, 1, 1);
 
                 device.cmd_bind_pipeline(
                     **command_buffer,
@@ -217,14 +264,33 @@ num_splats,
                     *state.splat,
                 );
 
+                device.cmd_dispatch(**command_buffer, state.num_splats.div_ceil(64), 1, 1);
 
-                device.cmd_dispatch(
-                    **command_buffer,
-                    state.num_splats.div_ceil(64),
-                    1,
-                    1,
+                device.insert_pipeline_barriers(
+                    &command_buffer,
+                    [],
+                    [(
+                        &state.splat_data,
+                        nbn::BarrierOp::ComputeStorageWrite,
+                        nbn::BarrierOp::ComputeStorageRead,
+                    )],
                 );
 
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.setup_dispatch,
+                );
+
+                device.cmd_dispatch(**command_buffer, 1, 1, 1);
+
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.point,
+                );
+
+                device.cmd_dispatch_indirect(**command_buffer, *state.dispatch.buffer, 0);
 
                 device.cmd_bind_pipeline(
                     **command_buffer,
