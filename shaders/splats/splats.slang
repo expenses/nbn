@@ -59,7 +59,38 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    let coord = uint2((proj_mean.xy + 1) / 2.0 * pc.extent);
+    // view-space center (same scene-scale as proj_mean) + 2D screen covariance
+    let t = mul(pc.view, float4(splat.center * -100, 1.0)).xyz;
+    // scale x100 matches the x100 baked into the projection's center; remove both together
+    let cov2d = computeCov2D(pc.view, splat.rot, splat.scale * 100.0, t, pc.tan_fov, pc.focal);
+    let det = cov2d.x * cov2d.z - cov2d.y * cov2d.y;
+
+    printf("%f\n", det);
+
+    if (det <= 0.0) {
+        return;
+    }
+
+    // Cholesky factor of cov2d: maps a standard normal into a sample from this Gaussian
+    let c0 = sqrt(cov2d.x);
+    let c1 = cov2d.y / c0;
+    let c2 = sqrt(max(cov2d.z - c1 * c1, 0.0));
+
+    // 1 stochastic sample, offset in pixels from the projected center
+    var rng = LCG(uint2(thread, 0), pc.frame_index);
+    let u = rng.rand2();
+    let r = sqrt(-2.0 * log(max(u.x, 1e-7)));
+    let n = float2(r * cos(6.2831853 * u.y), r * sin(6.2831853 * u.y));
+    let offset = float2(c0 * n.x, c1 * n.x + c2 * n.y);
+
+    let center_px = (proj_mean.xy + 1) * 0.5 * float2(pc.extent);
+    let sample_px = center_px + offset;
+
+    if (any(sample_px < 0.0) || any(sample_px >= float2(pc.extent))) {
+        return;
+    }
+
+    let coord = uint2(floor(sample_px));
 
     let col = (splat.dc * SH_C0) + 0.5;
     let col_u = uint64_t3(col * 255);

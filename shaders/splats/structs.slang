@@ -13,6 +13,7 @@ struct PushConstants {
     float4x4 camera;
     float4x4 view;
     float2 tan_fov;
+    float2 focal;
     uint2 extent;
     uint image;
     Splat* splats;

@@ -51,8 +51,8 @@ impl winit::application::ApplicationHandler for App {
         let splats: Vec<_> = splats.iter().map(|s| Splat {
             center: s.xyz,
             dc: s.f_dc,
-            scale: s.scale,
-            rot: s.rot
+            scale: s.scale.map(f32::exp),
+            rot: [s.rot[1], s.rot[2], s.rot[3], s.rot[0]], // PLY (w,x,y,z) -> (x,y,z,w)
         }).collect();
 
         let num_splats = splats.len() as u32;
@@ -192,12 +192,19 @@ num_splats,
                         .freecam
                         .update(extent.width, extent.height, 1.0 / 60.0, 1.0);
 
+                let fov_y = 59.0_f32.to_radians(); // must match FreeCam's fovy
+                let tan_y = (fov_y * 0.5).tan();
+                let tan_x = tan_y * extent.width as f32 / extent.height as f32;
+                let focal_x = extent.width as f32 / (2.0 * tan_x);
+                let focal_y = extent.height as f32 / (2.0 * tan_y);
+
                 device.push_constants::<PushConstants>(
                     command_buffer,
                     PushConstants {
                         camera: (proj * view).to_cols_array(),
                         view: view.to_cols_array(),
-                        tan_fov: [0.0;2],
+                        tan_fov: [tan_x, tan_y],
+                        focal: [focal_x, focal_y],
                         extent: [extent.width, extent.height],
                         image: *state.swapchain_image_heap_indices[next_image as usize],
                         frame_index: state.frame_index,
