@@ -85,7 +85,7 @@ float2x3 screenJacobian(float3 t, float focal) {
     float invz = 1.0 / t.z;
     return float2x3(
         float3(focal*invz, 0.0, -focal*t.x*invz*invz),
-        float3(0.0, focal*invz, -focal*t.y*invz*invz));
+        float3(0.0, -focal*invz, focal*t.y*invz*invz));
 }
 
 // 2D screen covariance as (a,b,c) for [[a,b],[b,c]].
