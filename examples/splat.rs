@@ -206,13 +206,13 @@ impl winit::application::ApplicationHandler for App {
                     .begin_command_buffer(**command_buffer, &vk::CommandBufferBeginInfo::default())
                     .unwrap();
 
-                device.cmd_fill_buffer(
-                    **command_buffer,
-                    *state.buffer.buffer,
-                    0,
-                    vk::WHOLE_SIZE,
-                    0,
-                );
+                // device.cmd_fill_buffer(
+                //     **command_buffer,
+                //     *state.buffer.buffer,
+                //     0,
+                //     vk::WHOLE_SIZE,
+                //     0,
+                // );
 
                 device.insert_image_pipeline_barrier(
                     command_buffer,

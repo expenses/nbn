@@ -245,6 +245,7 @@ void output(uint2 thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 
     let mask = pc.bitmasks[thread.x + thread.y * pc.extent.x];
+    pc.bitmasks[thread.x + thread.y * pc.extent.x] = 0;
 
     let value = float3(mask & 255, (mask >> 8) & 255, (mask >> 16) & 255) / 255;
 
