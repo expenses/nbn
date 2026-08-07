@@ -16,11 +16,11 @@ struct State {
     device: nbn::Device,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
-    buffer: nbn::Buffer,
+    render_bitmasks: nbn::Buffer,
     splats: nbn::Buffer,
     dispatch: nbn::Buffer,
     splat_data: nbn::Buffer,
-    prefix_sum: nbn::Buffer,
+    point_to_splat: nbn::Buffer,
     num_splats: u32,
 }
 
@@ -107,7 +107,7 @@ impl winit::application::ApplicationHandler for App {
             output: device.create_compute_pipeline(&shader, c"output"),
             setup_dispatch: device.create_compute_pipeline(&shader, c"setup_dispatch"),
             window,
-            buffer: device
+            render_bitmasks: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "render_bitmasks",
                     size: size.width as u64 * size.height as u64 * 8,
@@ -121,7 +121,7 @@ impl winit::application::ApplicationHandler for App {
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
-            prefix_sum: device
+            point_to_splat: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "point_to_splat",
                     size: 100_000_000 * 4,
@@ -182,9 +182,9 @@ impl winit::application::ApplicationHandler for App {
                         .iter()
                         .map(|image| device.register_image(*image.view, true)),
                 );
-                state.buffer = device
+                state.render_bitmasks = device
                     .create_buffer(nbn::BufferDescriptor {
-                        name: "buffer",
+                        name: "render_bitmasks",
                         size: new_size.width as u64 * new_size.height as u64 * 8,
                         ty: nbn::MemoryLocation::GpuOnly,
                     })
@@ -245,12 +245,12 @@ impl winit::application::ApplicationHandler for App {
                         extent: [extent.width, extent.height],
                         image: *state.swapchain_image_heap_indices[next_image as usize],
                         frame_index: state.frame_index,
-                        bitmasks: *state.buffer,
+                        bitmasks: *state.render_bitmasks,
                         splats: *state.splats,
                         num_splats: state.num_splats,
                         dispatch: *state.dispatch,
                         splat_data: *state.splat_data,
-                        point_to_splat: *state.prefix_sum,
+                        point_to_splat: *state.point_to_splat,
                     },
                 );
 
