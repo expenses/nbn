@@ -169,13 +169,21 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let depth_bits = uint64_t(proj_mean.z * float(DEPTH_MAX));
     let packed = col_u.r | (col_u.g << 8) | (col_u.b << 16) | depth_bits << 36;
 
+    PerSplatData data;
+    data.opacity = splat.opacity;
+    data.c0 = c0;
+    data.c1 = c1;
+    data.c2 = c2;
+    data.center_px = center_px;
+    data.packed = packed;
+
     // throw `count` opacity-corrected points; nearest wins per pixel
     for (uint k = 0; k < count; k++) {
         let su = rng.rand2();
-        let n = correctedBoxMuller(su.x, su.y, splat.opacity);
-        let offset = float2(c0 * n.x, c1 * n.x + c2 * n.y);
+        let n = correctedBoxMuller(su.x, su.y, data.opacity);
+        let offset = float2(data.c0 * n.x, data.c1 * n.x + data.c2 * n.y);
 
-        let sample_px = center_px + offset;
+        let sample_px = data.center_px + offset;
         if (any(sample_px < 0.0) || any(sample_px >= pc.extent)) {
             continue;
         }
@@ -183,14 +191,14 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 
         // reject points whose contribution is below the 8-bit floor (Mahalanobis test)
         let delta = center_px - float2(coord);
-        let maha = -0.5 * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y)
-                         - conic.y * delta.x * delta.y;
-        let weight = (maha > 0.0) ? 0.0 : exp(maha);
-        if (splat.opacity * weight < 1.0 / 255.0) {
+        let z0 = offset.x / c0;
+        let z1 = (offset.y - c1 * z0) / c2;
+        let weight = exp(-0.5 * (z0*z0 + z1*z1));
+        if (data.opacity * weight < 1.0 / 255.0) {
             continue;
         }
 
-        InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], packed);
+        InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], data.packed);
     }
 }
 

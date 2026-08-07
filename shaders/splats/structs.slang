@@ -21,3 +21,12 @@ struct PushConstants {
     uint num_splats;
     float tan_y;
 }
+
+struct PerSplatData {
+    float opacity;
+    float c0;
+    float c1;
+    float c2;
+    float2 center_px;
+    uint64_t packed;
+}
