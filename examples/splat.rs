@@ -50,7 +50,9 @@ impl winit::application::ApplicationHandler for App {
 
         let splats: Vec<_> = splats.iter().map(|s| Splat {
             center: s.xyz,
-            dc: s.f_dc
+            dc: s.f_dc,
+            scale: s.scale,
+            rot: s.rot
         }).collect();
 
         let num_splats = splats.len() as u32;
@@ -194,6 +196,8 @@ num_splats,
                     command_buffer,
                     PushConstants {
                         camera: (proj * view).to_cols_array(),
+                        view: view.to_cols_array(),
+                        tan_fov: [0.0;2],
                         extent: [extent.width, extent.height],
                         image: *state.swapchain_image_heap_indices[next_image as usize],
                         frame_index: state.frame_index,

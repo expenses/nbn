@@ -1,8 +1,8 @@
 struct Splat {
     float3 dc;
     float3 center;
-    //float3 inv_scale_2;
-    //float4 rot;
+    float3 scale;
+    float4 rot;
     //float3 sh1_0;
     //float3 sh1_1;
     //float3 sh1_2;
@@ -10,7 +10,9 @@ struct Splat {
 }
 
 struct PushConstants {
-float4x4 camera;
+    float4x4 camera;
+    float4x4 view;
+    float2 tan_fov;
     uint2 extent;
     uint image;
     Splat* splats;
