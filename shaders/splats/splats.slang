@@ -116,7 +116,7 @@ float3 computeCov2D(float4x4 view, float4 q, float3 scale, float3 t,
 [NumThreads(1, 1, 1)]
 void reset(uniform PushConstants pc) {
     pc.dispatch.surviving_splats = 0;
-    prefix_sum_reset(pc.prefix_sum);
+    pc.dispatch.num_points = 0;
 }
 
 [shader("compute")]
@@ -192,26 +192,33 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     InterlockedAdd(pc.dispatch.surviving_splats, 1, index);
     pc.splat_data[index] = data;
 
-    prefix_sum_inclusive_append(pc.prefix_sum, index, count);
+    uint offset = 0;
+    InterlockedAdd(pc.dispatch.num_points, count, offset);
+
+    for (uint i = offset; i < min(offset+count, MAX_POINTS); i++) {
+        pc.point_to_splat[i] = index;
+    }
 }
 
 [shader("compute")]
 [NumThreads(1,1,1)]
 void setup_dispatch(uniform PushConstants pc) {
-    let total = prefix_sum_total(pc.prefix_sum);
+    if (pc.dispatch.num_points > MAX_POINTS) {
+        printf("too many points: %u\n", pc.dispatch.num_points);
+    }
+    pc.dispatch.num_points = min(pc.dispatch.num_points, MAX_POINTS);
+    let total = pc.dispatch.num_points;
     pc.dispatch.dispatch_size = uint3(div_ceil(total, 64), 1, 1);
 }
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
-    if (thread >= prefix_sum_total(pc.prefix_sum)) {
+    if (thread >= pc.dispatch.num_points) {
         return;
     }
 
-    let value = prefix_sum_binary_search(pc.prefix_sum, thread);
-
-    let data = pc.splat_data[value.index];
+    let data = pc.splat_data[pc.point_to_splat[thread]];
 
     var rng = SobolRng(thread, pc.frame_index);
 

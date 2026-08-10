@@ -119,8 +119,8 @@ impl winit::application::ApplicationHandler for App {
                 .unwrap(),
             prefix_sum: device
                 .create_buffer(nbn::BufferDescriptor {
-                    name: "prefix_sum",
-                    size: 10_000_000 * 8,
+                    name: "point_to_splat",
+                    size: 70_000_000 * 4,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
@@ -246,7 +246,7 @@ impl winit::application::ApplicationHandler for App {
                         num_splats: state.num_splats,
                         dispatch: *state.dispatch,
                         splat_data: *state.splat_data,
-                        prefix_sum_values: *state.prefix_sum,
+                        point_to_splat: *state.prefix_sum,
                     },
                 );
 

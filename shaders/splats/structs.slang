@@ -15,7 +15,7 @@ struct Splat {
 struct Dispatch {
     uint3 dispatch_size;
     uint surviving_splats;
-    uint64_t prefix_sum_counter;
+    uint num_points;
 }
 
 struct PerSplatData {
@@ -39,14 +39,5 @@ struct PushConstants {
     float tan_y;
     Dispatch* dispatch;
     PerSplatData* splat_data;
-    PrefixSumValue* prefix_sum_values;
-
-    property PrefixSumBuffer prefix_sum {
-        get {
-            PrefixSumBuffer prefix_sum;
-            prefix_sum.counter = (Atomic<uint64_t>*)&dispatch.prefix_sum_counter;
-            prefix_sum.values = prefix_sum_values;
-            return prefix_sum;
-        }
-    }
+    uint* point_to_splat;
 }
