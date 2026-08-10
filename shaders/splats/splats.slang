@@ -128,8 +128,8 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    let instance_scale = -10;
-    let instance_translation = float3(instance_index*200, 0, 1);
+    let instance_scale = float3(100, -100, 100);
+    let instance_translation = float3((instance_index%10), 0, instance_index/10) * 40;
 
     let splat = pc.splats[thread];
 
@@ -181,7 +181,13 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    // per-splat constants: SH base color + reversed-Z depth, packed for nearest-wins InterlockedMax
+    uint index = 0;
+    InterlockedAdd(pc.dispatch.surviving_splats, 1, index);
+
+    if (index >= MAX_SPLATS) {
+        return;
+    }
+
     let col = saturate((splat.dc * SH_C0) + 0.5);
     let col_u = uint64_t3(col * 255);
     let depth_bits = uint64_t(proj_mean.z * float(DEPTH_MAX));
@@ -194,14 +200,6 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     data.c2 = c2;
     data.center_px = center_px;
     data.packed = packed;
-
-    uint index = 0;
-    InterlockedAdd(pc.dispatch.surviving_splats, 1, index);
-
-    if (index >= MAX_SPLATS) {
-        return;
-    }
-
     pc.splat_data[index] = data;
 
     uint offset = 0;

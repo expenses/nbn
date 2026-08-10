@@ -109,14 +109,14 @@ impl winit::application::ApplicationHandler for App {
             window,
             buffer: device
                 .create_buffer(nbn::BufferDescriptor {
-                    name: "buffer",
+                    name: "render_bitmasks",
                     size: size.width as u64 * size.height as u64 * 8,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
             splat_data: device
                 .create_buffer(nbn::BufferDescriptor {
-                    name: "splat_data",
+                    name: "per_splat_data",
                     size: 20_000_000 * std::mem::size_of::<PerSplatData>() as u64,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
