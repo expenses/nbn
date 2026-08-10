@@ -2,22 +2,36 @@ import torch
 import sys
 from plyfile import PlyData
 import numpy as np
+from torch import nn
+import IPython
+
 
 assert torch.cuda.is_available()
 
+from torch.utils.tensorboard import SummaryWriter
 
-class Mlp(torch.nn.Module):
-    def __init__(self, out_dim):
+class BatchedLinear(nn.Module):
+    def __init__(self, num_chunks, in_dim, out_dim):
         super().__init__()
+        self.weight = nn.Parameter(torch.empty(num_chunks, in_dim, out_dim))
+        self.bias = nn.Parameter(torch.zeros(num_chunks, 1, out_dim))
+        nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
 
-        self.net = torch.nn.Sequential(
-            torch.nn.Linear(3, 64),
-            torch.nn.SiLU(),
-            torch.nn.Linear(64, 64),
-            torch.nn.SiLU(),
-            torch.nn.Linear(64, 64),
-            torch.nn.SiLU(),
-            torch.nn.Linear(64, out_dim),
+    def forward(self, x):  # x: (num_chunks, chunk_size, in_dim)
+        return torch.bmm(x, self.weight) + self.bias
+
+
+class Mlp(nn.Module):
+    def __init__(self, num_chunks, out_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            BatchedLinear(num_chunks, 3, 64),
+            nn.SiLU(),
+            BatchedLinear(num_chunks, 64, 64),
+            nn.SiLU(),
+            BatchedLinear(num_chunks, 64, 64),
+            nn.SiLU(),
+            BatchedLinear(num_chunks, 64, out_dim),
         )
 
     def forward(self, x):
@@ -51,44 +65,42 @@ maximum = np.array([val.max() for val in xyz])
 xyz = np.stack(xyz, axis=1)
 rescaled = (xyz - minimum)/(maximum - minimum)
 order = np.argsort(morton3d(rescaled), kind="stable")
-xyz = xyz[order]
-print(xyz)
-#sys.exit(0)
-
-num = 1024
-
-def load_tensor(k):
-    return torch.from_numpy(v[k][order][:num]).cuda()
-
-xyz = torch.stack(
-    [
-        load_tensor("x"),
-        load_tensor("y"),
-        load_tensor("z"),
-    ],
-    dim=1,
-)
+n_points = xyz.shape[0]//16
+xyz = torch.from_numpy(xyz[order][:n_points]).cuda()
+print(xyz.shape, n_points)
 
 props = torch.stack(
     [
-        load_tensor("f_dc_0"),
-        load_tensor("f_dc_1"),
-        load_tensor("f_dc_2"),
-        load_tensor("opacity"),
+        torch.from_numpy(v["f_dc_0"][order][:n_points]).cuda(),
+        torch.from_numpy(v["f_dc_1"][order][:n_points]).cuda(),
+        torch.from_numpy(v["f_dc_2"][order][:n_points]).cuda(),
+        torch.from_numpy(v["opacity"][order][:n_points]).cuda()
     ],
     dim=1,
 )
 
-model = Mlp(props.shape[1]).cuda()
-optimizer = torch.optim.AdamW(model.parameters(), lr=2e-3)
+learning_rate = 1.5e-3
 iters = 50_000
+
+writer = SummaryWriter(f"splat_mlp/n{iters}-l{learning_rate}")
+
+chunk_size = 1024
+n_chunks = n_points // chunk_size          # drop remainder points for simplicity
+
+
+xyz = xyz[: n_chunks * chunk_size].reshape(n_chunks, chunk_size, 3)
+props = props[: n_chunks * chunk_size].reshape(n_chunks, chunk_size, props.shape[1])
+
+model = Mlp(n_chunks, props.shape[2]).cuda()
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 for i in range(iters):
     optimizer.zero_grad()
-
-    pred = model(xyz)
+    pred = model(xyz)                      # all chunks, all points, one call
     loss = ((pred - props) ** 2).mean()
-
     loss.backward()
     optimizer.step()
-    print(i, loss)
+    print(i, loss.item())
+    writer.add_scalar("train/loss", loss, i)
+
+IPython.embed()
