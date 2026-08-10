@@ -34,7 +34,7 @@ impl winit::application::ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let filename = std::env::args().nth(1).unwrap();
 
-        let freecam = nbn::freecam::FreeCam::new([10.0, 10.0, 10.0].into(), NEAR_PLANE);
+        let freecam = nbn::freecam::FreeCam::new([2.0, 10.0, 10.0].into(), NEAR_PLANE);
 
         let splats = {
             let mut buf_read = std::io::BufReader::new(std::fs::File::open(&filename).unwrap());
@@ -47,7 +47,11 @@ impl winit::application::ApplicationHandler for App {
         };
 
         let window = event_loop
-            .create_window(winit::window::WindowAttributes::default().with_resizable(true))
+            .create_window(
+                winit::window::WindowAttributes::default()
+                    .with_inner_size(winit::dpi::PhysicalSize::new(1920, 1080))
+                    .with_resizable(true),
+            )
             .unwrap();
         let device = nbn::Device::new(Some(&window));
 
