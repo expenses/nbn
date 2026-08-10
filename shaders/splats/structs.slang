@@ -9,7 +9,6 @@ struct Splat {
     //float3 sh1_0;
     //float3 sh1_1;
     //float3 sh1_2;
-    //float opacity_factor;
 }
 
 struct Dispatch {

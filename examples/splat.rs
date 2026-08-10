@@ -117,14 +117,14 @@ impl winit::application::ApplicationHandler for App {
             splat_data: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "splat_data",
-                    size: 10_000_000 * std::mem::size_of::<PerSplatData>() as u64,
+                    size: 20_000_000 * std::mem::size_of::<PerSplatData>() as u64,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
             prefix_sum: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "point_to_splat",
-                    size: 70_000_000 * 4,
+                    size: 100_000_000 * 4,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),

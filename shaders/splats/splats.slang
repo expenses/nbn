@@ -9,6 +9,8 @@ static const float SH_C0 = 0.28209479177387814;
 static const float SH_C1 = 0.4886025119029199;
 static const uint DEPTH_MAX = (1u << 28) - 1;
 static const float GAUSSIAN_TRUNCATION_STD = 3.0;
+static const uint MAX_SPLATS = 20 * 1000 * 1000;
+static const uint MAX_POINTS = 100 * 1000 * 1000;
 
 
 // Dilogarithm Li2(x) = -integral_0^x ln(1-s)/s ds.
@@ -126,9 +128,14 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
+    let instance_scale = -10;
+    let instance_translation = float3(instance_index*200, 0, 1);
+
     let splat = pc.splats[thread];
 
-    var proj_mean = mul(pc.camera, float4(splat.center * -100, 1.0));
+    let instance_center = splat.center * instance_scale + instance_translation;
+
+    var proj_mean = mul(pc.camera, float4(instance_center, 1.0));
     proj_mean.xyz /= proj_mean.w;
 
     if (proj_mean.z < 0) {
@@ -136,9 +143,9 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
-    let t = mul(pc.view, float4(splat.center * -100, 1.0)).xyz;
+    let t = mul(pc.view, float4(instance_center, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
-    let cov2d = computeCov2D(pc.view, splat.rot, splat.scale * 100.0, t, pc.tan_y, float2(pc.extent));
+    let cov2d = computeCov2D(pc.view, splat.rot, splat.scale * instance_scale, t, pc.tan_y, float2(pc.extent));
 
     // check determinant in case of splats that have a dimension of size 0.
     // Not strictly required for scenes with good splats.
@@ -190,6 +197,11 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 
     uint index = 0;
     InterlockedAdd(pc.dispatch.surviving_splats, 1, index);
+
+    if (index >= MAX_SPLATS) {
+        return;
+    }
+
     pc.splat_data[index] = data;
 
     uint offset = 0;
@@ -203,6 +215,9 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 [shader("compute")]
 [NumThreads(1,1,1)]
 void setup_dispatch(uniform PushConstants pc) {
+    if (pc.dispatch.surviving_splats > MAX_SPLATS) {
+        printf("too many splats: %u\n", pc.dispatch.surviving_splats);
+    }
     if (pc.dispatch.num_points > MAX_POINTS) {
         printf("too many points: %u\n", pc.dispatch.num_points);
     }
