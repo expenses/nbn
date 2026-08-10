@@ -175,7 +175,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 
     // per-splat constants: SH base color + reversed-Z depth, packed for nearest-wins InterlockedMax
-    let col = (splat.dc * SH_C0) + 0.5;
+    let col = saturate((splat.dc * SH_C0) + 0.5);
     let col_u = uint64_t3(col * 255);
     let depth_bits = uint64_t(proj_mean.z * float(DEPTH_MAX));
     let packed = col_u.r | (col_u.g << 8) | (col_u.b << 16) | depth_bits << 36;
