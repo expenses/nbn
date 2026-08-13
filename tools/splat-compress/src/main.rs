@@ -16,7 +16,7 @@ struct Splat {
     center: [f32; 3],
     color_opacity: u32,
     scale: u32,
-    rot: [f32; 4],
+    rot: u32,
 }
 
 use ply_rs::ply;
@@ -116,7 +116,7 @@ fn main() {
                 | (quantize_10b_log(s.scale[1]) << 10)
                 | (quantize_10b_log(s.scale[2]) << 20),
                 // PLY (w,x,y,z) -> (x,y,z,w)
-                rot: ([s.rot[1], s.rot[2], s.rot[3], s.rot[0]]),
+                rot: quantize_quat([s.rot[1], s.rot[2], s.rot[3], s.rot[0]]),
             }
         })
         .collect();
