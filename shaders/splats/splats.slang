@@ -14,36 +14,42 @@ static const uint MAX_POINTS = 100 * 1000 * 1000;
 // Dilogarithm Li2(x) = -integral_0^x ln(1-s)/s ds.
 // Polynomial fit to Li2(x)-(1-x)ln(1-x), then (1-x)ln(1-x) added back.
 float dilog(float x) {
-    float y = -6.09201442e-01;
-    y = fma(y, x, 1.79126616e+00);
-    y = fma(y, x, -2.14953223e+00);
-    y = fma(y, x, 1.26304372e+00);
-    y = fma(y, x, -4.59069895e-01);
-    y = fma(y, x, -1.87417414e-01);
-    y = fma(y, x, 1.99603130e+00);
-    y = fma(y, x, 5.99669467e-05);
-    float s = 1.0 - x;
-    if (s > 0.0)
-        y += s * log(max(s, 1e-37));
-    return y;
+    float y = -6.09201442e-01f;
+	y = fma(y, x, 1.79126616e+00f);
+	y = fma(y, x, -2.14953223e+00f);
+	y = fma(y, x, 1.26304372e+00f);
+	y = fma(y, x, -4.59069895e-01f);
+	y = fma(y, x, -1.87417414e-01f);
+	y = fma(y, x, 1.99603130e+00f);
+	y = fma(y, x, 5.99669467e-05f);
+
+	float s = 1.0f - x;
+	if (s > 0.0f)
+		y += s * log(max(s, 1e-37f));
+
+	return y;
 }
+
+// Li2(1) = pi^2 / 6
+static const float LI2_MAX = 1.6449340668482264;
 
 // Inverse dilogarithm: minimax degree-10 polynomial in t = x / Li2(1).
 float inv_dilog(float x) {
-    static const float LI2_MAX = 1.6449340668482264; // Li2(1) = pi^2 / 6
-    float t = min(x / LI2_MAX, 1.0);
-    float y = -1.27463503e-01;
-    y = fma(y, t, 5.88993459e+01);
-    y = fma(y, t, -1.16025780e+02);
-    y = fma(y, t, 1.26945827e+02);
-    y = fma(y, t, -8.43108826e+01);
-    y = fma(y, t, 3.48799862e+01);
-    y = fma(y, t, -8.89606235e+00);
-    y = fma(y, t, 1.38640936e+00);
-    y = fma(y, t, -7.80640876e-01);
-    y = fma(y, t, 1.64841888e+00);
-    y = fma(y, t, -2.82836687e-05);
-    return y;
+    float t = min(x / LI2_MAX, 1.0f);
+
+	float y = -1.27463503e+01f;
+	y = fma(y, t, 5.88993459e+01f);
+	y = fma(y, t, -1.16025780e+02f);
+	y = fma(y, t, 1.26945827e+02f);
+	y = fma(y, t, -8.43108826e+01f);
+	y = fma(y, t, 3.48799862e+01f);
+	y = fma(y, t, -8.89606235e+00f);
+	y = fma(y, t, 1.38640936e+00f);
+	y = fma(y, t, -7.80640876e-01f);
+	y = fma(y, t, 1.64841888e+00f);
+	y = fma(y, t, -2.82836687e-05f);
+
+	return y;
 }
 
 // Opacity-corrected Box-Muller: returns a 2D standard normal whose radius follows
