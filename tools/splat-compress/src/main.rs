@@ -32,6 +32,28 @@ pub fn cast_slice<I: Copy, O: Copy>(slice: &[I]) -> &[O] {
     }
 }
 
+const LOG_MIN: f32 = -8.0;
+const LOG_MAX: f32 =  4.0;
+
+fn quantize_8b(v: f32) -> u32 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u32
+
+}
+
+fn quantize_8b_sh(v: f32) -> u32 {
+    quantize_8b((v * SH_C0) + 0.5)
+}
+
+fn quantize_10b_log(log_s: f32) -> u32 {
+    let t = (log_s - LOG_MIN) / (LOG_MAX - LOG_MIN);
+    quantize_10b_u(t)
+}
+
+
+fn quantize_10b_u(v: f32) -> u32 {
+    (v.clamp(0.0, 1.0) * 1023.0).round() as u32
+}
+
 fn quantize_10b(v: f32) -> u32 {
     // for 10 bits we use
     // 2**(10 - 1) - 1 = 511
@@ -54,8 +76,8 @@ fn quantize_quat(q: [f32; 4]) -> u32 {
     // To ensure that this largest component is positive.
     let sign = if q[qc] < 0.0 { -1.0 } else { 1.0 };
 
-    // Something to do with the fact that none of the other
-    // three components can exceed 1/sqrt(2) in magnitude
+    // As none of the other three components can exceed 1/sqrt(2),
+    // we can freely scale them by sqrt(2) for increased precision
     let scaler = std::f32::consts::SQRT_2;
 
     // note: we encode a cyclical swizzle to be able to recover the order via rotation
@@ -84,20 +106,15 @@ fn main() {
         .map(|s| {
             let opacity = 1.0 / (1.0 + (-s.opacity).exp());
 
-            let quantize = |v: f32| (v.clamp(0.0, 1.0).round() * 255.0) as u32;
-            let quantize_sh = |v: f32| quantize((v * SH_C0) + 0.5);
-
-            let scale = s.scale.map(f32::exp);
-
             Splat {
                 center: s.xyz,
-                color_opacity: quantize_sh(s.f_dc[0])
-                    | (quantize_sh(s.f_dc[1]) << 8)
-                    | (quantize_sh(s.f_dc[2]) << 16)
-                    | (quantize(opacity) << 24),
-                scale: quantize_10b(scale[0])
-                    | (quantize_10b(scale[1]) << 10)
-                    | (quantize_10b(scale[2]) << 20),
+                color_opacity: quantize_8b_sh(s.f_dc[0])
+                    | (quantize_8b_sh(s.f_dc[1]) << 8)
+                    | (quantize_8b_sh(s.f_dc[2]) << 16)
+                    | (quantize_8b(opacity) << 24),
+                scale: quantize_10b_log(s.scale[0])
+                | (quantize_10b_log(s.scale[1]) << 10)
+                | (quantize_10b_log(s.scale[2]) << 20),
                 // PLY (w,x,y,z) -> (x,y,z,w)
                 rot: ([s.rot[1], s.rot[2], s.rot[3], s.rot[0]]),
             }

@@ -8,8 +8,11 @@ struct Splat {
 
     property float3 scale {
         get {
-            let s = int3(packed_scale, packed_scale >> 10, packed_scale >> 20) & 1023;
-            return float3(s - 511) / 511;
+            let s = float3(packed_scale & 1023, (packed_scale >> 10) & 1023, packed_scale >> 20) / 1023.0;
+            float log_min = -8;
+            float log_max = 4;
+            float3 log_s = log_min + s * (log_max - log_min);
+            return exp(log_s);
         }
     }
 
