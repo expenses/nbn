@@ -132,7 +132,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    let instance_scale = float3(1);
+    let instance_scale = float3(1, -1, 1);
     let instance_translation = float3(0);
 
     let splat = pc.splats[thread];
