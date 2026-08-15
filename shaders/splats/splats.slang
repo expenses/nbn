@@ -10,6 +10,7 @@ import splats.helpers;
 static const float GAUSSIAN_TRUNCATION_STD = 3.0;
 static const uint MAX_SPLATS = 30 * 1000 * 1000;
 static const uint MAX_POINTS = 300 * 1000 * 1000;
+static const uint K = 8;
 
 // i-th column of the rotation matrix: where the quaternion sends basis vector i
 float3 rotatedBasis(float4 q, int i) {
@@ -87,7 +88,8 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
     let t = mul(pc.view, float4(instance_center, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
-    let cov2d = computeCov2D(pc.view, splat.rot, splat.scale * instance_scale, t, pc.tan_y, float2(pc.extent));
+    var cov2d = computeCov2D(pc.view, splat.rot, splat.scale * instance_scale, t, pc.tan_y, float2(pc.extent));
+    cov2d += float3(0.3, 0, 0.3);
 
     // check determinant in case of splats that have a dimension of size 0.
     // Not strictly required for scenes with good splats.
@@ -112,13 +114,13 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 
     let importance = TWO_PI * sqrt(det) * dilog(splat.opacity);
 
-    var count = poisson(seed, importance);
-
-    count = min(count, 1000);
+    var count = poisson(seed, importance/K);
 
     if (count == 0) {
         return;
     }
+
+    count = min(count, 20000);
 
     uint index = 0;
     InterlockedAdd(pc.dispatch.surviving_splats, 1, index);
@@ -155,20 +157,22 @@ void setup_dispatch(uniform PushConstants pc) {
         printf("too many points: %u\n", pc.dispatch.num_points);
     }
     pc.dispatch.num_points = min(pc.dispatch.num_points, MAX_POINTS);
-    let total = pc.dispatch.num_points;
+    let total = pc.dispatch.num_points * K;
     pc.dispatch.dispatch_size = uint3(div_ceil(total, 64), 1, 1);
 }
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
-    if (thread >= pc.dispatch.num_points) {
+    let point_index = thread / K;
+
+    if (point_index >= pc.dispatch.num_points) {
         return;
     }
 
    	uint2 seed = makeSeed(thread, pc.frame_index);
 
-    let data = pc.splat_data[pc.point_to_splat[thread]];
+    let data = pc.splat_data[pc.point_to_splat[point_index]];
 
     let u = pcg2d(seed);
     let xy = correctedBoxMuller(u.x, u.y, data.opacity);
