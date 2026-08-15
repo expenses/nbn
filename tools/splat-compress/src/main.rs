@@ -33,11 +33,10 @@ pub fn cast_slice<I: Copy, O: Copy>(slice: &[I]) -> &[O] {
 }
 
 const LOG_MIN: f32 = -8.0;
-const LOG_MAX: f32 =  4.0;
+const LOG_MAX: f32 = 4.0;
 
 fn quantize_8b(v: f32) -> u32 {
     (v.clamp(0.0, 1.0) * 255.0).round() as u32
-
 }
 
 fn quantize_8b_sh(v: f32) -> u32 {
@@ -48,7 +47,6 @@ fn quantize_10b_log(log_s: f32) -> u32 {
     let t = (log_s - LOG_MIN) / (LOG_MAX - LOG_MIN);
     quantize_10b_u(t)
 }
-
 
 fn quantize_10b_u(v: f32) -> u32 {
     (v.clamp(0.0, 1.0) * 1023.0).round() as u32
@@ -113,8 +111,8 @@ fn main() {
                     | (quantize_8b_sh(s.f_dc[2]) << 16)
                     | (quantize_8b(opacity) << 24),
                 scale: quantize_10b_log(s.scale[0])
-                | (quantize_10b_log(s.scale[1]) << 10)
-                | (quantize_10b_log(s.scale[2]) << 20),
+                    | (quantize_10b_log(s.scale[1]) << 10)
+                    | (quantize_10b_log(s.scale[2]) << 20),
                 // PLY (w,x,y,z) -> (x,y,z,w)
                 rot: quantize_quat([s.rot[1], s.rot[2], s.rot[3], s.rot[0]]),
             }
