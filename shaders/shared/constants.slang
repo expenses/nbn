@@ -1,6 +1,7 @@
 static const uint MAX_UINT_VALUE = 4294967295;
 static const float PI = 3.14159265358979323846;
 static const float GOLDEN_RATIO = 1.618033988749894;
+static const float TWO_PI = 2.0f * PI;
 
 static const float4x4 IDENTITY = float4x4(
     float4(1, 0, 0, 0),

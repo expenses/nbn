@@ -5,78 +5,11 @@ import fallback_bindings;
 import splats.structs;
 import shared.prefix_sum;
 import shared.constants;
+import splats.helpers;
 
 static const float GAUSSIAN_TRUNCATION_STD = 3.0;
 static const uint MAX_SPLATS = 30 * 1000 * 1000;
 static const uint MAX_POINTS = 300 * 1000 * 1000;
-
-
-// Dilogarithm Li2(x) = -integral_0^x ln(1-s)/s ds.
-// Polynomial fit to Li2(x)-(1-x)ln(1-x), then (1-x)ln(1-x) added back.
-float dilog(float x) {
-    float y = -6.09201442e-01f;
-	y = fma(y, x, 1.79126616e+00f);
-	y = fma(y, x, -2.14953223e+00f);
-	y = fma(y, x, 1.26304372e+00f);
-	y = fma(y, x, -4.59069895e-01f);
-	y = fma(y, x, -1.87417414e-01f);
-	y = fma(y, x, 1.99603130e+00f);
-	y = fma(y, x, 5.99669467e-05f);
-
-	float s = 1.0f - x;
-	if (s > 0.0f)
-		y += s * log(max(s, 1e-37f));
-
-	return y;
-}
-
-// Li2(1) = pi^2 / 6
-static const float LI2_MAX = 1.6449340668482264;
-
-// Inverse dilogarithm: minimax degree-10 polynomial in t = x / Li2(1).
-float inv_dilog(float x) {
-    float t = min(x / LI2_MAX, 1.0f);
-
-	float y = -1.27463503e+01f;
-	y = fma(y, t, 5.88993459e+01f);
-	y = fma(y, t, -1.16025780e+02f);
-	y = fma(y, t, 1.26945827e+02f);
-	y = fma(y, t, -8.43108826e+01f);
-	y = fma(y, t, 3.48799862e+01f);
-	y = fma(y, t, -8.89606235e+00f);
-	y = fma(y, t, 1.38640936e+00f);
-	y = fma(y, t, -7.80640876e-01f);
-	y = fma(y, t, 1.64841888e+00f);
-	y = fma(y, t, -2.82836687e-05f);
-
-	return y;
-}
-
-// Opacity-corrected Box-Muller: returns a 2D standard normal whose radius follows
-// the opacity-corrected Gaussian density. Multiply by the Cholesky factor of cov2D.
-float2 correctedBoxMuller(float u1, float u2, float alpha) {
-    float a = inv_dilog((1.0 - u1) * dilog(alpha)) / max(alpha, 1e-37);
-    a = clamp(a, 1e-37, 1.0);
-    float r = sqrt(max(-2.0 * log(a), 0.0));
-    float theta = 6.2831853 * u2;
-    return float2(r * cos(theta), r * sin(theta));
-}
-
-// Poisson sampler: Giles (2016) Algorithm 955 QN3 asymptotic approximation.
-// Accurate for moderate-to-large means; the guard avoids div-by-zero for tiny means.
-// gaussian-point-splatting/src/core/random/poisson.cuh
-uint poisson(float u1, float u2, float lambda) {
-    if (lambda < 1e-4)
-        return 0;
-    float w = sqrt(-2.0 * log(max(u1, 1e-37))) * cos(6.2831853 * u2);
-    float w2 = w * w, w3 = w2 * w, w4 = w2 * w2;
-    float s = sqrt(lambda);
-    float kf = lambda + s * w + (w2 - 1.0) / 6.0;
-    kf += (1.0 / s)       * (-(1.0 / 36.0) * w  - (1.0 / 72.0) * w3);
-    kf += (1.0 / lambda)  * (-(8.0 / 405.0) + (7.0 / 810.0) * w2 + (1.0 / 270.0) * w4);
-    return uint(max(round(kf), 0.0));
-}
-
 
 // i-th column of the rotation matrix: where the quaternion sends basis vector i
 float3 rotatedBasis(float4 q, int i) {
@@ -132,6 +65,8 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
+   	uint2 seed = makeSeed(thread, pc.frame_index);
+
     let instance_scale = float3(1, -1, 1);
     let instance_translation = float3(0);
 
@@ -175,12 +110,9 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    var rng = SobolRng(thread, pc.frame_index);
+    let importance = TWO_PI * sqrt(det) * dilog(splat.opacity);
 
-    // opacity-corrected expected point count: lambda = 2*pi*sqrt(det)*Li2(splat.opacity)
-    let lambda = 6.2831853 * sqrt(det) * dilog(splat.opacity);
-    let pu = rng.rand2();
-    var count = poisson(pu.x, pu.y, lambda);
+    var count = poisson(seed, importance);
 
     count = min(count, 1000);
 
@@ -234,26 +166,27 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
+   	uint2 seed = makeSeed(thread, pc.frame_index);
+
     let data = pc.splat_data[pc.point_to_splat[thread]];
 
-    var rng = SobolRng(thread, pc.frame_index);
+    let u = pcg2d(seed);
+    let xy = correctedBoxMuller(u.x, u.y, data.opacity);
+    var pixel = float2(data.center_px.x + data.c0 * xy.x, data.center_px.y + data.c1 * xy.x + data.c2 * xy.y);
+    pixel = floor(pixel);
 
-    let su = rng.rand2();
-    let n = correctedBoxMuller(su.x, su.y, data.opacity);
-    let offset = float2(data.c0 * n.x, data.c1 * n.x + data.c2 * n.y);
-
-    let sample_px = data.center_px + offset;
-    if (any(sample_px < 0.0) || any(sample_px >= pc.extent)) {
+    if (any(pixel < 0.0) || any(pixel >= pc.extent)) {
         return;
     }
-    let coord = uint2(floor(sample_px));
+    let coord = uint2(pixel);
 
     // reject points whose contribution is below the 8-bit floor (Mahalanobis test)
-    let delta = data.center_px - float2(coord);
+    float2 delta = data.center_px - pixel;
     let z0 = delta.x / data.c0;
     let z1 = (delta.y - data.c1 * z0) / data.c2;
-    let weight = exp(-0.5 * (z0*z0 + z1*z1));
-    if (data.opacity * weight < 1.0 / 255.0) {
+    let gaussian_weight = exp(-0.5 * (z0*z0 + z1*z1));
+    let alpha = data.opacity * gaussian_weight;
+    if (alpha < 1.0 / 255.0) {
         return;
     }
 
