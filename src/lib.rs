@@ -1110,6 +1110,26 @@ impl Device {
         self.insert_pipeline_barriers(command_buffer, [(image.into(), src, dst)], []);
     }
 
+    pub fn insert_global_pipeline_barrier(
+        &self,
+        command_buffer: &CommandBuffer,
+        src: BarrierOp,
+        dst: BarrierOp,
+    ) {
+        let (src_stage, src_access, _) = src.into();
+        let (dst_stage, dst_access, _) = dst.into();
+        unsafe {
+            self.cmd_pipeline_barrier2(
+                **command_buffer,
+                &vk::DependencyInfo::default().memory_barriers(&[vk::MemoryBarrier2::default()
+                    .src_stage_mask(src_stage)
+                    .src_access_mask(src_access)
+                    .dst_stage_mask(dst_stage)
+                    .dst_access_mask(dst_access)]),
+            );
+        }
+    }
+
     pub fn bind_internal_descriptor_sets(
         &self,
         command_buffer: &CommandBuffer,
