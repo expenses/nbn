@@ -116,7 +116,7 @@ impl winit::application::ApplicationHandler for App {
             point_to_splat: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "point_to_splat",
-                    size: 300_000_000 * 4,
+                    size: 150_000_000 * 4,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),

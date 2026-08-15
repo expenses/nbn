@@ -9,7 +9,7 @@ import splats.helpers;
 
 static const float GAUSSIAN_TRUNCATION_STD = 3.0;
 static const uint MAX_SPLATS = 30 * 1000 * 1000;
-static const uint MAX_POINTS = 300 * 1000 * 1000;
+static const uint MAX_POINTS = 150 * 1000 * 1000;
 static const uint K = 8;
 
 // i-th column of the rotation matrix: where the quaternion sends basis vector i
@@ -85,6 +85,11 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
+    // Potential speed up by culling splat centers if they're _way_ offscreen.
+    if (abs(proj_mean.x) > 10 || abs(proj_mean.y) > 10) {
+        //return;
+    }
+
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
     let t = mul(pc.view, float4(instance_center, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
@@ -157,44 +162,44 @@ void setup_dispatch(uniform PushConstants pc) {
         printf("too many points: %u\n", pc.dispatch.num_points);
     }
     pc.dispatch.num_points = min(pc.dispatch.num_points, MAX_POINTS);
-    let total = pc.dispatch.num_points * K;
+    let total = pc.dispatch.num_points;
     pc.dispatch.dispatch_size = uint3(div_ceil(total, 64), 1, 1);
 }
 
 [shader("compute")]
 [NumThreads(64, 1, 1)]
 void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
-    let point_index = thread / K;
-
-    if (point_index >= pc.dispatch.num_points) {
+    if (thread >= pc.dispatch.num_points) {
         return;
     }
 
    	uint2 seed = makeSeed(thread, pc.frame_index);
 
-    let data = pc.splat_data[pc.point_to_splat[point_index]];
+    let data = pc.splat_data[pc.point_to_splat[thread]];
 
-    let u = pcg2d(seed);
-    let xy = correctedBoxMuller(u.x, u.y, data.opacity);
-    var pixel = float2(data.center_px.x + data.c0 * xy.x, data.center_px.y + data.c1 * xy.x + data.c2 * xy.y);
-    pixel = floor(pixel);
+    for (uint i = 0; i < K; i++) {
+        let u = pcg2d(seed);
+        let xy = correctedBoxMuller(u.x, u.y, data.opacity);
+        var pixel = float2(data.center_px.x + data.c0 * xy.x, data.center_px.y + data.c1 * xy.x + data.c2 * xy.y);
+        pixel = floor(pixel);
 
-    if (any(pixel < 0.0) || any(pixel >= pc.extent)) {
-        return;
+        if (any(pixel < 0.0) || any(pixel >= pc.extent)) {
+            return;
+        }
+        let coord = uint2(pixel);
+
+        // reject points whose contribution is below the 8-bit floor (Mahalanobis test)
+        float2 delta = data.center_px - pixel;
+        let z0 = delta.x / data.c0;
+        let z1 = (delta.y - data.c1 * z0) / data.c2;
+        let gaussian_weight = exp(-0.5 * (z0*z0 + z1*z1));
+        let alpha = data.opacity * gaussian_weight;
+        if (alpha < 1.0 / 255.0) {
+            return;
+        }
+
+        InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], data.packed);
     }
-    let coord = uint2(pixel);
-
-    // reject points whose contribution is below the 8-bit floor (Mahalanobis test)
-    float2 delta = data.center_px - pixel;
-    let z0 = delta.x / data.c0;
-    let z1 = (delta.y - data.c1 * z0) / data.c2;
-    let gaussian_weight = exp(-0.5 * (z0*z0 + z1*z1));
-    let alpha = data.opacity * gaussian_weight;
-    if (alpha < 1.0 / 255.0) {
-        return;
-    }
-
-    InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], data.packed);
 }
 
 [shader("compute")]
