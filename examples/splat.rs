@@ -248,6 +248,32 @@ impl winit::application::ApplicationHandler for App {
                     *state.reset,
                 );
 
+                device.insert_pipeline_barriers(
+                    &command_buffer,
+                    [],
+                    [(
+                        &state.splat_data,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.point_to_splat,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.render_bitmasks,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.dispatch,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    )],
+                );
+
+
                 device.cmd_dispatch(**command_buffer, 1, 1, 1);
 
                 device.cmd_bind_pipeline(
@@ -263,8 +289,23 @@ impl winit::application::ApplicationHandler for App {
                     [],
                     [(
                         &state.splat_data,
-                        nbn::BarrierOp::ComputeStorageWrite,
-                        nbn::BarrierOp::ComputeStorageRead,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.point_to_splat,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.render_bitmasks,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.dispatch,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
                     )],
                 );
 
@@ -272,6 +313,31 @@ impl winit::application::ApplicationHandler for App {
                     **command_buffer,
                     vk::PipelineBindPoint::COMPUTE,
                     *state.setup_dispatch,
+                );
+
+              device.insert_pipeline_barriers(
+                    &command_buffer,
+                    [],
+                    [(
+                        &state.splat_data,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.point_to_splat,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.render_bitmasks,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.dispatch,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    )],
                 );
 
                 device.cmd_dispatch(**command_buffer, 1, 1, 1);
@@ -283,6 +349,31 @@ impl winit::application::ApplicationHandler for App {
                 );
 
                 device.cmd_dispatch_indirect(**command_buffer, *state.dispatch.buffer, 0);
+
+              device.insert_pipeline_barriers(
+                    &command_buffer,
+                    [],
+                    [(
+                        &state.splat_data,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.point_to_splat,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.render_bitmasks,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    ),
+                    (
+                        &state.dispatch,
+                        nbn::BarrierOp::AllCommands,
+                        nbn::BarrierOp::AllCommands,
+                    )],
+                );
 
                 device.cmd_bind_pipeline(
                     **command_buffer,
