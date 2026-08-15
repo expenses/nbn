@@ -4,11 +4,11 @@ import shared.noise;
 import fallback_bindings;
 import splats.structs;
 import shared.prefix_sum;
+import shared.constants;
 
-static const uint DEPTH_MAX = (1u << 30) - 1;
 static const float GAUSSIAN_TRUNCATION_STD = 3.0;
-static const uint MAX_SPLATS = 20 * 1000 * 1000;
-static const uint MAX_POINTS = 100 * 1000 * 1000;
+static const uint MAX_SPLATS = 30 * 1000 * 1000;
+static const uint MAX_POINTS = 300 * 1000 * 1000;
 
 
 // Dilogarithm Li2(x) = -integral_0^x ln(1-s)/s ds.
@@ -135,7 +135,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let instance_scale = float3(1, -1, 1);
     let instance_translation = float3(0);
 
-    let num_splats_per_chunk = 10 * 1000 * 1000;
+    let num_splats_per_chunk = 80 * 1000 * 1000;
 
     let chunk = pc.splats[thread / num_splats_per_chunk];
     let splat = chunk[thread % num_splats_per_chunk];
@@ -195,7 +195,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    let depth_bits = uint64_t(proj_mean.z * float(DEPTH_MAX));
+    let depth_bits = uint64_t(proj_mean.z * float(MAX_UINT_VALUE));
 
     PerSplatData data;
     data.packed = splat.color_opacity | (depth_bits << 32);

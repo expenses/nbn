@@ -52,7 +52,7 @@ impl winit::application::ApplicationHandler for App {
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 1024 * 1024 * 1024, nbn::QueueType::Compute);
 
-        let splat_chunks: Vec<nbn::Buffer> = splats.chunks(10_000_000).map(|chunk| {
+        let splat_chunks: Vec<nbn::Buffer> = splats.chunks(80_000_000).map(|chunk| {
             staging_buffer.create_buffer_from_slice(&device, "splats chunk", chunk)
         }).collect();
 
@@ -104,14 +104,14 @@ impl winit::application::ApplicationHandler for App {
             splat_data: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "per_splat_data",
-                    size: 20_000_000 * std::mem::size_of::<PerSplatData>() as u64,
+                    size: 30_000_000 * std::mem::size_of::<PerSplatData>() as u64,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
             point_to_splat: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "point_to_splat",
-                    size: 100_000_000 * 4,
+                    size: 300_000_000 * 4,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
