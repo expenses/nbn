@@ -70,7 +70,7 @@ struct PushConstants {
     float4x4 view;
     uint2 extent;
     uint image;
-    Splat* splats;
+    Ptr<Splat>* splats;
     uint64_t* bitmasks;
     uint frame_index;
     uint num_splats;

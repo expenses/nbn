@@ -135,7 +135,10 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let instance_scale = float3(1, -1, 1);
     let instance_translation = float3(0);
 
-    let splat = pc.splats[thread];
+    let num_splats_per_chunk = 10 * 1000 * 1000;
+
+    let chunk = pc.splats[thread / num_splats_per_chunk];
+    let splat = chunk[thread % num_splats_per_chunk];
 
     let instance_center = splat.center * instance_scale + instance_translation;
 

@@ -17,7 +17,8 @@ struct State {
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
     render_bitmasks: nbn::Buffer,
-    splats: nbn::Buffer,
+    splat_chunks: Vec<nbn::Buffer>,
+    chunk_addresses: nbn::Buffer,
     dispatch: nbn::Buffer,
     splat_data: nbn::Buffer,
     point_to_splat: nbn::Buffer,
@@ -51,11 +52,13 @@ impl winit::application::ApplicationHandler for App {
         let mut staging_buffer =
             nbn::StagingBuffer::new(&device, 1024 * 1024 * 1024, nbn::QueueType::Compute);
 
-        let splats = &splats[..5_000_000];
+        let splat_chunks: Vec<nbn::Buffer> = splats.chunks(10_000_000).map(|chunk| {
+            staging_buffer.create_buffer_from_slice(&device, "splats chunk", chunk)
+        }).collect();
 
         let num_splats = splats.len() as u32;
 
-        let splats = staging_buffer.create_buffer_from_slice(&device, "splats", &splats);
+        let chunk_addresses = staging_buffer.create_buffer_from_slice(&device, "chunk addresses", &splat_chunks.iter().map(|chunk| **chunk).collect::<Vec<_>>());
 
         staging_buffer.finish(&device);
 
@@ -119,8 +122,9 @@ impl winit::application::ApplicationHandler for App {
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
+                chunk_addresses,
             device,
-            splats,
+            splat_chunks,
             frame_index: 0,
             num_splats,
         });
@@ -230,7 +234,7 @@ impl winit::application::ApplicationHandler for App {
                         image: *state.swapchain_image_heap_indices[next_image as usize],
                         frame_index: state.frame_index,
                         bitmasks: *state.render_bitmasks,
-                        splats: *state.splats,
+                        splats: *state.chunk_addresses,
                         num_splats: state.num_splats,
                         dispatch: *state.dispatch,
                         splat_data: *state.splat_data,
