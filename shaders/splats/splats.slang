@@ -65,8 +65,6 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-   	uint2 seed = makeSeed(thread, pc.frame_index);
-
     let chunk = pc.splats[thread / NUM_SPLATS_PER_CHUNK];
     let splat = chunk[thread % NUM_SPLATS_PER_CHUNK];
 
@@ -78,8 +76,8 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 
     // Potential speed up by culling splat centers if they're _way_ offscreen.
-    if (abs(proj_mean.x) > 10 || abs(proj_mean.y) > 10) {
-        //return;
+    if (abs(proj_mean.x) > 2 || abs(proj_mean.y) > 2) {
+        return;
     }
 
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
@@ -111,6 +109,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 
     let importance = TWO_PI * sqrt(det) * dilog(splat.opacity);
 
+    uint2 seed = makeSeed(thread, pc.frame_index);
     var count = poisson(seed, importance/K);
 
     if (count == 0) {
