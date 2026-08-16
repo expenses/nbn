@@ -32,3 +32,4 @@ noise
 *.jpg
 .vs
 export
+*.ply

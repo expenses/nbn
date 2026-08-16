@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+memchr = "2.8.3"
+memmap2 = "0.9.11"
 ply-rs = "0.1.3"

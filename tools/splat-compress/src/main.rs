@@ -12,6 +12,29 @@ struct PlySplat {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
+struct PlySplatNormals {
+    xyz: [f32; 3],
+    n: [f32; 3],
+    f_dc: [f32; 3],
+    opacity: f32,
+    scale: [f32; 3],
+    rot: [f32; 4],
+}
+
+impl From<PlySplatNormals> for PlySplat {
+    fn from(s: PlySplatNormals) -> Self {
+        Self {
+            xyz: s.xyz,
+            f_dc: s.f_dc,
+            opacity: s.opacity,
+            scale: s.scale,
+            rot: s.rot,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
 struct Splat {
     center: [f32; 3],
     color_opacity: u32,
@@ -97,22 +120,31 @@ fn srgb_lin2encoded(value: f32) -> f32 {
 fn main() {
     let filename = std::env::args().nth(1).unwrap();
     let output = std::env::args().nth(2).unwrap();
-    let mut buf_read = std::io::BufReader::new(std::fs::File::open(&filename).unwrap());
-    let p = ply_rs::parser::Parser::<ply::DefaultElement>::new();
-    let header = p.read_header(&mut buf_read).unwrap();
-    dbg!(&header);
-    let mut remaining = Vec::new();
-    buf_read.read_to_end(&mut remaining).unwrap();
-    let splats = cast_slice::<_, PlySplat>(&remaining);
+    let file = std::fs::File::open(&filename).unwrap();
+    let mmap = unsafe { memmap2::MmapOptions::new().map(&file).unwrap() };
 
-    let mut output = std::fs::File::create(&output).unwrap();
+    let end_header = b"end_header\n";
 
-    let splats: Vec<_> = splats
-        .iter()
-        .map(|s| {
-            let opacity = 1.0 / (1.0 + (-s.opacity).exp());
+    let end_header_loc =
+        memchr::memmem::find(&mmap[..4096], end_header).unwrap() + end_header.len();
+    let header = std::str::from_utf8(&mmap[..end_header_loc]).unwrap();
+    println!("{}", header);
 
-            Splat {
+    assert!(header.contains("property float nx"));
+
+    let splats = cast_slice::<_, PlySplatNormals>(&mmap[end_header_loc..]);
+
+    dbg!(splats[0]);
+
+    let mut output = std::io::BufWriter::new(std::fs::File::create(&output).unwrap());
+
+    for &s in splats {
+        let s: PlySplat = s.into();
+
+        let opacity = 1.0 / (1.0 + (-s.opacity).exp());
+
+        output
+            .write_all(cast_slice(&[Splat {
                 // (COLMAP y-down -> y-up)
                 center: [s.xyz[0], -s.xyz[1], s.xyz[2]],
                 color_opacity: quantize_8b_sh(s.f_dc[0])
@@ -124,9 +156,7 @@ fn main() {
                     | (quantize_10b_log(s.scale[2]) << 20),
                 // colmap flip again
                 rot: quantize_quat([-s.rot[1], s.rot[2], -s.rot[3], s.rot[0]]),
-            }
-        })
-        .collect();
-
-    output.write_all(cast_slice(&splats)).unwrap();
+            }]))
+            .unwrap();
+    }
 }
