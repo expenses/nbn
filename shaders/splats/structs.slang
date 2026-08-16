@@ -28,9 +28,9 @@ struct Splat {
             let qc  = (p >> 30) & 3;
             // inverse of quantize_10b: (bits - 511)/511, then undo the encode-time x sqrt(2)
             let sqrt_2 = sqrt(2);
-            let v0 = float((p       & 1023) - 511) / 511.0 / sqrt_2;
-            let v1 = float(((p >> 10) & 1023) - 511) / 511.0 / sqrt_2;
-            let v2 = float(((p >> 20) & 1023) - 511) / 511.0 / sqrt_2;
+            let v0 = float(int(p       & 1023) - 511) / 511.0 / sqrt_2;
+            let v1 = float(int((p >> 10) & 1023) - 511) / 511.0 / sqrt_2;
+            let v2 = float(int((p >> 20) & 1023) - 511) / 511.0 / sqrt_2;
             // largest component was dropped; recover it positive from unit length
             let large = sqrt(max(1.0 - (v0*v0 + v1*v1 + v2*v2), 0.0));
 
