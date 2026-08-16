@@ -1,5 +1,5 @@
 use either::Either;
-use std::io::{Read, Write};
+use std::io::Write;
 
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
@@ -42,8 +42,6 @@ struct Splat {
     scale: u32,
     rot: u32,
 }
-
-use ply_rs::ply;
 
 const SH_C0: f32 = 0.28209479177387814;
 
@@ -167,6 +165,9 @@ fn main() {
     for (i, s) in iter.enumerate() {
         if i == 0 {
             dbg!(s);
+        }
+        if i % 1_000_000 == 0 {
+            dbg!(i);
         }
         let opacity = 1.0 / (1.0 + (-s.opacity).exp());
 
