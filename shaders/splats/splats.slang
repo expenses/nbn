@@ -166,7 +166,7 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let c1 = cov2d.y / c0;
     let c2 = sqrt(max(cov2d.z - c1 * c1, 0.0));
 
-    let depth_bits = uint64_t(proj_mean.z * float(MAX_UINT_VALUE));
+    let depth_bits = uint64_t(reinterpret<uint>(clamp(proj_mean.z, 0.0, 1.0)));
 
     let packed = splat.color_opacity | (depth_bits << 32);
 
