@@ -68,15 +68,10 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 
    	uint2 seed = makeSeed(thread, pc.frame_index);
 
-    let instance_scale = float3(1, -1, 1);
-    let instance_translation = float3(0);
-
     let chunk = pc.splats[thread / NUM_SPLATS_PER_CHUNK];
     let splat = chunk[thread % NUM_SPLATS_PER_CHUNK];
 
-    let instance_center = splat.center * instance_scale + instance_translation;
-
-    var proj_mean = mul(pc.camera, float4(instance_center, 1.0));
+    var proj_mean = mul(pc.camera, float4(splat.center, 1.0));
     proj_mean.xyz /= proj_mean.w;
 
     if (proj_mean.z < 0) {
@@ -89,9 +84,9 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
-    let t = mul(pc.view, float4(instance_center, 1.0)).xyz;
+    let t = mul(pc.view, float4(splat.center, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
-    var cov2d = computeCov2D(pc.view, splat.rot, splat.scale * instance_scale, t, pc.tan_y, float2(pc.extent));
+    var cov2d = computeCov2D(pc.view, splat.rot, splat.scale, t, pc.tan_y, float2(pc.extent));
     cov2d += float3(0.3, 0, 0.3);
 
     // check determinant in case of splats that have a dimension of size 0.
@@ -153,22 +148,17 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 
    	uint2 seed = makeSeed(thread, pc.frame_index);
 
-    let instance_scale = float3(1, -1, 1);
-    let instance_translation = float3(0);
-
     let splat_index = pc.point_to_splat[thread];
     let chunk = pc.splats[splat_index / NUM_SPLATS_PER_CHUNK];
     let splat = chunk[splat_index % NUM_SPLATS_PER_CHUNK];
 
-    let instance_center = splat.center * instance_scale + instance_translation;
-
-    var proj_mean = mul(pc.camera, float4(instance_center, 1.0));
+    var proj_mean = mul(pc.camera, float4(splat.center, 1.0));
     proj_mean.xyz /= proj_mean.w;
 
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
-    let t = mul(pc.view, float4(instance_center, 1.0)).xyz;
+    let t = mul(pc.view, float4(splat.center, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
-    var cov2d = computeCov2D(pc.view, splat.rot, splat.scale * instance_scale, t, pc.tan_y, float2(pc.extent));
+    var cov2d = computeCov2D(pc.view, splat.rot, splat.scale, t, pc.tan_y, float2(pc.extent));
     cov2d += float3(0.3, 0, 0.3);
 
     // Cholesky factor of cov2d: maps a standard normal into a sample from this Gaussian
@@ -189,7 +179,7 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         pixel = floor(pixel);
 
         if (any(pixel < 0.0) || any(pixel >= pc.extent)) {
-            return;
+            continue;
         }
         let coord = uint2(pixel);
 
@@ -200,7 +190,7 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
         let gaussian_weight = exp(-0.5 * (z0*z0 + z1*z1));
         let alpha = splat.opacity * gaussian_weight;
         if (alpha < 1.0 / 255.0) {
-            return;
+            continue;
         }
 
         InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], packed);
@@ -217,8 +207,12 @@ void output(uint2 thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let mask = pc.bitmasks[thread.x + thread.y * pc.extent.x];
     pc.bitmasks[thread.x + thread.y * pc.extent.x] = 0;
 
-    let value = float3(mask & 255, (mask >> 8) & 255, (mask >> 16) & 255) / 255;
+    var value = float3(mask & 255, (mask >> 8) & 255, (mask >> 16) & 255) / 255;
+
+    if (mask >> 32 == 0) {
+        value = float3(178, 255, 255) / 255;
+    }
 
     WTexture2D<float4> output = storage_images[pc.image];
-    output.Store(thread, float4(srgb_lin2encoded(value), 1));
+    output.Store(thread, float4(value, 1));
 }

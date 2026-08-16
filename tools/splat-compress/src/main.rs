@@ -40,7 +40,7 @@ fn quantize_8b(v: f32) -> u32 {
 }
 
 fn quantize_8b_sh(v: f32) -> u32 {
-    quantize_8b((v * SH_C0) + 0.5)
+    quantize_8b(srgb_lin2encoded((v * SH_C0) + 0.5))
 }
 
 fn quantize_10b_log(log_s: f32) -> u32 {
@@ -86,6 +86,14 @@ fn quantize_quat(q: [f32; 4]) -> u32 {
     a | (b << 10) | (c << 20) | ((qc as u32) << 30)
 }
 
+fn srgb_lin2encoded(value: f32) -> f32 {
+    if value <= 0.0031308 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
 fn main() {
     let filename = std::env::args().nth(1).unwrap();
     let output = std::env::args().nth(2).unwrap();
@@ -105,7 +113,8 @@ fn main() {
             let opacity = 1.0 / (1.0 + (-s.opacity).exp());
 
             Splat {
-                center: s.xyz,
+                // (COLMAP y-down -> y-up)
+                center: [s.xyz[0], -s.xyz[1], s.xyz[2]],
                 color_opacity: quantize_8b_sh(s.f_dc[0])
                     | (quantize_8b_sh(s.f_dc[1]) << 8)
                     | (quantize_8b_sh(s.f_dc[2]) << 16)
@@ -113,8 +122,8 @@ fn main() {
                 scale: quantize_10b_log(s.scale[0])
                     | (quantize_10b_log(s.scale[1]) << 10)
                     | (quantize_10b_log(s.scale[2]) << 20),
-                // PLY (w,x,y,z) -> (x,y,z,w)
-                rot: quantize_quat([s.rot[1], s.rot[2], s.rot[3], s.rot[0]]),
+                // colmap flip again
+                rot: quantize_quat([-s.rot[1], s.rot[2], -s.rot[3], s.rot[0]]),
             }
         })
         .collect();
