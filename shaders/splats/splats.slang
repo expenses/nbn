@@ -8,7 +8,6 @@ import shared.constants;
 import splats.helpers;
 
 static const float GAUSSIAN_TRUNCATION_STD = 3.0;
-static const uint MAX_POINTS = 150 * 1000 * 1000;
 static const uint K = 8;
 static const uint NUM_SPLATS_PER_CHUNK = 80 * 1000 * 1000;
 
@@ -123,7 +122,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     uint offset = 0;
     InterlockedAdd(pc.dispatch.num_points, count, offset);
 
-    for (uint i = offset; i < min(offset+count, MAX_POINTS); i++) {
+    for (uint i = offset; i < min(offset+count, pc.max_points); i++) {
         pc.point_to_splat[i] = thread;
     }
 }
@@ -131,10 +130,10 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
 [shader("compute")]
 [NumThreads(1,1,1)]
 void setup_dispatch(uniform PushConstants pc) {
-    if (pc.dispatch.num_points > MAX_POINTS) {
+    if (pc.dispatch.num_points > pc.max_points) {
         printf("too many points: %u\n", pc.dispatch.num_points);
     }
-    pc.dispatch.num_points = min(pc.dispatch.num_points, MAX_POINTS);
+    pc.dispatch.num_points = min(pc.dispatch.num_points, pc.max_points);
     let total = pc.dispatch.num_points;
     pc.dispatch.dispatch_size = uint3(div_ceil(total, 64), 1, 1);
 }

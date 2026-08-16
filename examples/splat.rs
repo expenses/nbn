@@ -17,7 +17,7 @@ struct State {
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
     render_bitmasks: nbn::Buffer,
-    splat_chunks: Vec<nbn::Buffer>,
+    _splat_chunks: Vec<nbn::Buffer>,
     chunk_addresses: nbn::Buffer,
     dispatch: nbn::Buffer,
     point_to_splat: nbn::Buffer,
@@ -25,6 +25,7 @@ struct State {
 }
 
 const NEAR_PLANE: f32 = 0.001;
+const MAX_POINTS: u32 = 400_000_000;
 
 struct App {
     state: Option<State>,
@@ -108,7 +109,7 @@ impl winit::application::ApplicationHandler for App {
             point_to_splat: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "point_to_splat",
-                    size: 150_000_000 * 4,
+                    size: MAX_POINTS as u64 * 4,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
@@ -121,7 +122,7 @@ impl winit::application::ApplicationHandler for App {
                 .unwrap(),
             chunk_addresses,
             device,
-            splat_chunks,
+            _splat_chunks: splat_chunks,
             frame_index: 0,
             num_splats,
         });
@@ -235,6 +236,7 @@ impl winit::application::ApplicationHandler for App {
                         num_splats: state.num_splats,
                         dispatch: *state.dispatch,
                         point_to_splat: *state.point_to_splat,
+                        max_points: MAX_POINTS,
                     },
                 );
 

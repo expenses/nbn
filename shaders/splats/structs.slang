@@ -62,4 +62,5 @@ struct PushConstants {
     float tan_y;
     Dispatch* dispatch;
     uint* point_to_splat;
+    uint max_points;
 }
