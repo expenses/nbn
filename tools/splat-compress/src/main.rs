@@ -1,6 +1,7 @@
+use either::Either;
 use std::io::{Read, Write};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 struct PlySplat {
     xyz: [f32; 3],
@@ -10,7 +11,7 @@ struct PlySplat {
     rot: [f32; 4],
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 struct PlySplatNormals {
     xyz: [f32; 3],
@@ -50,6 +51,15 @@ pub fn cast_slice<I: Copy, O: Copy>(slice: &[I]) -> &[O] {
     unsafe {
         std::slice::from_raw_parts(
             slice.as_ptr() as *const O,
+            std::mem::size_of_val(slice) / std::mem::size_of::<O>(),
+        )
+    }
+}
+
+pub fn cast_slice_mut<I: Copy, O: Copy>(slice: &mut [I]) -> &mut [O] {
+    unsafe {
+        std::slice::from_raw_parts_mut(
+            slice.as_mut_ptr() as *mut O,
             std::mem::size_of_val(slice) / std::mem::size_of::<O>(),
         )
     }
@@ -130,17 +140,34 @@ fn main() {
     let header = std::str::from_utf8(&mmap[..end_header_loc]).unwrap();
     println!("{}", header);
 
-    assert!(header.contains("property float nx"));
+    let slice = &mmap[end_header_loc..];
 
-    let splats = cast_slice::<_, PlySplatNormals>(&mmap[end_header_loc..]);
+    dbg!(slice.len());
 
-    dbg!(splats[0]);
+    let iter = if header.contains("property float nx") {
+        Either::Left(
+            slice
+                .chunks(std::mem::size_of::<PlySplatNormals>())
+                .map(|chunk| {
+                    let mut splat = [PlySplatNormals::default()];
+                    cast_slice_mut(&mut splat).copy_from_slice(chunk);
+                    splat[0].into()
+                }),
+        )
+    } else {
+        Either::Right(slice.chunks(std::mem::size_of::<PlySplat>()).map(|chunk| {
+            let mut splat = [PlySplat::default()];
+            cast_slice_mut(&mut splat).copy_from_slice(chunk);
+            splat[0]
+        }))
+    };
 
     let mut output = std::io::BufWriter::new(std::fs::File::create(&output).unwrap());
 
-    for &s in splats {
-        let s: PlySplat = s.into();
-
+    for (i, s) in iter.enumerate() {
+        if i == 0 {
+            dbg!(s);
+        }
         let opacity = 1.0 / (1.0 + (-s.opacity).exp());
 
         output
