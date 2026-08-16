@@ -47,22 +47,7 @@ struct Splat {
 
 struct Dispatch {
     uint3 dispatch_size;
-    uint surviving_splats;
     uint num_points;
-}
-
-struct PerSplatData {
-    float c0;
-    float c1;
-    float c2;
-    float2 center_px;
-    uint64_t packed;
-
-    property float opacity {
-        get {
-            return float((packed >> 24)&255)/255.0;
-        }
-    }
 }
 
 struct PushConstants {
@@ -76,6 +61,5 @@ struct PushConstants {
     uint num_splats;
     float tan_y;
     Dispatch* dispatch;
-    PerSplatData* splat_data;
     uint* point_to_splat;
 }

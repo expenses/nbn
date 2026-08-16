@@ -20,7 +20,6 @@ struct State {
     splat_chunks: Vec<nbn::Buffer>,
     chunk_addresses: nbn::Buffer,
     dispatch: nbn::Buffer,
-    splat_data: nbn::Buffer,
     point_to_splat: nbn::Buffer,
     num_splats: u32,
 }
@@ -103,13 +102,6 @@ impl winit::application::ApplicationHandler for App {
                 .create_buffer(nbn::BufferDescriptor {
                     name: "render_bitmasks",
                     size: size.width as u64 * size.height as u64 * 8,
-                    ty: nbn::MemoryLocation::GpuOnly,
-                })
-                .unwrap(),
-            splat_data: device
-                .create_buffer(nbn::BufferDescriptor {
-                    name: "per_splat_data",
-                    size: 30_000_000 * std::mem::size_of::<PerSplatData>() as u64,
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
@@ -242,7 +234,6 @@ impl winit::application::ApplicationHandler for App {
                         splats: *state.chunk_addresses,
                         num_splats: state.num_splats,
                         dispatch: *state.dispatch,
-                        splat_data: *state.splat_data,
                         point_to_splat: *state.point_to_splat,
                     },
                 );
@@ -289,11 +280,6 @@ impl winit::application::ApplicationHandler for App {
                     [
                         (
                             &state.dispatch,
-                            nbn::BarrierOp::ComputeStorageWrite,
-                            nbn::BarrierOp::ComputeStorageRead,
-                        ),
-                        (
-                            &state.splat_data,
                             nbn::BarrierOp::ComputeStorageWrite,
                             nbn::BarrierOp::ComputeStorageRead,
                         ),
