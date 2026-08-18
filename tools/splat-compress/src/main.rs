@@ -1,5 +1,5 @@
-use either::Either;
-use std::io::Write;
+use rayon::iter::{IntoParallelRefIterator, ParallelExtend, ParallelIterator};
+use std::io::BufRead;
 
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
@@ -22,18 +22,6 @@ struct PlySplatNormals {
     rot: [f32; 4],
 }
 
-impl From<PlySplatNormals> for PlySplat {
-    fn from(s: PlySplatNormals) -> Self {
-        Self {
-            xyz: s.xyz,
-            f_dc: s.f_dc,
-            opacity: s.opacity,
-            scale: s.scale,
-            rot: s.rot,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct Splat {
@@ -41,6 +29,40 @@ struct Splat {
     color_opacity: u32,
     scale: u32,
     rot: u32,
+}
+
+impl From<PlySplat> for Splat {
+    #[inline]
+    fn from(s: PlySplat) -> Self {
+        let opacity = 1.0 / (1.0 + (-s.opacity).exp());
+
+        Self {
+            // (COLMAP y-down -> y-up)
+            center: [s.xyz[0], -s.xyz[1], s.xyz[2]],
+            color_opacity: quantize_8b_sh(s.f_dc[0])
+                | (quantize_8b_sh(s.f_dc[1]) << 8)
+                | (quantize_8b_sh(s.f_dc[2]) << 16)
+                | (quantize_8b(opacity) << 24),
+            scale: quantize_10b_log(s.scale[0])
+                | (quantize_10b_log(s.scale[1]) << 10)
+                | (quantize_10b_log(s.scale[2]) << 20),
+            // colmap flip again
+            rot: quantize_quat([-s.rot[1], s.rot[2], -s.rot[3], s.rot[0]]),
+        }
+    }
+}
+
+impl From<PlySplatNormals> for Splat {
+    #[inline]
+    fn from(s: PlySplatNormals) -> Self {
+        Self::from(PlySplat {
+            xyz: s.xyz,
+            f_dc: s.f_dc,
+            opacity: s.opacity,
+            scale: s.scale,
+            rot: s.rot,
+        })
+    }
 }
 
 const SH_C0: f32 = 0.28209479177387814;
@@ -125,66 +147,103 @@ fn srgb_lin2encoded(value: f32) -> f32 {
     }
 }
 
+fn read_fill<R: std::io::Read>(reader: &mut R, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut total = 0;
+
+    while total < buf.len() {
+        match reader.read(&mut buf[total..])? {
+            0 => break,
+            n => total += n,
+        }
+    }
+
+    Ok(total)
+}
+
+fn load_splats<T: Default + Copy + Sync + Into<Splat>, R: std::io::Read>(
+    reader: &mut R,
+) -> Vec<Splat> {
+    let mut splats = Vec::new();
+
+    let mut arr = vec![T::default(); 1_000_000];
+
+    loop {
+        let bytes_read = read_fill(reader, cast_slice_mut(&mut arr)).unwrap();
+
+        let splats_read = bytes_read / std::mem::size_of::<T>();
+
+        splats.par_extend(arr[..splats_read].par_iter().map(|&splat| splat.into()));
+
+        dbg!(splats.len());
+
+        if splats_read != arr.len() {
+            break;
+        }
+    }
+
+    splats
+}
+
+fn expand_bits(mut x: u64) -> u64 {
+    x = (x | x << 32) & 0b1111111111111111000000000000000000000000000000001111111111111111;
+    x = (x | x << 16) & 0b0000000011111111000000000000000011111111000000000000000011111111;
+    x = (x | x << 08) & 0b1111000000001111000000001111000000001111000000001111000000001111;
+    x = (x | x << 04) & 0b0011000011000011000011000011000011000011000011000011000011000011;
+    x = (x | x << 02) & 0b1001001001001001001001001001001001001001001001001001001001001001;
+
+    x
+}
+
 fn main() {
     let filename = std::env::args().nth(1).unwrap();
     let output = std::env::args().nth(2).unwrap();
-    let file = std::fs::File::open(&filename).unwrap();
-    let mmap = unsafe { memmap2::MmapOptions::new().map(&file).unwrap() };
 
-    let end_header = b"end_header\n";
+    let mut splats = {
+        let file = std::fs::File::open(&filename).unwrap();
 
-    let end_header_loc =
-        memchr::memmem::find(&mmap[..4096], end_header).unwrap() + end_header.len();
-    let header = std::str::from_utf8(&mmap[..end_header_loc]).unwrap();
-    println!("{}", header);
+        let mut reader = std::io::BufReader::new(&file);
 
-    let slice = &mmap[end_header_loc..];
+        let mut header = String::new();
+        loop {
+            let start = header.len();
+            reader.read_line(&mut header).unwrap();
+            if header[start..].trim() == "end_header" {
+                break;
+            }
+        }
 
-    dbg!(slice.len());
+        println!("{}", header);
 
-    let iter = if header.contains("property float nx") {
-        Either::Left(
-            slice
-                .chunks(std::mem::size_of::<PlySplatNormals>())
-                .map(|chunk| {
-                    let mut splat = [PlySplatNormals::default()];
-                    cast_slice_mut(&mut splat).copy_from_slice(chunk);
-                    splat[0].into()
-                }),
-        )
-    } else {
-        Either::Right(slice.chunks(std::mem::size_of::<PlySplat>()).map(|chunk| {
-            let mut splat = [PlySplat::default()];
-            cast_slice_mut(&mut splat).copy_from_slice(chunk);
-            splat[0]
-        }))
+        if header.contains("property float nx") {
+            load_splats::<PlySplatNormals, _>(&mut reader)
+        } else {
+            load_splats::<PlySplat, _>(&mut reader)
+        }
     };
 
-    let mut output = std::io::BufWriter::new(std::fs::File::create(&output).unwrap());
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
 
-    for (i, s) in iter.enumerate() {
-        if i == 0 {
-            dbg!(s);
+    for splat in splats.iter() {
+        for i in 0..3 {
+            min[i] = min[i].min(splat.center[i]);
+            max[i] = max[i].max(splat.center[i]);
         }
-        if i % 1_000_000 == 0 {
-            dbg!(i);
-        }
-        let opacity = 1.0 / (1.0 + (-s.opacity).exp());
-
-        output
-            .write_all(cast_slice(&[Splat {
-                // (COLMAP y-down -> y-up)
-                center: [s.xyz[0], -s.xyz[1], s.xyz[2]],
-                color_opacity: quantize_8b_sh(s.f_dc[0])
-                    | (quantize_8b_sh(s.f_dc[1]) << 8)
-                    | (quantize_8b_sh(s.f_dc[2]) << 16)
-                    | (quantize_8b(opacity) << 24),
-                scale: quantize_10b_log(s.scale[0])
-                    | (quantize_10b_log(s.scale[1]) << 10)
-                    | (quantize_10b_log(s.scale[2]) << 20),
-                // colmap flip again
-                rot: quantize_quat([-s.rot[1], s.rot[2], -s.rot[3], s.rot[0]]),
-            }]))
-            .unwrap();
     }
+
+    let max_v = (1 << 21) - 1;
+
+    let scale: [_; 3] = std::array::from_fn(|i| (max[i] - min[i]).recip() * max_v as f32);
+
+    radsort::sort_by_key(&mut splats, |splat| {
+        (0..3).fold(0u64, |code, i| {
+            let v = ((splat.center[i] - min[i]) * scale[i])
+                .round()
+                .clamp(0.0, max_v as f32) as u64;
+
+            code | (expand_bits(v) << i)
+        })
+    });
+
+    std::fs::write(&output, cast_slice(&splats)).unwrap();
 }
