@@ -1367,9 +1367,9 @@ dependencies = [
 
 [[package]]
 name = "env_filter"
-version = "1.0.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a1c3cc8e57274ec99de65301228b537f1e4eedc1b8e0f9411c6caac8ae7308f"
+checksum = "900d271a03799a1ee8d1ca9b19893b48ca674a9284fefcfb85f05e74ed314217"
 dependencies = [
  "log",
  "regex",
@@ -1390,9 +1390,9 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.11.10"
+version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0621c04f2196ac3f488dd583365b9c09be011a4ab8b9f37248ffcc8f6198b56a"
+checksum = "de671bd27a75a797dc9ae289ba1e77276e75e2026408aab65185384e2d5cd3f6"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2530,7 +2530,7 @@ version = "0.1.0"
 dependencies = [
  "alias-table",
  "clap 4.6.1",
- "env_logger 0.11.10",
+ "env_logger 0.11.11",
  "glam 0.32.0",
  "goth-gltf 0.1.2",
  "image 0.25.10",
@@ -2681,7 +2681,7 @@ dependencies = [
  "dolly",
  "egui 0.33.3",
  "egui-winit 0.33.3",
- "env_logger 0.11.10",
+ "env_logger 0.11.11",
  "glam 0.31.1",
  "goth-gltf 0.1.2",
  "gpu-allocator",
@@ -2879,7 +2879,7 @@ dependencies = [
  "dolly",
  "egui 0.31.1",
  "egui-winit 0.31.1",
- "env_logger 0.11.10",
+ "env_logger 0.11.11",
  "glam 0.31.1",
  "goth-gltf 0.1.2",
  "gpu-allocator",
@@ -3514,7 +3514,7 @@ dependencies = [
 name = "particles"
 version = "0.1.0"
 dependencies = [
- "env_logger 0.11.10",
+ "env_logger 0.11.11",
  "nbn",
  "slang_struct",
 ]
@@ -4402,6 +4402,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "splats"
+version = "0.1.0"
+dependencies = [
+ "env_logger 0.11.11",
+ "nbn",
+ "slang_struct",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4812,7 +4821,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "ddsfile 0.5.2",
- "env_logger 0.11.10",
+ "env_logger 0.11.11",
  "glam 0.31.1",
  "goth-gltf 0.1.2",
  "image 0.25.10",

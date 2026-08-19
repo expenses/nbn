@@ -1,0 +1,9 @@
+[package]
+name = "splats"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nbn = { path = "../..", features = ["freecam"] }
+slang_struct = { git = "https://github.com/expenses/slang-struct-rs", branch = "logos" }
+env_logger = "0.11.11"

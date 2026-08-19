@@ -1,4 +1,4 @@
-use ash::vk;
+use nbn::{vk, winit};
 
 slang_struct::slang_include!("shaders/splats/structs.slang");
 
