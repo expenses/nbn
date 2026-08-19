@@ -8,6 +8,6 @@ goth-gltf = { git = "https://github.com/expenses/goth-gltf" }
 image = "0.25.9"
 intel_tex_2 = "0.5.0"
 ktx2 = "0.4.0"
-ktx2-tools = { git = "https://github.com/expenses/ktx2-tools", version = "0.1.0" }
+ktx2-tools = { git = "https://github.com/expenses/ktx2-tools" }
 rayon = "1.11.0"
 structopt = "0.3.26"

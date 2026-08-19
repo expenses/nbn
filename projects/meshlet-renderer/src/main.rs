@@ -9,8 +9,8 @@ use dolly::prelude::YawPitch;
 use nbn::vk;
 use winit::{event::ElementState, keyboard::KeyCode, window::CursorGrabMode};
 
-slang_struct::slang_include!("shaders/models.slang");
-slang_struct::slang_include!("shaders/uniforms.slang");
+slang_struct::slang_include!("shaders/meshlet_renderer/models.slang");
+slang_struct::slang_include!("shaders/meshlet_renderer/uniforms.slang");
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum DebugMode {

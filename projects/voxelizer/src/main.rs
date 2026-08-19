@@ -2,7 +2,7 @@ use indicatif::ProgressIterator;
 use nbn::vk;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-slang_struct::slang_include!("shaders/gltf.slang");
+slang_struct::slang_include!("shaders/voxelizer/gltf.slang");
 
 #[derive(
     Clone,
@@ -97,7 +97,7 @@ fn main() {
                     },
                     &image,
                     nbn::QueueType::Compute,
-                    &[0],
+                    nbn::ImageLods::Offsets(&[0]),
                 )
             } else {
                 nbn::image_loading::create_image(

@@ -138,154 +138,144 @@ impl winit::application::ApplicationHandler for App {
                         .map(|image| device.register_image(*image.view, true)),
                 );
             }
-            winit::event::WindowEvent::RedrawRequested => {
-                let current_frame = state.sync_resources.current_frame;
+            winit::event::WindowEvent::RedrawRequested => unsafe {
+                let raw_input = state.egui_winit.take_egui_input(&state.window);
 
-                unsafe {
-                    let raw_input = state.egui_winit.take_egui_input(&state.window);
+                let egui_ctx = state.egui_winit.egui_ctx();
 
-                    let egui_ctx = state.egui_winit.egui_ctx();
+                egui_ctx.begin_pass(raw_input);
 
-                    egui_ctx.begin_pass(raw_input);
+                egui::Window::new("Xyz").show(egui_ctx, |ui| {
+                    ui.add(egui::Slider::new(&mut state.scale, 0.0001..=10.0));
+                    ui.add(egui::Slider::new(&mut state.channel_offset, 0..=16 - 3));
+                    ui.add(egui::Slider::new(&mut state.exposure, -3.0..=3.0));
+                });
 
-                    egui::Window::new("Xyz").show(egui_ctx, |ui| {
-                        ui.add(egui::Slider::new(&mut state.scale, 0.0001..=10.0));
-                        ui.add(egui::Slider::new(&mut state.channel_offset, 0..=16 - 3));
-                        ui.add(egui::Slider::new(&mut state.exposure, -3.0..=3.0));
-                    });
+                let output = egui_ctx.end_pass();
+                state
+                    .egui_winit
+                    .handle_platform_output(&state.window, output.platform_output);
 
-                    let output = egui_ctx.end_pass();
-                    state
-                        .egui_winit
-                        .handle_platform_output(&state.window, output.platform_output);
+                let clipped_meshes = state
+                    .egui_winit
+                    .egui_ctx()
+                    .tessellate(output.shapes, output.pixels_per_point);
 
-                    let clipped_meshes = state
-                        .egui_winit
-                        .egui_ctx()
-                        .tessellate(output.shapes, output.pixels_per_point);
+                let (frame, current_frame) = state.sync_resources.wait_for_frame(device);
+                let command_buffer = &state.per_frame_command_buffers[current_frame];
 
-                    let command_buffer =
-                        &state.per_frame_command_buffers[state.sync_resources.current_frame];
-                    let mut frame = state.sync_resources.wait_for_frame(device);
+                let (next_image, _suboptimal) = device
+                    .swapchain_loader
+                    .acquire_next_image(
+                        *state.swapchain,
+                        !0,
+                        *frame.image_available_semaphore,
+                        vk::Fence::null(),
+                    )
+                    .unwrap();
+                let image = &state.swapchain.images[next_image as usize];
 
-                    let (next_image, _suboptimal) = device
-                        .swapchain_loader
-                        .acquire_next_image(
-                            *state.swapchain,
-                            !0,
-                            *frame.image_available_semaphore,
-                            vk::Fence::null(),
-                        )
-                        .unwrap();
-                    let image = &state.swapchain.images[next_image as usize];
+                device.reset_command_buffer(command_buffer);
+                device
+                    .begin_command_buffer(**command_buffer, &vk::CommandBufferBeginInfo::default())
+                    .unwrap();
 
-                    device.reset_command_buffer(command_buffer);
-                    device
-                        .begin_command_buffer(
-                            **command_buffer,
-                            &vk::CommandBufferBeginInfo::default(),
-                        )
-                        .unwrap();
+                state.egui_render.update_textures(
+                    device,
+                    command_buffer,
+                    current_frame,
+                    &output.textures_delta,
+                );
 
-                    state.egui_render.update_textures(
-                        device,
-                        command_buffer,
-                        current_frame,
-                        &output.textures_delta,
-                    );
+                device
+                    .bind_internal_descriptor_sets(&command_buffer, vk::PipelineBindPoint::COMPUTE);
+                device.insert_image_pipeline_barrier(
+                    &command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::Acquire),
+                    nbn::BarrierOp::ComputeStorageWrite,
+                );
+                device.cmd_bind_pipeline(
+                    **command_buffer,
+                    vk::PipelineBindPoint::COMPUTE,
+                    *state.pipeline,
+                );
+                let extent = state.swapchain.create_info.image_extent;
+                device.push_constants::<RenderToTexturePushConstants>(
+                    &command_buffer,
+                    RenderToTexturePushConstants {
+                        extent: [extent.width, extent.height],
+                        params: *state.params,
+                        latent_textures: *state.latent_texture_indices,
+                        image: *state.swapchain_image_heap_indices[next_image as usize],
+                        texture_size: state.size,
+                        scale: state.scale,
+                        channel_offset: state.channel_offset,
+                        exposure: state.exposure,
+                    },
+                );
+                device.cmd_dispatch(
+                    **command_buffer,
+                    (extent.width * extent.height).div_ceil(64),
+                    1,
+                    1,
+                );
 
-                    device.bind_internal_descriptor_sets(
-                        &command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                    );
-                    device.insert_image_pipeline_barrier(
-                        &command_buffer,
-                        image,
-                        Some(nbn::BarrierOp::Acquire),
-                        nbn::BarrierOp::ComputeStorageWrite,
-                    );
-                    device.cmd_bind_pipeline(
-                        **command_buffer,
-                        vk::PipelineBindPoint::COMPUTE,
-                        *state.pipeline,
-                    );
-                    let extent = state.swapchain.create_info.image_extent;
-                    device.push_constants::<RenderToTexturePushConstants>(
-                        &command_buffer,
-                        RenderToTexturePushConstants {
-                            extent: [extent.width, extent.height],
-                            params: *state.params,
-                            latent_textures: *state.latent_texture_indices,
-                            image: *state.swapchain_image_heap_indices[next_image as usize],
-                            texture_size: state.size,
-                            scale: state.scale,
-                            channel_offset: state.channel_offset,
-                            exposure: state.exposure,
-                        },
-                    );
-                    device.cmd_dispatch(
-                        **command_buffer,
-                        (extent.width * extent.height).div_ceil(64),
-                        1,
-                        1,
-                    );
+                device.insert_image_pipeline_barrier(
+                    command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::ComputeStorageWrite),
+                    nbn::BarrierOp::ColorAttachmentReadWrite,
+                );
 
-                    device.insert_image_pipeline_barrier(
-                        command_buffer,
-                        image,
-                        Some(nbn::BarrierOp::ComputeStorageWrite),
-                        nbn::BarrierOp::ColorAttachmentReadWrite,
-                    );
+                device.begin_rendering(
+                    command_buffer,
+                    extent.width,
+                    extent.height,
+                    &[vk::RenderingAttachmentInfo::default()
+                        .image_view(*image.view)
+                        .image_layout(vk::ImageLayout::GENERAL)
+                        .load_op(vk::AttachmentLoadOp::LOAD)
+                        .store_op(vk::AttachmentStoreOp::STORE)],
+                    None,
+                );
+                state.egui_render.paint(
+                    device,
+                    command_buffer,
+                    &clipped_meshes,
+                    state.window.scale_factor() as _,
+                    [extent.width, extent.height],
+                    current_frame,
+                    nbn::TransferFunction::Srgb,
+                );
 
-                    device.begin_rendering(
-                        command_buffer,
-                        extent.width,
-                        extent.height,
-                        &[vk::RenderingAttachmentInfo::default()
-                            .image_view(*image.view)
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .load_op(vk::AttachmentLoadOp::LOAD)
-                            .store_op(vk::AttachmentStoreOp::STORE)],
-                        None,
-                    );
-                    state.egui_render.paint(
-                        device,
-                        command_buffer,
-                        &clipped_meshes,
-                        state.window.scale_factor() as _,
-                        [extent.width, extent.height],
-                        current_frame,
-                        nbn::TransferFunction::Srgb,
-                    );
+                device.cmd_end_rendering(**command_buffer);
 
-                    device.cmd_end_rendering(**command_buffer);
+                device.insert_image_pipeline_barrier(
+                    &command_buffer,
+                    image,
+                    Some(nbn::BarrierOp::ColorAttachmentReadWrite),
+                    nbn::BarrierOp::Present,
+                );
 
-                    device.insert_image_pipeline_barrier(
-                        &command_buffer,
-                        image,
-                        Some(nbn::BarrierOp::ColorAttachmentReadWrite),
-                        nbn::BarrierOp::Present,
-                    );
+                device.end_command_buffer(**command_buffer).unwrap();
 
-                    device.end_command_buffer(**command_buffer).unwrap();
-
-                    frame.submit(
-                        device,
-                        &image,
-                        &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
-                    );
-                    device
-                        .swapchain_loader
-                        .queue_present(
-                            *device.graphics_queue,
-                            &vk::PresentInfoKHR::default()
-                                .wait_semaphores(&[*image.render_finished_semaphore])
-                                .swapchains(&[*state.swapchain])
-                                .image_indices(&[next_image]),
-                        )
-                        .unwrap();
-                }
-            }
+                state.sync_resources.submit_current_frame(
+                    device,
+                    &image,
+                    &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
+                );
+                device
+                    .swapchain_loader
+                    .queue_present(
+                        *device.graphics_queue,
+                        &vk::PresentInfoKHR::default()
+                            .wait_semaphores(&[*image.render_finished_semaphore])
+                            .swapchains(&[*state.swapchain])
+                            .image_indices(&[next_image]),
+                    )
+                    .unwrap();
+            },
             winit::event::WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {

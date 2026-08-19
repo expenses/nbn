@@ -477,7 +477,7 @@ impl winit::application::ApplicationHandler for App {
             render_pipeline,
             tlas,
             _model: gltf_data,
-            freecam: nbn::freecam::FreeCam::new(Default::default()),
+            freecam: nbn::freecam::FreeCam::new(Default::default(), 0.1),
             envmap,
             envmap_size,
             model: model_buffer,
@@ -531,7 +531,7 @@ impl winit::application::ApplicationHandler for App {
                 );
             }
             winit::event::WindowEvent::RedrawRequested => unsafe {
-                let current_frame = state.sync_resources.current_frame;
+                let (frame, current_frame) = state.sync_resources.wait_for_frame(device);
                 let command_buffer = &state.per_frame_command_buffers[current_frame];
 
                 let extent = state.swapchain.create_info.image_extent;
@@ -554,8 +554,6 @@ impl winit::application::ApplicationHandler for App {
                     envmap_size: state.envmap_size,
                     alias_table: *state.alias_table,
                 };
-
-                let mut frame = state.sync_resources.wait_for_frame(device);
 
                 let (next_image, _suboptimal) = device
                     .swapchain_loader
@@ -627,7 +625,7 @@ impl winit::application::ApplicationHandler for App {
                 );
                 device.end_command_buffer(**command_buffer).unwrap();
 
-                frame.submit(
+                state.sync_resources.submit_current_frame(
                     device,
                     &image,
                     &[vk::CommandBufferSubmitInfo::default().command_buffer(**command_buffer)],
@@ -897,27 +895,27 @@ fn load_gltf(
 
     let acceleration_structure = device.create_acceleration_structure(
         &format!("{} acceleration structure", path.display(),),
-        nbn::AccelerationStructureData::Triangles {
+        nbn::AccelerationStructureData::Triangles(&[nbn::AccelerationStructureTriangles {
             index_type: vk::IndexType::UINT32,
             opaque: true,
             vertices_buffer_address: *positions,
             indices_buffer_address: *indices,
             num_vertices: num_vertices as _,
             num_indices: num_indices as _,
-        },
+        }]),
         staging_buffer,
     );
 
     let uv_acceleration_structure = device.create_acceleration_structure(
         &format!("{} uv acceleration structure", path.display(),),
-        nbn::AccelerationStructureData::Triangles {
+        nbn::AccelerationStructureData::Triangles(&[nbn::AccelerationStructureTriangles {
             index_type: vk::IndexType::UINT32,
             opaque: true,
             vertices_buffer_address: *uv2s_3d,
             indices_buffer_address: *indices,
             num_vertices: num_vertices as _,
             num_indices: num_indices as _,
-        },
+        }]),
         staging_buffer,
     );
 
