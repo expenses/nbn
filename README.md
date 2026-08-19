@@ -45,3 +45,14 @@ _MIS in action_
 - Simulated BC1 latent texture sampling in software
 - ADAM optimizer for weights, latent textures apply ADAM sparsely using a bitmask to find non-zero gradients
 - Uses cooperative matrices via neural.slang
+
+### Intel Jungle Labs Scene Raytracing
+
+- Heavily instanced ray traced scene with 300 billion triangles total
+- Denoising via NRD
+
+### Guassian Point Splatting
+
+- Based on [Gaussian Point Splatting](https://jorisar.nl/gaussian_point_splatting/) by Rijsdijk et al.
+- Can handle scenes of up to around 300 million splats
+- Uses a compressed splat format, see tools/splat-compress.
