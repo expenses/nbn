@@ -45,6 +45,8 @@ I've used it to write a number of projects:
 
 ![](readme/mis.gif)
 
+_MIS in action_
+
 ### Neural Texture Compression
 
 - Closely based on the paper 'Hardware Accelerated Neural Block Texture Compression with Cooperative Vectors' by Belcour and Benyoub
