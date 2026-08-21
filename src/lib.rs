@@ -962,6 +962,14 @@ impl Device {
         }
     }
 
+    pub fn register_owned_image_both(&self, image: Image, sampler: &Sampler) -> DualIndexedImage {
+        DualIndexedImage {
+            sampled: self.register_image_with_sampler(*image.view, sampler, false),
+            storage: self.register_image_with_sampler(*image.view, sampler, true),
+            image,
+        }
+    }
+
     pub fn create_image_with_data_in_command_buffer(
         &self,
         desc: SampledImageDescriptor,
@@ -2283,6 +2291,12 @@ impl Drop for Buffer {
         self.allocator.inner.write().free(allocation).unwrap();
         self.allocator.deallocation_notifier.notify_all();
     }
+}
+
+pub struct DualIndexedImage {
+    pub image: Image,
+    pub sampled: ImageIndex,
+    pub storage: ImageIndex,
 }
 
 pub struct IndexedImage {
