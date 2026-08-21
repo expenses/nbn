@@ -2,6 +2,23 @@ use nbn::{vk, winit};
 
 slang_struct::slang_include!("shaders/splats/structs.slang");
 
+struct Resizables {
+    render_bitmasks: nbn::Buffer,
+}
+impl Resizables {
+    fn new(device: &nbn::Device, width: u32, height: u32) -> Self {
+        Self {
+            render_bitmasks: device
+                .create_buffer(nbn::BufferDescriptor {
+                    name: "render_bitmasks",
+                    size: width as u64 * height as u64 * 8,
+                    ty: nbn::MemoryLocation::GpuOnly,
+                })
+                .unwrap(),
+        }
+    }
+}
+
 struct State {
     window: winit::window::Window,
     swapchain: nbn::Swapchain,
@@ -16,12 +33,12 @@ struct State {
     device: nbn::Device,
     freecam: nbn::freecam::FreeCam,
     frame_index: u32,
-    render_bitmasks: nbn::Buffer,
     _splat_chunks: Vec<nbn::Buffer>,
     chunk_addresses: nbn::Buffer,
     dispatch: nbn::Buffer,
     point_to_splat: nbn::Buffer,
     num_splats: u32,
+    resizables: Resizables,
 }
 
 const NEAR_PLANE: f32 = 0.001;
@@ -99,13 +116,7 @@ impl winit::application::ApplicationHandler for App {
             output: device.create_compute_pipeline(&shader, c"output"),
             setup_dispatch: device.create_compute_pipeline(&shader, c"setup_dispatch"),
             window,
-            render_bitmasks: device
-                .create_buffer(nbn::BufferDescriptor {
-                    name: "render_bitmasks",
-                    size: size.width as u64 * size.height as u64 * 8,
-                    ty: nbn::MemoryLocation::GpuOnly,
-                })
-                .unwrap(),
+            resizables: Resizables::new(&device, size.width, size.height),
             point_to_splat: device
                 .create_buffer(nbn::BufferDescriptor {
                     name: "point_to_splat",
@@ -168,13 +179,7 @@ impl winit::application::ApplicationHandler for App {
                         .iter()
                         .map(|image| device.register_image(*image.view, true)),
                 );
-                state.render_bitmasks = device
-                    .create_buffer(nbn::BufferDescriptor {
-                        name: "render_bitmasks",
-                        size: new_size.width as u64 * new_size.height as u64 * 8,
-                        ty: nbn::MemoryLocation::GpuOnly,
-                    })
-                    .unwrap();
+                state.resizables = Resizables::new(&device, new_size.width, new_size.height);
             }
             winit::event::WindowEvent::RedrawRequested => unsafe {
                 let (frame, current_frame) = state.sync_resources.wait_for_frame(device);
@@ -231,7 +236,7 @@ impl winit::application::ApplicationHandler for App {
                         extent: [extent.width, extent.height],
                         image_idx: *state.swapchain_image_heap_indices[next_image as usize],
                         frame_index: state.frame_index,
-                        bitmasks: *state.render_bitmasks,
+                        bitmasks: *state.resizables.render_bitmasks,
                         splats: *state.chunk_addresses,
                         num_splats: state.num_splats,
                         dispatch: *state.dispatch,
@@ -325,7 +330,7 @@ impl winit::application::ApplicationHandler for App {
                     &command_buffer,
                     [],
                     [(
-                        &state.render_bitmasks,
+                        &state.resizables.render_bitmasks,
                         nbn::BarrierOp::ComputeStorageWrite,
                         nbn::BarrierOp::ComputeStorageReadWrite,
                     )],
