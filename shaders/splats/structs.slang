@@ -1,4 +1,5 @@
 import shared.prefix_sum;
+import fallback_bindings;
 
 struct Splat {
     float3 center;
@@ -54,7 +55,7 @@ struct PushConstants {
     float4x4 camera;
     float4x4 view;
     uint2 extent;
-    uint image;
+    uint image_idx;
     Ptr<Splat>* splats;
     uint64_t* bitmasks;
     uint frame_index;
@@ -63,4 +64,27 @@ struct PushConstants {
     Dispatch* dispatch;
     uint* point_to_splat;
     uint max_points;
+
+    uint64_t* get_mask(uint2 coord) {
+        return &bitmasks[coord.x + coord.y * extent.x];
+    }
+
+    float4 srgb_color_and_depth(uint2 coord) {
+        let mask = *get_mask(coord);
+
+        if (mask >> 32 == 0) {
+            return float4(178, 255, 255, 0) / 255;
+        }
+
+        return float4(
+            float3(mask & 255, (mask >> 8) & 255, (mask >> 16) & 255) / 255,
+            reinterpret<float>(mask >> 32)
+        );
+    }
+
+    property WTexture2D<float3> image {
+        get {
+             return storage_images[image_idx];
+        }
+    }
 }

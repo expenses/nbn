@@ -191,7 +191,7 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
             continue;
         }
 
-        InterlockedMax(pc.bitmasks[coord.x + coord.y * pc.extent.x], packed);
+        InterlockedMax(*pc.get_mask(coord), packed);
     }
 }
 
@@ -202,15 +202,8 @@ void output(uint2 thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    let mask = pc.bitmasks[thread.x + thread.y * pc.extent.x];
-    pc.bitmasks[thread.x + thread.y * pc.extent.x] = 0;
+    let srgb_color = pc.srgb_color_and_depth(thread).rgb;
+    *pc.get_mask(thread) = 0;
 
-    var value = float3(mask & 255, (mask >> 8) & 255, (mask >> 16) & 255) / 255;
-
-    if (mask >> 32 == 0) {
-        value = float3(178, 255, 255) / 255;
-    }
-
-    WTexture2D<float4> output = storage_images[pc.image];
-    output.Store(thread, float4(value, 1));
+    pc.image.Store(thread, srgb_color);
 }

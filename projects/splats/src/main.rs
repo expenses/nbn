@@ -229,7 +229,7 @@ impl winit::application::ApplicationHandler for App {
                         view: view.to_cols_array(),
                         tan_y,
                         extent: [extent.width, extent.height],
-                        image: *state.swapchain_image_heap_indices[next_image as usize],
+                        image_idx: *state.swapchain_image_heap_indices[next_image as usize],
                         frame_index: state.frame_index,
                         bitmasks: *state.render_bitmasks,
                         splats: *state.chunk_addresses,
