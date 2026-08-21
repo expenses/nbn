@@ -94,7 +94,7 @@ pub struct SampledImageDescriptor<'a> {
     pub extent: ImageExtent,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ImageExtent {
     D2 {
         width: u32,
@@ -174,7 +174,7 @@ impl From<ImageExtent> for vk::Extent3D {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ImageDescriptor<'a> {
     pub name: &'a str,
     pub format: vk::Format,
@@ -840,17 +840,18 @@ impl Device {
 
         let allocator = (*self.allocator).clone();
 
-        let allocation = allocator
-            .inner
-            .write()
-            .allocate(&gpu_allocator::vulkan::AllocationCreateDesc {
-                name: desc.name,
-                linear: false,
-                requirements: memory_requirements,
-                location: gpu_allocator::MemoryLocation::GpuOnly,
-                allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
-            })
-            .unwrap();
+        let alloc_desc = &gpu_allocator::vulkan::AllocationCreateDesc {
+            name: desc.name,
+            linear: false,
+            requirements: memory_requirements,
+            location: gpu_allocator::MemoryLocation::GpuOnly,
+            allocation_scheme: gpu_allocator::vulkan::AllocationScheme::GpuAllocatorManaged,
+        };
+
+        let allocation = match allocator.inner.write().allocate(alloc_desc) {
+            Ok(allocation) => allocation,
+            Err(err) => panic!("{} ({:?}) ({:?})", err, desc, alloc_desc),
+        };
 
         unsafe {
             self.device
