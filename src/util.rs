@@ -75,12 +75,12 @@ impl From<AccelerationStructureInstance> for vk::AccelerationStructureInstanceKH
     }
 }
 
-pub struct PingPong<T> {
+pub struct Doubled<T> {
     items: [T; 2],
     flipped: bool,
 }
 
-impl<T> PingPong<T> {
+impl<T> Doubled<T> {
     pub fn new(items: [T; 2]) -> Self {
         Self {
             items,
@@ -97,7 +97,7 @@ impl<T> PingPong<T> {
     }
 }
 
-impl<T> std::ops::Deref for PingPong<T> {
+impl<T> std::ops::Deref for Doubled<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
