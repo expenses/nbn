@@ -4,7 +4,10 @@ slang_struct::slang_include!("shaders/splats/structs.slang");
 
 struct Resizables {
     render_bitmasks: nbn::Buffer,
+    depth: nbn::Doubled<nbn::DualIndexedImage>,
+    color: nbn::Doubled<nbn::DualIndexedImage>,
 }
+
 impl Resizables {
     fn new(device: &nbn::Device, width: u32, height: u32) -> Self {
         Self {
@@ -15,6 +18,32 @@ impl Resizables {
                     ty: nbn::MemoryLocation::GpuOnly,
                 })
                 .unwrap(),
+            depth: nbn::Doubled::new(std::array::from_fn(|i| {
+                device.register_owned_image_both(
+                    device.create_image(nbn::ImageDescriptor {
+                        name: &format!("depth {}", i),
+                        format: vk::Format::R32_SFLOAT,
+                        extent: nbn::ImageExtent::D2 { width, height },
+                        usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_levels: 1,
+                    }),
+                    &device.samplers.clamp,
+                )
+            })),
+            color: nbn::Doubled::new(std::array::from_fn(|i| {
+                device.register_owned_image_both(
+                    device.create_image(nbn::ImageDescriptor {
+                        name: &format!("color {}", i),
+                        format: vk::Format::R16G16B16A16_SFLOAT,
+                        extent: nbn::ImageExtent::D2 { width, height },
+                        usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_levels: 1,
+                    }),
+                    &device.samplers.clamp,
+                )
+            })),
         }
     }
 }
@@ -242,6 +271,10 @@ impl winit::application::ApplicationHandler for App {
                         dispatch: *state.dispatch,
                         point_to_splat: *state.point_to_splat,
                         max_points: MAX_POINTS,
+                        prev_color_idx: *state.resizables.color.other().sampled,
+                        prev_depth_idx: *state.resizables.depth.other().sampled,
+                        color_idx: *state.resizables.color.storage,
+                        depth_idx: *state.resizables.depth.storage,
                     },
                 );
 
@@ -374,6 +407,8 @@ impl winit::application::ApplicationHandler for App {
                     .unwrap();
 
                 state.frame_index += 1;
+                state.resizables.color.flip();
+                state.resizables.depth.flip();
             },
             winit::event::WindowEvent::KeyboardInput {
                 event:

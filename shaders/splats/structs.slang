@@ -1,5 +1,6 @@
 import shared.prefix_sum;
 import fallback_bindings;
+import shared.colour;
 
 struct Splat {
     float3 center;
@@ -64,27 +65,56 @@ struct PushConstants {
     Dispatch* dispatch;
     uint* point_to_splat;
     uint max_points;
+    uint prev_color_idx;
+    uint prev_depth_idx;
+    uint color_idx;
+    uint depth_idx;
 
     uint64_t* get_mask(uint2 coord) {
         return &bitmasks[coord.x + coord.y * extent.x];
     }
 
-    float4 srgb_color_and_depth(uint2 coord) {
+    float4 color_and_depth(uint2 coord) {
         let mask = *get_mask(coord);
+    
+        var color = srgb_encoded2lin(float3(178, 255, 255) / 255);
+        var depth = 0.0;
 
-        if (mask >> 32 == 0) {
-            return float4(178, 255, 255, 0) / 255;
+        if (mask >> 32 != 0) {
+            color = srgb_encoded2lin(float3(uint64_t3(mask, (mask >> 8), (mask >> 16)) & 255) / 255);
+            depth = reinterpret<float>(uint(mask >> 32));
         }
 
-        return float4(
-            float3(mask & 255, (mask >> 8) & 255, (mask >> 16) & 255) / 255,
-            reinterpret<float>(mask >> 32)
-        );
+        return float4(color, depth);
     }
 
     property WTexture2D<float3> image {
         get {
              return storage_images[image_idx];
+        }
+    }
+
+    property WTexture2D<float3> color {
+        get {
+             return storage_images[color_idx];
+        }
+    }
+
+    property WTexture2D<float> depth {
+        get {
+             return storage_images[depth_idx];
+        }
+    }
+
+    property Sampler2D<float3> prev_color {
+        get {
+            return sampled_images[prev_color_idx];
+        }
+    }
+
+    property Sampler2D<float> prev_depth {
+        get {
+            return sampled_images[prev_depth_idx];
         }
     }
 }

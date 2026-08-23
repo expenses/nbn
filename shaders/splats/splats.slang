@@ -202,8 +202,14 @@ void output(uint2 thread : SV_DispatchThreadID, uniform PushConstants pc) {
         return;
     }
 
-    let srgb_color = pc.srgb_color_and_depth(thread).rgb;
+    let color_and_depth = pc.color_and_depth(thread);
     *pc.get_mask(thread) = 0;
 
-    pc.image.Store(thread, srgb_color);
+    let depth = color_and_depth.a;
+    var color = color_and_depth.rgb;
+    color = lerp(color, pc.prev_color[thread], 0.9);
+
+    pc.depth.Store(thread, depth);
+    pc.color.Store(thread, color);
+    pc.image.Store(thread, srgb_lin2encoded(color));
 }
