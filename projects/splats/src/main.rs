@@ -1,4 +1,4 @@
-use nbn::{vk, winit};
+use nbn::{glam, vk, winit};
 
 slang_struct::slang_include!("shaders/splats/structs.slang");
 
@@ -68,6 +68,8 @@ struct State {
     point_to_splat: nbn::Buffer,
     num_splats: u32,
     resizables: Resizables,
+    uniform_buffers: [nbn::Buffer; nbn::FRAMES_IN_FLIGHT],
+    prev_camera: glam::Mat4,
 }
 
 const NEAR_PLANE: f32 = 0.001;
@@ -131,6 +133,15 @@ impl winit::application::ApplicationHandler for App {
                 device.create_command_buffer(nbn::QueueType::Graphics),
                 device.create_command_buffer(nbn::QueueType::Graphics),
             ],
+            uniform_buffers: std::array::from_fn(|i| {
+                device
+                    .create_buffer(nbn::BufferDescriptor {
+                        name: &format!("uniform_buffer_{}", i),
+                        size: std::mem::size_of::<Uniforms>() as _,
+                        ty: nbn::MemoryLocation::CpuToGpu,
+                    })
+                    .unwrap()
+            }),
             sync_resources: device.create_sync_resources(),
             swapchain_image_heap_indices: swapchain
                 .images
@@ -165,6 +176,7 @@ impl winit::application::ApplicationHandler for App {
             _splat_chunks: splat_chunks,
             frame_index: 0,
             num_splats,
+            prev_camera: glam::Mat4::IDENTITY,
         });
     }
 
@@ -212,6 +224,28 @@ impl winit::application::ApplicationHandler for App {
             }
             winit::event::WindowEvent::RedrawRequested => unsafe {
                 let (frame, current_frame) = state.sync_resources.wait_for_frame(device);
+
+                let extent = state.swapchain.create_info.image_extent;
+
+                let (view, proj) =
+                    state
+                        .freecam
+                        .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
+
+                // must match FreeCam's fovy (59.0 deg)
+                let tan_y = (59.0_f32.to_radians() * 0.5).tan();
+
+                let camera = proj * view;
+
+                state.uniform_buffers[current_frame]
+                    .try_as_slice_mut::<Uniforms>()
+                    .unwrap()[0] = Uniforms {
+                    camera: camera.to_cols_array(),
+                    inv_camera: camera.inverse().to_cols_array(),
+                    prev_camera: state.prev_camera.to_cols_array(),
+                    view: view.to_cols_array(),
+                };
+
                 let command_buffer = &state.per_frame_command_buffers[current_frame];
 
                 let (next_image, _suboptimal) = device
@@ -230,13 +264,13 @@ impl winit::application::ApplicationHandler for App {
                     .begin_command_buffer(**command_buffer, &vk::CommandBufferBeginInfo::default())
                     .unwrap();
 
-                // device.cmd_fill_buffer(
-                //     **command_buffer,
-                //     *state.buffer.buffer,
-                //     0,
-                //     vk::WHOLE_SIZE,
-                //     0,
-                // );
+                device.cmd_fill_buffer(
+                    **command_buffer,
+                    *state.resizables.render_bitmasks.buffer,
+                    0,
+                    vk::WHOLE_SIZE,
+                    0,
+                );
 
                 device.insert_image_pipeline_barrier(
                     command_buffer,
@@ -244,24 +278,14 @@ impl winit::application::ApplicationHandler for App {
                     Some(nbn::BarrierOp::Acquire),
                     nbn::BarrierOp::ComputeStorageWrite,
                 );
-                let extent = state.swapchain.create_info.image_extent;
 
                 device.bind_internal_descriptor_sets_to_all(command_buffer);
-
-                let (view, proj) =
-                    state
-                        .freecam
-                        .update(extent.width, extent.height, 1.0 / 60.0, 10.0);
-
-                // must match FreeCam's fovy (59.0 deg)
-                let tan_y = (59.0_f32.to_radians() * 0.5).tan();
 
                 device.push_constants::<PushConstants>(
                     command_buffer,
                     PushConstants {
-                        camera: (proj * view).to_cols_array(),
-                        view: view.to_cols_array(),
                         tan_y,
+                        uniforms: *state.uniform_buffers[current_frame],
                         extent: [extent.width, extent.height],
                         image_idx: *state.swapchain_image_heap_indices[next_image as usize],
                         frame_index: state.frame_index,
@@ -277,6 +301,8 @@ impl winit::application::ApplicationHandler for App {
                         depth_idx: *state.resizables.depth.storage,
                     },
                 );
+
+                state.prev_camera = camera;
 
                 device.cmd_bind_pipeline(
                     **command_buffer,

@@ -52,23 +52,29 @@ struct Dispatch {
     uint num_points;
 }
 
-struct PushConstants {
+struct Uniforms {
     float4x4 camera;
     float4x4 view;
+    float4x4 inv_camera;
+    float4x4 prev_camera;
+};
+
+struct PushConstants {
     uint2 extent;
+    Uniforms* uniforms;
     uint image_idx;
     Ptr<Splat>* splats;
     uint64_t* bitmasks;
-    uint frame_index;
-    uint num_splats;
-    float tan_y;
     Dispatch* dispatch;
     uint* point_to_splat;
-    uint max_points;
     uint prev_color_idx;
     uint prev_depth_idx;
     uint color_idx;
     uint depth_idx;
+    uint frame_index;
+    uint num_splats;
+    float tan_y;
+    uint max_points;
 
     uint64_t* get_mask(uint2 coord) {
         return &bitmasks[coord.x + coord.y * extent.x];

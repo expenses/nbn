@@ -68,7 +68,7 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let chunk = pc.splats[thread / NUM_SPLATS_PER_CHUNK];
     let splat = chunk[thread % NUM_SPLATS_PER_CHUNK];
 
-    var proj_mean = mul(pc.camera, float4(splat.center, 1.0));
+    var proj_mean = mul(pc.uniforms.camera, float4(splat.center, 1.0));
     proj_mean.xyz /= proj_mean.w;
 
     if (proj_mean.z < 0) {
@@ -81,9 +81,9 @@ void splat(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
-    let t = mul(pc.view, float4(splat.center, 1.0)).xyz;
+    let t = mul(pc.uniforms.view, float4(splat.center, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
-    var cov2d = computeCov2D(pc.view, splat.rot, splat.scale, t, pc.tan_y, float2(pc.extent));
+    var cov2d = computeCov2D(pc.uniforms.view, splat.rot, splat.scale, t, pc.tan_y, float2(pc.extent));
     cov2d += float3(0.3, 0, 0.3);
 
     // check determinant in case of splats that have a dimension of size 0.
@@ -150,13 +150,13 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     let chunk = pc.splats[splat_index / NUM_SPLATS_PER_CHUNK];
     let splat = chunk[splat_index % NUM_SPLATS_PER_CHUNK];
 
-    var proj_mean = mul(pc.camera, float4(splat.center, 1.0));
+    var proj_mean = mul(pc.uniforms.camera, float4(splat.center, 1.0));
     proj_mean.xyz /= proj_mean.w;
 
     // view-space center (same scene-scale as proj_mean) + 2D screen covariance
-    let t = mul(pc.view, float4(splat.center, 1.0)).xyz;
+    let t = mul(pc.uniforms.view, float4(splat.center, 1.0)).xyz;
     // scale x100 matches the x100 baked into the projection's center; remove both together
-    var cov2d = computeCov2D(pc.view, splat.rot, splat.scale, t, pc.tan_y, float2(pc.extent));
+    var cov2d = computeCov2D(pc.uniforms.view, splat.rot, splat.scale, t, pc.tan_y, float2(pc.extent));
     cov2d += float3(0.3, 0, 0.3);
 
     // Cholesky factor of cov2d: maps a standard normal into a sample from this Gaussian
@@ -195,6 +195,26 @@ void point(uint thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 }
 
+float3 clamp_prev_colour(PushConstants pc, float3 prev_colour, int2 coord) {
+    // Arbitrary out of range numbers
+    float3 minColor = 9999.0, maxColor = -9999.0;
+ 
+    // Sample a 3x3 neighborhood to create a box in color space
+    for (int x = max(coord.x - 1, 0); x <= min(coord.x + 1, pc.extent.x - 1); x++) {
+        for (int y = max(coord.y - 1, 0); y <= min(coord.y + 1, pc.extent.y - 1); y++) {
+            float3 color = pc.color_and_depth(uint2(x, y)).rgb;
+            minColor = min(minColor, color); // Take min and max
+            maxColor = max(maxColor, color);
+        }
+    }
+ 
+    if (any(prev_colour < minColor) || any(prev_colour > maxColor)) {
+        return float3(1,0,0);
+    }
+    // Clamp previous color to min/max bounding box
+    return clamp(prev_colour, minColor, maxColor);
+}
+
 [shader("compute")]
 [NumThreads(8, 8, 1)]
 void output(uint2 thread : SV_DispatchThreadID, uniform PushConstants pc) {
@@ -203,11 +223,28 @@ void output(uint2 thread : SV_DispatchThreadID, uniform PushConstants pc) {
     }
 
     let color_and_depth = pc.color_and_depth(thread);
-    *pc.get_mask(thread) = 0;
 
     let depth = color_and_depth.a;
     var color = color_and_depth.rgb;
-    color = lerp(color, pc.prev_color[thread], 0.9);
+
+    let uv = (float2(thread) + 0.5) / pc.extent;
+    
+    var prev_uv = uv;
+
+    if (depth != 0.0) {
+        let ndc = float4(uv * 2 - 1, depth, 1.0);
+        let world = mul(pc.uniforms.inv_camera, ndc);
+        let prev_clip = mul(pc.uniforms.prev_camera, world / world.w);
+        let prev_ndc = prev_clip.xyz / prev_clip.w;
+        prev_uv = prev_ndc.xy * 0.5 + 0.5;
+    }
+
+    var prev = pc.prev_color.SampleLevel(prev_uv, 0);
+    if (pc.frame_index > 0) {
+        prev = clamp_prev_colour(pc, prev, thread);
+        color = lerp(color, prev, 0.9);
+    }
+
 
     pc.depth.Store(thread, depth);
     pc.color.Store(thread, color);
